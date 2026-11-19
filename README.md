@@ -40,13 +40,15 @@ Each map cell gets `score = static habitat score × dynamic fruiting multiplier`
   parameter 5 = daily precipitation, `latest-months` period): the summed rain over the
   last 14 days at the nearest active station, scaled (`rain/60`, capped at 1), times a
   seasonal window per species shifted by latitude. Results are cached server-side for 6 h.
-- **Static habitat score** — currently a per-species base value (a placeholder). The plan
-  is to replace it with real 10×10 m layers: SLU Skogskarta / Skogliga grunddata (host
-  trees, stand age), SLU Markfuktighetskarta (soil moisture), SGU jordarter/berggrund
-  (pH), Lantmäteriet höjdmodell (slope/aspect), Skogsstyrelsen avverkningar/nyckelbiotoper
-  (clear-cut filter), in SWEREF 99 TM (EPSG:3006), validated against Artportalen
-  observations. The basemap can later switch to Lantmäteriet's topographic WMTS (needs a
-  free API key).
+- **Static habitat score** — per-species base value × an OSM forest mask (Overpass API:
+  `landuse=forest` / `natural=wood` polygons, cached 24 h per 0.5° grid cell). Cells
+  outside forest (water, farmland, urban) are hard-filtered to near zero. This is the
+  first static layer; the plan is to replace/augment it with real 10×10 m layers: SLU
+  Skogskarta / Skogliga grunddata (host trees, stand age), SLU Markfuktighetskarta (soil
+  moisture), SGU jordarter/berggrund (pH), Lantmäteriet höjdmodell (slope/aspect),
+  Skogsstyrelsen avverkningar/nyckelbiotoper (clear-cut filter), in SWEREF 99 TM
+  (EPSG:3006), validated against Artportalen observations. The basemap can later switch
+  to Lantmäteriet's topographic WMTS (needs a free API key).
 
 ## How it works
 

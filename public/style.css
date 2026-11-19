@@ -1,6 +1,9 @@
 :root {
   color-scheme: light;
 }
+[hidden] {
+  display: none !important;
+}
 * {
   box-sizing: border-box;
 }

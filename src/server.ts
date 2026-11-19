@@ -131,6 +131,65 @@ async function rainLast14Days(lat: number, lon: number): Promise<number> {
   return rain14;
 }
 
+const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+const forestCache = new Map<string, { at: number; polys: [number, number][][] }>();
+
+async function forestPolygonsForBox(
+  minLon: number,
+  minLat: number,
+  maxLon: number,
+  maxLat: number,
+): Promise<[number, number][][]> {
+  const g = 0.5;
+  const kMinLon = Math.floor(minLon / g) * g;
+  const kMinLat = Math.floor(minLat / g) * g;
+  const kMaxLon = Math.ceil(maxLon / g) * g;
+  const kMaxLat = Math.ceil(maxLat / g) * g;
+  const key = `${kMinLon},${kMinLat},${kMaxLon},${kMaxLat}`;
+  const cached = forestCache.get(key);
+  if (cached && Date.now() - cached.at < 24 * 3600 * 1000) return cached.polys;
+  const q = `[out:json][timeout:60];(way["landuse"="forest"](${kMinLat},${kMinLon},${kMaxLat},${kMaxLon});way["natural"="wood"](${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}););out geom;`;
+  const r = await fetch(OVERPASS_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "data=" + encodeURIComponent(q),
+    signal: AbortSignal.timeout(90_000),
+  });
+  if (!r.ok) throw new Error(`Overpass: HTTP ${r.status}`);
+  const body = (await r.json()) as { elements?: { geometry?: { lat: number; lon: number }[] }[] };
+  const polys = (body.elements ?? [])
+    .map((e) => (e.geometry ?? []).map((p) => [p.lon, p.lat] as [number, number]))
+    .filter((ring) => ring.length >= 3);
+  forestCache.set(key, { at: Date.now(), polys });
+  return polys;
+}
+
+function pointInForest(polys: [number, number][][], lon: number, lat: number): boolean {
+  for (const ring of polys) {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const [x, y] of ring) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    if (lon < minX || lon > maxX || lat < minY || lat > maxY) continue;
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      if (yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+    if (inside) return true;
+  }
+  return false;
+}
+
 type SpeciesProfile = { label: string; base: number; seasonStart: number; seasonEnd: number };
 
 const SPECIES: Record<string, SpeciesProfile> = {
@@ -181,12 +240,23 @@ app.get("/api/hotspots", async (req, res) => {
   const now = new Date();
   const rainFactor = rain14 === null ? 0.5 : Math.min(1, rain14 / 60);
 
+  let forestPolys: [number, number][][] = [];
+  try {
+    forestPolys = await forestPolygonsForBox(minLon, minLat, maxLon, maxLat);
+  } catch (err) {
+    console.error("Forest layer fetch failed:", err);
+  }
+
   const cell = Math.max((maxLon - minLon) / 40, (maxLat - minLat) / 40, 0.01);
   const features = [];
   for (let lat = minLat; lat < maxLat; lat += cell) {
     for (let lon = minLon; lon < maxLon; lon += cell) {
-      const dynamic = seasonalFactor(species, lat, now) * rainFactor;
-      const score = Math.round(100 * staticHabitatScore(species, lat, lon) * dynamic);
+      const clat = lat + cell / 2;
+      const clon = lon + cell / 2;
+      const inForest = forestPolys.length === 0 || pointInForest(forestPolys, clon, clat);
+      const habitat = inForest ? staticHabitatScore(species, clat, clon) : 0.05 * species.base;
+      const dynamic = seasonalFactor(species, clat, now) * rainFactor;
+      const score = Math.round(100 * habitat * dynamic);
       features.push({
         type: "Feature",
         properties: { score },
@@ -212,6 +282,8 @@ app.get("/api/hotspots", async (req, res) => {
       label: species.label,
       rain14,
       rainFactor: Number(rainFactor.toFixed(3)),
+      forestAreas: forestPolys.length,
+      layers: ["smhi-precip-14d", "osm-forest-mask"],
       generatedAt: now.toISOString(),
     },
     features,
