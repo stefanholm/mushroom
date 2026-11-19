@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mushroom Chat</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        display: flex;
+        justify-content: center;
+        background: #f4f1ea;
+        color: #222;
+      }
+      main {
+        width: 100%;
+        max-width: 42rem;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        padding: 1rem;
+        gap: 1rem;
+      }
+      h1 {
+        font-size: 1.25rem;
+        margin: 0;
+      }
+      #messages {
+        flex: 1;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.5rem;
+      }
+      .msg {
+        max-width: 80%;
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.75rem;
+        white-space: pre-wrap;
+        line-height: 1.4;
+      }
+      .user {
+        align-self: flex-end;
+        background: #2f6f3e;
+        color: #fff;
+      }
+      .assistant {
+        align-self: flex-start;
+        background: #fff;
+        border: 1px solid #ddd;
+      }
+      .error {
+        align-self: center;
+        background: #f8d7da;
+        color: #842029;
+      }
+      form {
+        display: flex;
+        gap: 0.5rem;
+      }
+      input {
+        flex: 1;
+        padding: 0.6rem 0.75rem;
+        border: 1px solid #ccc;
+        border-radius: 0.5rem;
+        font-size: 1rem;
+      }
+      button {
+        padding: 0.6rem 1rem;
+        border: none;
+        border-radius: 0.5rem;
+        background: #2f6f3e;
+        color: #fff;
+        font-size: 1rem;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Mushroom Chat &mdash; mistral-small-latest</h1>
+      <div id="messages"></div>
+      <form id="form">
+        <input id="input" autocomplete="off" placeholder="Ask something..." required />
+        <button id="send" type="submit">Send</button>
+      </form>
+    </main>
+    <script>
+      const messagesEl = document.getElementById("messages");
+      const form = document.getElementById("form");
+      const input = document.getElementById("input");
+      const send = document.getElementById("send");
+      const history = [];
+
+      function addMessage(role, text) {
+        const div = document.createElement("div");
+        div.className = "msg " + role;
+        div.textContent = text;
+        messagesEl.appendChild(div);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        return div;
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const text = input.value.trim();
+        if (!text) return;
+        input.value = "";
+        send.disabled = true;
+
+        history.push({ role: "user", content: text });
+        addMessage("user", text);
+        const pending = addMessage("assistant", "...");
+
+        try {
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ messages: history }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Request failed");
+          pending.textContent = data.reply;
+          history.push({ role: "assistant", content: data.reply });
+        } catch (err) {
+          pending.className = "msg error";
+          pending.textContent = err.message;
+          history.pop();
+        } finally {
+          send.disabled = false;
+          input.focus();
+        }
+      });
+    </script>
+  </body>
+</html>
