@@ -120,11 +120,11 @@ Karta-tab extras: **hillshade** (`/api/hillshade?...` renders a 512×512 PNG fro
 (shifts the hotspot threshold ±10 around score 60), and a safety disclaimer
 (Giftinformationscentralen / lookalikes).
 
-Cells are scored on a **globally snapped grid**: cell size is a fixed ladder
-(0.00003° ≈ 3 m, doubling until the bbox fits in 60×60 cells) and cell origins snap to
-multiples of the cell size, so panning/zooming within a zoom level reuses the exact same
-cells — hotspots don't jump around when zooming; at max zoom the ~3 m grid follows the
-2 m höjdmodell. The overlay is a **blurred MapLibre heatmap layer** with a smooth 9-stop
+Cells are scored on a **globally snapped ladder grid**: cell size is 0.0001° (~6 m)
+doubled per zoom level until the tile fits (~110×110 cells), with origins snapped to
+multiples of the cell size — coarser cells are exact unions of finer ones, so the same
+hotspot stays hot at every zoom (only blur changes), down to ~6 m at street level where
+the 2 m höjdmodell drives the detail. The overlay is a **blurred MapLibre heatmap layer** with a smooth 9-stop
 gradient and a zoom-adaptive radius.
 
 OSM masks (forest + exclusions) are read **disk-first** from `data/osm/{forest,exclusion}_<tile>.json`

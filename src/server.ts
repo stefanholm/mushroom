@@ -431,6 +431,12 @@ async function getLayerStore(): Promise<LayerStore> {
 
 export type CellScore = { lon: number; lat: number; score: number; heat: number };
 
+function cellForSpan(span: number): number {
+  let cell = 0.0001;
+  while (span / cell > 110) cell *= 2;
+  return cell;
+}
+
 function parseAsOf(dateParam: string): Date {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) return new Date();
   const parsed = new Date(`${dateParam}T12:00:00Z`);
@@ -549,8 +555,7 @@ app.get("/api/hotspots", async (req, res) => {
   const asOf = parseAsOf(String(req.query.date ?? ""));
 
   const span = Math.max(maxLon - minLon, maxLat - minLat);
-  let cell = 0.00003;
-  while (span / cell > 60) cell *= 2;
+  const cell = cellForSpan(span);
   const { cells, meta } = await computeCells(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
   const features = cells.map((c) => ({
     type: "Feature",
@@ -735,7 +740,7 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
   }
   const span = Math.max(bbox.maxLon - bbox.minLon, bbox.maxLat - bbox.minLat);
   const G = 128;
-  const cell = span / G;
+  const cell = cellForSpan(span);
   const { cells } = await computeCells(key, bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat, cell, asOf, staticOnly);
   const startLon = Math.floor(bbox.minLon / cell) * cell;
   const startLat = Math.floor(bbox.minLat / cell) * cell;
