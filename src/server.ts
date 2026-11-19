@@ -747,7 +747,7 @@ app.get("/api/hillshade", async (req, res) => {
   res.send(PNG.sync.write(png));
 });
 
-const TILES_DIR = path.join(here, "..", "data", "tiles", "r9");
+const TILES_DIR = path.join(here, "..", "data", "tiles", "r10");
 
 const HEAT_BASE = 70;
 const HEAT_RANGE = 30;
@@ -913,6 +913,7 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
   const W = cols * R;
   const H = rows * R;
   const accA = new Float32Array(W * H);
+  const accW = new Float32Array(W * H);
   const accR = new Float32Array(W * H);
   const accG = new Float32Array(W * H);
   const accB = new Float32Array(W * H);
@@ -927,7 +928,7 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
       if (base <= 0) continue;
       const heat = Math.min(1, base + clusterHeatStep(step));
       const [r, g, b, a] = heatColor(heat);
-      const radius = R * (0.55 + 0.4 * step) * (0.7 + 0.5 * heat);
+      const radius = R * (0.75 + 0.45 * step) * (0.75 + 0.45 * heat);
       const cx = i * R + R / 2;
       const cy = j * R + R / 2;
       const x0 = Math.max(0, Math.floor(cx - radius));
@@ -941,12 +942,11 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
           if (d > radius) continue;
           const add = alpha * (1 - (d / radius) * (d / radius));
           const idx = py * W + px;
-          if (add > accA[idx]) {
-            accA[idx] = add;
-            accR[idx] = r / 255;
-            accG[idx] = g / 255;
-            accB[idx] = b / 255;
-          }
+          if (add > accA[idx]) accA[idx] = add;
+          accW[idx] += add;
+          accR[idx] += add * (r / 255);
+          accG[idx] += add * (g / 255);
+          accB[idx] += add * (b / 255);
         }
       }
     }
@@ -955,9 +955,12 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
   for (let k = 0; k < W * H; k++) {
     const idx = k * 4;
     img[idx + 3] = Math.round(Math.min(1, accA[k]) * 255);
-    img[idx] = Math.round(accR[k] * 255);
-    img[idx + 1] = Math.round(accG[k] * 255);
-    img[idx + 2] = Math.round(accB[k] * 255);
+    const w = accW[k];
+    if (w > 0) {
+      img[idx] = Math.round(Math.min(1, accR[k] / w) * 255);
+      img[idx + 1] = Math.round(Math.min(1, accG[k] / w) * 255);
+      img[idx + 2] = Math.round(Math.min(1, accB[k] / w) * 255);
+    }
   }
   const size = 256;
   const png = new PNG({ width: size, height: size });
