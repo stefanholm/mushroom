@@ -515,7 +515,7 @@ async function computeCells(
       });
       const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * rainFactor;
       const score = Math.round(100 * habitat * dynamic);
-      const heat = Math.min(1, Math.max(0, (score - 60) / 40));
+      const heat = heatOf(score, 0);
       cells.push({ lon: clon, lat: clat, score, heat: Number(heat.toFixed(3)) });
     }
   }
@@ -667,15 +667,19 @@ function tileBBox(z: number, x: number, y: number) {
 }
 
 const HEAT_RAMP: [number, [number, number, number]][] = [
-  [0.08, [255, 255, 204]],
-  [0.2, [255, 237, 160]],
-  [0.32, [254, 217, 118]],
-  [0.45, [254, 178, 76]],
-  [0.58, [253, 141, 60]],
-  [0.72, [244, 109, 67]],
-  [0.85, [215, 48, 39]],
-  [1, [189, 0, 38]],
+  [0.2, [217, 95, 2]],
+  [0.45, [255, 140, 0]],
+  [0.7, [227, 26, 28]],
+  [0.9, [255, 42, 0]],
+  [1, [255, 255, 178]],
 ];
+
+const HEAT_BASE = 45;
+const HEAT_RANGE = 55;
+
+function heatOf(score: number, sens: number): number {
+  return Math.min(1, Math.max(0, (score - (HEAT_BASE + sens)) / HEAT_RANGE));
+}
 
 function heatColor(heat: number): [number, number, number, number] {
   if (heat <= 0) return [0, 0, 0, 0];
@@ -684,11 +688,12 @@ function heatColor(heat: number): [number, number, number, number] {
   const [h0, c0] = HEAT_RAMP[i];
   const [h1, c1] = HEAT_RAMP[i + 1];
   const t = h1 === h0 ? 1 : Math.min(1, Math.max(0, (heat - h0) / (h1 - h0)));
+  const alpha = Math.round(Math.pow(heat, 0.45) * 0.9 * 255);
   return [
     Math.round(c0[0] + (c1[0] - c0[0]) * t),
     Math.round(c0[1] + (c1[1] - c0[1]) * t),
     Math.round(c0[2] + (c1[2] - c0[2]) * t),
-    220,
+    alpha,
   ];
 }
 
@@ -739,76 +744,111 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
     return res.send(await fsp.readFile(cacheFile));
   }
   const span = Math.max(bbox.maxLon - bbox.minLon, bbox.maxLat - bbox.minLat);
-  const G = 128;
   const cell = cellForSpan(span);
-  const { cells } = await computeCells(key, bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat, cell, asOf, staticOnly);
-  const startLon = Math.floor(bbox.minLon / cell) * cell;
-  const startLat = Math.floor(bbox.minLat / cell) * cell;
-  const cols = Math.max(1, Math.ceil((bbox.maxLon - startLon) / cell));
-  const rows = Math.max(1, Math.ceil((bbox.maxLat - startLat) / cell));
+  const M = 6;
+  const eMinLon = bbox.minLon - M * cell;
+  const eMaxLon = bbox.maxLon + M * cell;
+  const eMinLat = bbox.minLat - M * cell;
+  const eMaxLat = bbox.maxLat + M * cell;
+  const { cells } = await computeCells(key, eMinLon, eMinLat, eMaxLon, eMaxLat, cell, asOf, staticOnly);
+  const eStartLon = Math.floor(eMinLon / cell) * cell;
+  const eStartLat = Math.floor(eMinLat / cell) * cell;
+  const cols = Math.max(1, Math.ceil((eMaxLon - eStartLon) / cell));
+  const rows = Math.max(1, Math.ceil((eMaxLat - eStartLat) / cell));
   const grid: (CellScore | null)[][] = Array.from({ length: rows }, () => Array(cols).fill(null));
   for (const c of cells) {
-    const i = Math.floor((c.lon - startLon) / cell);
-    const j = Math.floor((c.lat - startLat) / cell);
+    const i = Math.floor((c.lon - eStartLon) / cell);
+    const j = Math.floor((c.lat - eStartLat) / cell);
     if (j >= 0 && j < rows && i >= 0 && i < cols) grid[j][i] = c;
   }
-  const cellRGBA = new Uint8Array(G * G * 4);
-  for (let j = 0; j < G; j++) {
-    for (let i = 0; i < G; i++) {
-      const c = j < rows && i < cols ? grid[j][i] : null;
-      const heat = c ? Math.min(1, Math.max(0, (c.score - (60 + sens)) / 40)) : 0;
-      const [r, g, b, a] = heatColor(heat);
-      const idx = (j * G + i) * 4;
+  const cellRGBA = new Uint8Array(cols * rows * 4);
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const c = grid[j][i];
+      const [r, g, b, a] = heatColor(c ? heatOf(c.score, sens) : 0);
+      const idx = (j * cols + i) * 4;
       cellRGBA[idx] = r;
       cellRGBA[idx + 1] = g;
       cellRGBA[idx + 2] = b;
       cellRGBA[idx + 3] = a;
     }
   }
-  const size = 256;
-  const png = new PNG({ width: size, height: size });
-  for (let py = 0; py < size; py++) {
-    for (let px = 0; px < size; px++) {
-      const fx = ((px + 0.5) / size) * G - 0.5;
-      const fy = ((py + 0.5) / size) * G - 0.5;
-      const x0 = Math.max(0, Math.min(G - 1, Math.floor(fx)));
-      const y0 = Math.max(0, Math.min(G - 1, Math.floor(fy)));
-      const x1 = Math.min(G - 1, x0 + 1);
-      const y1 = Math.min(G - 1, y0 + 1);
+  const R = 2;
+  const W = cols * R;
+  const H = rows * R;
+  const img = new Uint8Array(W * H * 4);
+  for (let py = 0; py < H; py++) {
+    for (let px = 0; px < W; px++) {
+      const fx = (px + 0.5) / R - 0.5;
+      const fy = (py + 0.5) / R - 0.5;
+      const x0 = Math.max(0, Math.min(cols - 1, Math.floor(fx)));
+      const y0 = Math.max(0, Math.min(rows - 1, Math.floor(fy)));
+      const x1 = Math.min(cols - 1, x0 + 1);
+      const y1 = Math.min(rows - 1, y0 + 1);
       const tx = Math.max(0, Math.min(1, fx - x0));
       const ty = Math.max(0, Math.min(1, fy - y0));
-      const idx = (py * size + px) * 4;
+      const idx = (py * W + px) * 4;
       for (let ch = 0; ch < 4; ch++) {
-        const v00 = cellRGBA[(y0 * G + x0) * 4 + ch];
-        const v10 = cellRGBA[(y0 * G + x1) * 4 + ch];
-        const v01 = cellRGBA[(y1 * G + x0) * 4 + ch];
-        const v11 = cellRGBA[(y1 * G + x1) * 4 + ch];
-        png.data[idx + ch] = Math.round(
+        const v00 = cellRGBA[(y0 * cols + x0) * 4 + ch];
+        const v10 = cellRGBA[(y0 * cols + x1) * 4 + ch];
+        const v01 = cellRGBA[(y1 * cols + x0) * 4 + ch];
+        const v11 = cellRGBA[(y1 * cols + x1) * 4 + ch];
+        img[idx + ch] = Math.round(
           v00 * (1 - tx) * (1 - ty) + v10 * tx * (1 - ty) + v01 * (1 - tx) * ty + v11 * tx * ty,
         );
       }
     }
   }
-  for (let pass = 0; pass < 2; pass++) {
-    const src = Buffer.from(png.data);
-    for (let py = 0; py < size; py++) {
-      for (let px = 0; px < size; px++) {
+  const BLUR = 4;
+  for (let pass = 0; pass < 3; pass++) {
+    const src = Buffer.from(img);
+    for (let py = 0; py < H; py++) {
+      for (let px = 0; px < W; px++) {
         let r = 0, g = 0, b = 0, a = 0, cnt = 0;
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -BLUR; dy <= BLUR; dy++) {
+          for (let dx = -BLUR; dx <= BLUR; dx++) {
             const nx = px + dx;
             const ny = py + dy;
-            if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
-            const si = (ny * size + nx) * 4;
+            if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+            const si = (ny * W + nx) * 4;
             r += src[si]; g += src[si + 1]; b += src[si + 2]; a += src[si + 3];
             cnt++;
           }
         }
-        const idx = (py * size + px) * 4;
-        png.data[idx] = Math.round(r / cnt);
-        png.data[idx + 1] = Math.round(g / cnt);
-        png.data[idx + 2] = Math.round(b / cnt);
-        png.data[idx + 3] = Math.round(a / cnt);
+        const idx = (py * W + px) * 4;
+        img[idx] = Math.round(r / cnt);
+        img[idx + 1] = Math.round(g / cnt);
+        img[idx + 2] = Math.round(b / cnt);
+        img[idx + 3] = Math.round(a / cnt);
+      }
+    }
+  }
+  const size = 256;
+  const png = new PNG({ width: size, height: size });
+  const n = 2 ** z;
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      const wx = (x + (px + 0.5) / size) / n;
+      const wy = (y + (py + 0.5) / size) / n;
+      const lon = wx * 360 - 180;
+      const lat = (Math.atan(Math.sinh(Math.PI * (1 - 2 * wy))) * 180) / Math.PI;
+      const gx = ((lon - eStartLon) / cell) * R;
+      const gy = ((lat - eStartLat) / cell) * R;
+      const x0 = Math.max(0, Math.min(W - 1, Math.floor(gx)));
+      const y0 = Math.max(0, Math.min(H - 1, Math.floor(gy)));
+      const x1 = Math.min(W - 1, x0 + 1);
+      const y1 = Math.min(H - 1, y0 + 1);
+      const tx = Math.max(0, Math.min(1, gx - x0));
+      const ty = Math.max(0, Math.min(1, gy - y0));
+      const idx = (py * size + px) * 4;
+      for (let ch = 0; ch < 4; ch++) {
+        const v00 = img[(y0 * W + x0) * 4 + ch];
+        const v10 = img[(y0 * W + x1) * 4 + ch];
+        const v01 = img[(y1 * W + x0) * 4 + ch];
+        const v11 = img[(y1 * W + x1) * 4 + ch];
+        png.data[idx + ch] = Math.round(
+          v00 * (1 - tx) * (1 - ty) + v10 * tx * (1 - ty) + v01 * (1 - tx) * ty + v11 * tx * ty,
+        );
       }
     }
   }

@@ -88,7 +88,16 @@ function initMap(maplibregl) {
         },
       },
       layers: [
-        { id: "osm", type: "raster", source: "osm" },
+        {
+          id: "osm",
+          type: "raster",
+          source: "osm",
+          paint: {
+            "raster-saturation": -0.75,
+            "raster-brightness-max": 0.92,
+            "raster-contrast": 0.08,
+          },
+        },
         {
           id: "hillshade",
           type: "raster",
@@ -139,7 +148,7 @@ function initMap(maplibregl) {
     refreshMeta();
   });
   sensInput.addEventListener("input", () => {
-    sensLabel.textContent = String(60 + Number(sensInput.value));
+    sensLabel.textContent = String(45 + Number(sensInput.value));
     rebuildHabitat();
   });
   opacityInput.addEventListener("input", () => {
