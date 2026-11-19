@@ -1,4 +1,6 @@
 import fs from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -62,11 +64,50 @@ function bboxOf(ring) {
 }
 
 async function loadFeatures(file, want) {
-  const gj = JSON.parse(await fs.readFile(file, "utf8"));
   const feats = [];
-  for (const f of gj.features ?? []) {
+  const st = await fs.stat(file);
+  const head = Buffer.alloc(64);
+  const fh = await fs.open(file, "r");
+  await fh.read(head, 0, 64, 0);
+  await fh.close();
+  const isSeq = head.toString("utf8").trimStart().startsWith('{"type":"Feature"');
+  if (!isSeq && st.size > 200_000_000) {
+    throw new Error(
+      `${file} är för stor (${Math.round(st.size / 1e6)} MB) — exportera med 'osmium export -f geojsonseq' (en feature per rad) istället`,
+    );
+  }
+  const accept = (f) => {
     const t = f.properties ?? {};
-    if (want === "forest" ? isForest(t) : isExclArea(t) || isLine(t)) feats.push(f);
+    return want === "forest" ? isForest(t) : isExclArea(t) || isLine(t);
+  };
+  const inBbox = (f) => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of polysOf(f.geometry)) for (const [x, y] of p.outer) {
+      if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+    }
+    for (const l of linesOf(f.geometry)) for (const [x, y] of l) {
+      if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+    }
+    if (maxX < minLon - 0.05 || minX > maxLon + 0.05 || maxY < minLat - 0.05 || minY > maxLat + 0.05) return false;
+    return true;
+  };
+  if (!isSeq) {
+    const gj = JSON.parse(await fs.readFile(file, "utf8"));
+    for (const f of gj.features ?? []) {
+      if (accept(f) && inBbox(f)) feats.push(f);
+    }
+    return feats;
+  }
+  const rl = readline.createInterface({ input: createReadStream(file), crlfDelay: Infinity });
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    let f;
+    try {
+      f = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (f.type === "Feature" && accept(f) && inBbox(f)) feats.push(f);
   }
   return feats;
 }
