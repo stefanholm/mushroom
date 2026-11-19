@@ -57,6 +57,12 @@ const n = width * height;
 
 const tradhojd = new Float32Array(n);
 const volym = new Float32Array(n);
+const grundyta = new Float32Array(n);
+const gran = new Float32Array(n);
+const tall = new Float32Array(n);
+const bjork = new Float32Array(n);
+const ek = new Float32Array(n);
+const bok = new Float32Array(n);
 const markfuktighet = new Uint8Array(n);
 const jordart = new Uint8Array(n);
 const hojd = new Float32Array(n);
@@ -67,6 +73,11 @@ for (let j = 0; j < height; j++) {
     const r = rand();
     tradhojd[k] = 6 + 20 * rand();
     volym[k] = 30 + 280 * rand();
+    grundyta[k] = 8 + 45 * rand();
+    const mix = rand();
+    if (mix < 0.45) { gran[k] = volym[k] * 0.8; tall[k] = volym[k] * 0.1; bjork[k] = volym[k] * 0.1; }
+    else if (mix < 0.75) { bjork[k] = volym[k] * 0.6; gran[k] = volym[k] * 0.25; ek[k] = volym[k] * 0.15; }
+    else { ek[k] = volym[k] * 0.5; bok[k] = volym[k] * 0.4; bjork[k] = volym[k] * 0.1; }
     const m = rand();
     markfuktighet[k] = m < 0.1 ? 1 : m < 0.5 ? 2 : m < 0.75 ? 3 : m < 0.95 ? 4 : 5;
     jordart[k] = r < 0.75 ? 1 : 2;
@@ -76,12 +87,20 @@ for (let j = 0; j < height; j++) {
     if (i >= 250 && i < 340 && j >= 80 && j < 200) {
       tradhojd[k] = 0;
       volym[k] = 0;
+      gran[k] = 0; tall[k] = 0; bjork[k] = 0; ek[k] = 0; bok[k] = 0;
+      grundyta[k] = 0;
     }
   }
 }
 
 await writeRaster("skog_tradhojd_10m.tif", tradhojd, 32, 3);
 await writeRaster("skog_volym_10m.tif", volym, 32, 3);
+await writeRaster("grundyta_10m.tif", grundyta, 32, 3);
+await writeRaster("skog_gran_10m.tif", gran, 32, 3);
+await writeRaster("skog_tall_10m.tif", tall, 32, 3);
+await writeRaster("skog_bjork_10m.tif", bjork, 32, 3);
+await writeRaster("skog_ek_10m.tif", ek, 32, 3);
+await writeRaster("skog_bok_10m.tif", bok, 32, 3);
 await writeRaster("markfuktighet_10m.tif", markfuktighet, 8, 1);
 await writeRaster("jordart_10m.tif", jordart, 8, 1);
 await writeRaster("hojdmodell_2m.tif", hojd, 32, 3);
@@ -117,6 +136,21 @@ const avverkningar = {
 await fs.writeFile(path.join(root, "avverkningar_senaste_5ar.geojson"), JSON.stringify(avverkningar, null, 2));
 console.log("wrote avverkningar_senaste_5ar.geojson");
 
+const nyckelbiotoper = {
+  type: "FeatureCollection",
+  name: "nyckelbiotoper",
+  crs: { type: "name", properties: { name: "urn:ogc:def:crs:EPSG::3006" } },
+  features: [
+    {
+      type: "Feature",
+      properties: { namn: "demo-nyckelbiotop" },
+      geometry: { type: "Polygon", coordinates: clearcutSquare(18.15, 59.42, 18.22, 59.48) },
+    },
+  ],
+};
+await fs.writeFile(path.join(root, "nyckelbiotoper.geojson"), JSON.stringify(nyckelbiotoper, null, 2));
+console.log("wrote nyckelbiotoper.geojson");
+
 const manifest = {
   crs: "EPSG:3006",
   comment:
@@ -124,6 +158,12 @@ const manifest = {
   rasters: [
     { id: "tradhojd", file: "skog_tradhojd_10m.tif", nodata: -9999, band: 1 },
     { id: "volym", file: "skog_volym_10m.tif", nodata: -9999, band: 1 },
+    { id: "grundyta", file: "grundyta_10m.tif", nodata: -9999, band: 1 },
+    { id: "gran", file: "skog_gran_10m.tif", nodata: -9999, band: 1 },
+    { id: "tall", file: "skog_tall_10m.tif", nodata: -9999, band: 1 },
+    { id: "bjork", file: "skog_bjork_10m.tif", nodata: -9999, band: 1 },
+    { id: "ek", file: "skog_ek_10m.tif", nodata: -9999, band: 1 },
+    { id: "bok", file: "skog_bok_10m.tif", nodata: -9999, band: 1 },
     { id: "markfuktighet", file: "markfuktighet_10m.tif", nodata: 255, band: 1 },
     {
       id: "jordart",
@@ -134,7 +174,10 @@ const manifest = {
     },
     { id: "hojd", file: "hojdmodell_2m.tif", nodata: -9999, band: 1 },
   ],
-  vectors: [{ id: "avverkningar", file: "avverkningar_senaste_5ar.geojson", crs: "EPSG:3006" }],
+  vectors: [
+    { id: "avverkningar", file: "avverkningar_senaste_5ar.geojson", crs: "EPSG:3006" },
+    { id: "nyckelbiotoper", file: "nyckelbiotoper.geojson", crs: "EPSG:3006" },
+  ],
 };
 await fs.writeFile(path.join(root, "manifest.json"), JSON.stringify(manifest, null, 2));
 console.log("wrote manifest.json");

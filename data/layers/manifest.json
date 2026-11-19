@@ -15,6 +15,42 @@
       "band": 1
     },
     {
+      "id": "grundyta",
+      "file": "grundyta_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "gran",
+      "file": "skog_gran_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "tall",
+      "file": "skog_tall_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "bjork",
+      "file": "skog_bjork_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "ek",
+      "file": "skog_ek_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "bok",
+      "file": "skog_bok_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
       "id": "markfuktighet",
       "file": "markfuktighet_10m.tif",
       "nodata": 255,
@@ -41,6 +77,11 @@
     {
       "id": "avverkningar",
       "file": "avverkningar_senaste_5ar.geojson",
+      "crs": "EPSG:3006"
+    },
+    {
+      "id": "nyckelbiotoper",
+      "file": "nyckelbiotoper.geojson",
       "crs": "EPSG:3006"
     }
   ]

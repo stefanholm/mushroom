@@ -43,11 +43,32 @@ data/
 └── layers/
     ├── manifest.json                     # layer registry (tracked)
     ├── skog_tradhojd_10m.tif             # SLU Skogskarta / Skogliga grunddata – trädhöjd (m), GeoTIFF
-    ├── skog_volym_10m.tif                # SLU Skogskarta / Skogliga grunddata – volym (m³/sk/ha), GeoTIFF
+    ├── skog_volym_10m.tif                # SLU Skogskarta / Skogliga grunddata – total volym (m³/sk/ha), GeoTIFF
+    ├── grundyta_10m.tif                  # Skogliga grunddata – grundyta (m²/ha, täthet/ljus), GeoTIFF
+    ├── skog_gran_10m.tif                 # SLU Skogskarta – volym gran (m³/sk/ha), GeoTIFF
+    ├── skog_tall_10m.tif                 # SLU Skogskarta – volym tall, GeoTIFF
+    ├── skog_bjork_10m.tif                # SLU Skogskarta – volym björk, GeoTIFF
+    ├── skog_ek_10m.tif                   # SLU Skogskarta – volym ek, GeoTIFF
+    ├── skog_bok_10m.tif                  # SLU Skogskarta – volym bok, GeoTIFF
     ├── markfuktighet_10m.tif             # SLU Markfuktighetskarta – klass 1..5 (1=torr … 5=blöt), GeoTIFF
     ├── jordart_10m.tif                   # SGU jordarter – klasskod, GeoTIFF (recode i manifest: 1=acidic, 2=calcareous)
     ├── hojdmodell_2m.tif                 # Lantmäteriet nationell höjdmodell – höjd (m), GeoTIFF (lutning/aspekt beräknas i kod)
-    └── avverkningar_senaste_5ar.geojson  # Skogsstyrelsen "Utförda avverkningar" – polygoner (hårdspärr), GeoJSON
+    ├── avverkningar_senaste_5ar.geojson  # Skogsstyrelsen "Utförda avverkningar" – polygoner (hårdspärr), GeoJSON
+    └── nyckelbiotoper.geojson            # Skogsstyrelsen nyckelbiotoper – polygoner (bonus ×1.3), GeoJSON
+```
+
+## Tile endpoints (cached XYZ rasters)
+
+- `GET /api/tiles/habitat/{species}/{z}/{x}/{y}.png?static=1&date=YYYY-MM-DD&sens=-10..10` —
+  256×256 PNG heatmap tile (alpha by heat, 9-stop ramp). Disk-cached under `data/tiles/`
+  (git-ignored); `Cache-Control: max-age=21600` for live, `86400` for dated/static tiles.
+- `GET /api/tiles/hillshade/{z}/{x}/{y}.png` — hillshade from `hojdmodell_2m.tif`,
+  `Cache-Control: immutable`.
+- `GET /api/meta?species=&date=` — lightweight status (rain factor, season, loaded layers).
+- `GET /api/hotspots?...` — GeoJSON point grid (kept for API clients/tests).
+
+The web UI (`public/map.js`) uses the raster tiles, so panning/zooming never recomputes —
+MapLibre fetches tiles and they're cached on disk and in the browser.
 ```
 
 `manifest.json` maps each file to a layer id (`tradhojd`, `volym`, `markfuktighet`,

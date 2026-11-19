@@ -1,5 +1,7 @@
 import "dotenv/config";
 import express from "express";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
@@ -158,7 +160,7 @@ async function overpassQuery(q: string): Promise<{ elements?: OverpassElement[] 
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: "data=" + encodeURIComponent(q),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(15_000),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return (await r.json()) as { elements?: OverpassElement[] };
@@ -218,7 +220,7 @@ async function osmMainApiFeatures(
 ): Promise<OsmFeature[]> {
   const r = await fetch(
     `https://api.openstreetmap.org/api/0.6/map?bbox=${minLon},${minLat},${maxLon},${maxLat}`,
-    { signal: AbortSignal.timeout(60_000) },
+    { signal: AbortSignal.timeout(15_000) },
   );
   if (!r.ok) throw new Error(`OSM API: HTTP ${r.status}`);
   const xml = await r.text();
@@ -409,33 +411,27 @@ async function getLayerStore(): Promise<LayerStore> {
   return layerStore;
 }
 
-app.get("/api/hotspots", async (req, res) => {
-  const key = String(req.query.species ?? "");
+export type CellScore = { lon: number; lat: number; score: number; heat: number };
+
+function parseAsOf(dateParam: string): Date {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) return new Date();
+  const parsed = new Date(`${dateParam}T12:00:00Z`);
+  const min = new Date(Date.now() - 120 * 86400_000);
+  if (!Number.isNaN(parsed.getTime()) && parsed >= min && parsed <= new Date()) return parsed;
+  return new Date();
+}
+
+async function computeCells(
+  key: string,
+  minLon: number,
+  minLat: number,
+  maxLon: number,
+  maxLat: number,
+  cell: number,
+  asOf: Date,
+  staticOnly: boolean,
+): Promise<{ cells: CellScore[]; meta: Record<string, unknown> }> {
   const species = SPECIES[key];
-  const box = ["minLon", "minLat", "maxLon", "maxLat"].map((k) => Number(req.query[k]));
-  if (!species || box.some((n) => !Number.isFinite(n))) {
-    return res
-      .status(400)
-      .json({ error: "Expected query params: species, minLon, minLat, maxLon, maxLat." });
-  }
-  let [minLon, minLat, maxLon, maxLat] = box;
-  if (minLon > maxLon) [minLon, maxLon] = [maxLon, minLon];
-  if (minLat > maxLat) [minLat, maxLat] = [maxLat, minLat];
-  if (maxLon - minLon > 4 || maxLat - minLat > 4) {
-    return res.status(400).json({ error: "Bounding box too large (max 4 degrees per side)." });
-  }
-  const staticOnly = req.query.static === "1";
-
-  let asOf = new Date();
-  const dateParam = String(req.query.date ?? "");
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
-    const parsed = new Date(`${dateParam}T12:00:00Z`);
-    const min = new Date(Date.now() - 120 * 86400_000);
-    if (!Number.isNaN(parsed.getTime()) && parsed >= min && parsed <= new Date()) {
-      asOf = parsed;
-    }
-  }
-
   const centerLat = (minLat + maxLat) / 2;
   const centerLon = (minLon + maxLon) / 2;
   let rain14: number | null = null;
@@ -445,32 +441,27 @@ app.get("/api/hotspots", async (req, res) => {
     console.error("SMHI fetch failed:", err);
   }
   const rainFactor = rain14 === null ? 0.5 : Math.min(1, rain14 / 60);
-  const seasonAtCenter = seasonalFactor(species, centerLat, asOf);
 
   const span = Math.max(maxLon - minLon, maxLat - minLat);
   let forestPolys: [number, number][][] = [];
   let exclusions: Exclusions = { polys: [], lines: [] };
   if (span <= 2) {
-    try {
-      forestPolys = await forestPolygonsForBox(minLon, minLat, maxLon, maxLat);
-    } catch (err) {
-      console.error("Forest layer fetch failed:", err);
-    }
-    try {
-      exclusions = await exclusionsForBox(minLon, minLat, maxLon, maxLat);
-    } catch (err) {
-      console.error("Exclusion layer fetch failed:", err);
-    }
+    const [f, x] = await Promise.allSettled([
+      forestPolygonsForBox(minLon, minLat, maxLon, maxLat),
+      exclusionsForBox(minLon, minLat, maxLon, maxLat),
+    ]);
+    if (f.status === "fulfilled") forestPolys = f.value;
+    else console.error("Forest layer fetch failed:", f.reason);
+    if (x.status === "fulfilled") exclusions = x.value;
+    else console.error("Exclusion layer fetch failed:", x.reason);
   }
 
   const store = await getLayerStore();
   const clearcuts = store.vectors.get("avverkningar");
 
-  let cell = 0.00003;
-  while (span / cell > 60) cell *= 2;
   const startLon = Math.floor(minLon / cell) * cell;
   const startLat = Math.floor(minLat / cell) * cell;
-  const features = [];
+  const cells: CellScore[] = [];
   for (let lat = startLat; lat < maxLat; lat += cell) {
     for (let lon = startLon; lon < maxLon; lon += cell) {
       const clat = lat + cell / 2;
@@ -501,33 +492,63 @@ app.get("/api/hotspots", async (req, res) => {
       const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * rainFactor;
       const score = Math.round(100 * habitat * dynamic);
       const heat = Math.min(1, Math.max(0, (score - 60) / 40));
-      features.push({
-        type: "Feature",
-        properties: { score, heat: Number(heat.toFixed(3)) },
-        geometry: { type: "Point", coordinates: [clon, clat] },
-      });
+      cells.push({ lon: clon, lat: clat, score, heat: Number(heat.toFixed(3)) });
     }
   }
-  res.json({
-    type: "FeatureCollection",
+  return {
+    cells,
     meta: {
       species: key,
       label: species.label,
       rain14,
       rainFactor: Number(rainFactor.toFixed(3)),
-      seasonFactor: Number(seasonAtCenter.toFixed(2)),
+      seasonFactor: Number(seasonalFactor(species, centerLat, asOf).toFixed(2)),
       staticOnly,
       asOf: asOf.toISOString().slice(0, 10),
       forestAreas: forestPolys.length,
       excludedAreas: exclusions.polys.length,
       layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
+    },
+  };
+}
+
+app.get("/api/hotspots", async (req, res) => {
+  const key = String(req.query.species ?? "");
+  const species = SPECIES[key];
+  const box = ["minLon", "minLat", "maxLon", "maxLat"].map((k) => Number(req.query[k]));
+  if (!species || box.some((n) => !Number.isFinite(n))) {
+    return res
+      .status(400)
+      .json({ error: "Expected query params: species, minLon, minLat, maxLon, maxLat." });
+  }
+  let [minLon, minLat, maxLon, maxLat] = box;
+  if (minLon > maxLon) [minLon, maxLon] = [maxLon, minLon];
+  if (minLat > maxLat) [minLat, maxLat] = [maxLat, minLat];
+  if (maxLon - minLon > 4 || maxLat - minLat > 4) {
+    return res.status(400).json({ error: "Bounding box too large (max 4 degrees per side)." });
+  }
+  const staticOnly = req.query.static === "1";
+  const asOf = parseAsOf(String(req.query.date ?? ""));
+
+  const span = Math.max(maxLon - minLon, maxLat - minLat);
+  let cell = 0.00003;
+  while (span / cell > 60) cell *= 2;
+  const { cells, meta } = await computeCells(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
+  const features = cells.map((c) => ({
+    type: "Feature",
+    properties: { score: c.score, heat: c.heat },
+    geometry: { type: "Point", coordinates: [c.lon, c.lat] },
+  }));
+  res.json({
+    type: "FeatureCollection",
+    meta: {
+      ...meta,
       layers: [
         "smhi-precip-14d",
         "osm-forest-mask",
         "osm-exclusions(water/urban/roads/buildings)",
         "dem-water-cutoff",
-        ...store.rasters.keys(),
-        ...store.vectors.keys(),
+        ...(meta.layersLoaded as string[]),
       ],
       generatedAt: new Date().toISOString(),
     },
@@ -610,6 +631,218 @@ app.get("/api/hillshade", async (req, res) => {
   res.setHeader("Content-Type", "image/png");
   res.setHeader("Cache-Control", "no-cache");
   res.send(PNG.sync.write(png));
+});
+
+const TILES_DIR = path.join(here, "..", "data", "tiles");
+
+function tileBBox(z: number, x: number, y: number) {
+  const n = 2 ** z;
+  const minLon = (x / n) * 360 - 180;
+  const maxLon = ((x + 1) / n) * 360 - 180;
+  const latOf = (yy: number) => (Math.atan(Math.sinh(Math.PI * (1 - (2 * yy) / n))) * 180) / Math.PI;
+  return { minLon, minLat: latOf(y + 1), maxLon, maxLat: latOf(y) };
+}
+
+const HEAT_RAMP: [number, [number, number, number]][] = [
+  [0.08, [255, 255, 204]],
+  [0.2, [255, 237, 160]],
+  [0.32, [254, 217, 118]],
+  [0.45, [254, 178, 76]],
+  [0.58, [253, 141, 60]],
+  [0.72, [244, 109, 67]],
+  [0.85, [215, 48, 39]],
+  [1, [189, 0, 38]],
+];
+
+function heatColor(heat: number): [number, number, number, number] {
+  if (heat <= 0) return [0, 0, 0, 0];
+  let i = 0;
+  while (i < HEAT_RAMP.length - 2 && HEAT_RAMP[i + 1][0] < heat) i++;
+  const [h0, c0] = HEAT_RAMP[i];
+  const [h1, c1] = HEAT_RAMP[i + 1];
+  const t = h1 === h0 ? 1 : Math.min(1, Math.max(0, (heat - h0) / (h1 - h0)));
+  return [
+    Math.round(c0[0] + (c1[0] - c0[0]) * t),
+    Math.round(c0[1] + (c1[1] - c0[1]) * t),
+    Math.round(c0[2] + (c1[2] - c0[2]) * t),
+    220,
+  ];
+}
+
+app.get("/api/meta", async (req, res) => {
+  const key = String(req.query.species ?? "kantarell");
+  const species = SPECIES[key];
+  if (!species) return res.status(400).json({ error: "Okänd art." });
+  const asOf = parseAsOf(String(req.query.date ?? ""));
+  let rain14: number | null = null;
+  try {
+    rain14 = await rainLast14Days(62.5, 15.5, asOf);
+  } catch (err) {
+    console.error("SMHI fetch failed:", err);
+  }
+  const store = await getLayerStore();
+  res.json({
+    species: key,
+    label: species.label,
+    rain14,
+    rainFactor: rain14 === null ? 0.5 : Number(Math.min(1, rain14 / 60).toFixed(3)),
+    seasonFactor: Number(seasonalFactor(species, 62.5, asOf).toFixed(2)),
+    asOf: asOf.toISOString().slice(0, 10),
+    layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
+  });
+});
+
+app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
+  const key = req.params.species;
+  if (!SPECIES[key]) return res.status(404).json({ error: "Okänd art." });
+  const z = Number(req.params.z);
+  const x = Number(req.params.x);
+  const y = Number(req.params.y);
+  if (![z, x, y].every(Number.isInteger) || z < 3 || z > 17) {
+    return res.status(400).json({ error: "Ogiltig tile." });
+  }
+  const sens = Math.max(-10, Math.min(10, Math.round(Number(req.query.sens ?? 0) || 0)));
+  const dateParam = String(req.query.date ?? "");
+  const asOf = parseAsOf(dateParam);
+  const staticOnly = req.query.static === "1";
+  const bbox = tileBBox(z, x, y);
+  const cacheFile = path.join(
+    TILES_DIR, "habitat", key, staticOnly ? "static" : "live", dateParam || "now", String(sens), String(z), `${x}_${y}.png`,
+  );
+  const cacheControl = dateParam || staticOnly ? "public, max-age=86400" : "public, max-age=21600";
+  if (fs.existsSync(cacheFile)) {
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", cacheControl);
+    return res.send(await fsp.readFile(cacheFile));
+  }
+  const span = Math.max(bbox.maxLon - bbox.minLon, bbox.maxLat - bbox.minLat);
+  const cell = span / 128;
+  const { cells } = await computeCells(key, bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat, cell, asOf, staticOnly);
+  const startLon = Math.floor(bbox.minLon / cell) * cell;
+  const startLat = Math.floor(bbox.minLat / cell) * cell;
+  const cols = Math.max(1, Math.ceil((bbox.maxLon - startLon) / cell));
+  const rows = Math.max(1, Math.ceil((bbox.maxLat - startLat) / cell));
+  const grid: (CellScore | null)[][] = Array.from({ length: rows }, () => Array(cols).fill(null));
+  for (const c of cells) {
+    const i = Math.floor((c.lon - startLon) / cell);
+    const j = Math.floor((c.lat - startLat) / cell);
+    if (j >= 0 && j < rows && i >= 0 && i < cols) grid[j][i] = c;
+  }
+  const size = 256;
+  const png = new PNG({ width: size, height: size });
+  const n = 2 ** z;
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      const wx = (x + (px + 0.5) / size) / n;
+      const wy = (y + (py + 0.5) / size) / n;
+      const lon = wx * 360 - 180;
+      const lat = (Math.atan(Math.sinh(Math.PI * (1 - 2 * wy))) * 180) / Math.PI;
+      const i = Math.floor((lon - startLon) / cell);
+      const j = Math.floor((lat - startLat) / cell);
+      const c = j >= 0 && j < rows && i >= 0 && i < cols ? grid[j][i] : null;
+      const heat = c ? Math.min(1, Math.max(0, (c.score - (60 + sens)) / 40)) : 0;
+      const [r, g, b, a] = heatColor(heat);
+      const idx = (py * size + px) * 4;
+      png.data[idx] = r;
+      png.data[idx + 1] = g;
+      png.data[idx + 2] = b;
+      png.data[idx + 3] = a;
+    }
+  }
+  const buf = PNG.sync.write(png);
+  await fsp.mkdir(path.dirname(cacheFile), { recursive: true });
+  await fsp.writeFile(cacheFile, buf);
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", cacheControl);
+  res.send(buf);
+});
+
+app.get("/api/tiles/hillshade/:z/:x/:y.png", async (req, res) => {
+  const z = Number(req.params.z);
+  const x = Number(req.params.x);
+  const y = Number(req.params.y);
+  if (![z, x, y].every(Number.isInteger) || z < 3 || z > 17) {
+    return res.status(400).json({ error: "Ogiltig tile." });
+  }
+  const bbox = tileBBox(z, x, y);
+  const cacheFile = path.join(TILES_DIR, "hillshade", String(z), `${x}_${y}.png`);
+  if (fs.existsSync(cacheFile)) {
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    return res.send(await fsp.readFile(cacheFile));
+  }
+  const store = await getLayerStore();
+  const dem = store.rasters.get("hojd");
+  if (!dem) return res.status(404).json({ error: "hojdmodell saknas." });
+  const [w, s] = toSWEREF(bbox.minLon, bbox.minLat);
+  const [e, n] = toSWEREF(bbox.maxLon, bbox.maxLat);
+  const minE = Math.min(w, e);
+  const maxE = Math.max(w, e);
+  const minN = Math.min(s, n);
+  const maxN = Math.max(s, n);
+  const px0 = Math.max(0, Math.floor((minE - dem.originX) / dem.pixelX));
+  const px1 = Math.min(dem.width, Math.ceil((maxE - dem.originX) / dem.pixelX));
+  const py0 = Math.max(0, Math.floor((maxN - dem.originY) / dem.pixelY));
+  const py1 = Math.min(dem.height, Math.ceil((minN - dem.originY) / dem.pixelY));
+  const size = 256;
+  const png = new PNG({ width: size, height: size });
+  if (px1 - px0 < 2 || py1 - py0 < 2) {
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    return res.send(PNG.sync.write(png));
+  }
+  const arr = await dem.readWindow(px0, py0, px1, py1);
+  const bands = dem.bands();
+  const winW = px1 - px0;
+  const winH = py1 - py0;
+  const cs = dem.pixelX;
+  const at = (xx: number, yy: number): number => {
+    const v = arr[(yy * winW + xx) * bands];
+    return typeof v === "number" ? v : NaN;
+  };
+  const zenith = (45 * Math.PI) / 180;
+  const azimuth = (315 * Math.PI) / 180;
+  const n2 = 2 ** z;
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      const wx = (x + (px + 0.5) / size) / n2;
+      const wy = (y + (py + 0.5) / size) / n2;
+      const lon = wx * 360 - 180;
+      const lat = (Math.atan(Math.sinh(Math.PI * (1 - 2 * wy))) * 180) / Math.PI;
+      const [ee, nn] = toSWEREF(lon, lat);
+      const sx = Math.round((ee - dem.originX) / dem.pixelX) - px0;
+      const sy = Math.round((nn - dem.originY) / dem.pixelY) - py0;
+      const idx = (py * size + px) * 4;
+      if (sx < 1 || sy < 1 || sx >= winW - 1 || sy >= winH - 1) {
+        png.data[idx + 3] = 0;
+        continue;
+      }
+      const z0 = at(sx, sy);
+      if (!Number.isFinite(z0)) {
+        png.data[idx + 3] = 0;
+        continue;
+      }
+      const dzdx = (at(sx + 1, sy) - at(sx - 1, sy)) / (2 * cs);
+      const dzdy = (at(sx, sy + 1) - at(sx, sy - 1)) / (2 * cs);
+      const slope = Math.atan(Math.hypot(dzdx, dzdy));
+      const aspect = Math.atan2(dzdy, -dzdx);
+      const shade =
+        255 *
+        (Math.cos(zenith) * Math.cos(slope) +
+          Math.sin(zenith) * Math.sin(slope) * Math.cos(azimuth - aspect));
+      const v = Math.max(0, Math.min(255, Math.round(shade)));
+      png.data[idx] = v;
+      png.data[idx + 1] = v;
+      png.data[idx + 2] = v;
+      png.data[idx + 3] = 170;
+    }
+  }
+  const buf = PNG.sync.write(png);
+  await fsp.mkdir(path.dirname(cacheFile), { recursive: true });
+  await fsp.writeFile(cacheFile, buf);
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  res.send(buf);
 });
 
 const port = Number(process.env.PORT ?? 3000);

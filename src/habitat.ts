@@ -12,6 +12,8 @@ export type SpeciesProfile = {
   sun: number;
   depression: number;
   edge: number;
+  hosts: Record<string, number>;
+  grundyta: [number, number];
 };
 
 export type HabitatContext = {
@@ -35,6 +37,8 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     sun: 1,
     depression: 0.3,
     edge: 1,
+    hosts: { bjork: 1, ek: 1, bok: 1, gran: 0.8, tall: 0.6 },
+    grundyta: [12, 35],
   },
   trattkantarell: {
     label: "Trattkantarell",
@@ -48,6 +52,8 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     sun: -1,
     depression: 1,
     edge: 0.2,
+    hosts: { gran: 1, tall: 0.5, bjork: 0.2 },
+    grundyta: [25, 60],
   },
   karljohan: {
     label: "Karljohan",
@@ -61,6 +67,8 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     sun: 0.5,
     depression: 0.2,
     edge: 0.5,
+    hosts: { gran: 1, ek: 0.9, bok: 0.9, bjork: 0.8, tall: 0.5 },
+    grundyta: [15, 40],
   },
   "svart-trumpetsvamp": {
     label: "Svart trumpetsvamp",
@@ -74,6 +82,8 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     sun: -1,
     depression: 1,
     edge: 0.3,
+    hosts: { ek: 1, hassel: 1, bok: 1, bjork: 0.3 },
+    grundyta: [20, 45],
   },
 };
 
@@ -130,6 +140,31 @@ export async function staticHabitatScore(
     const v = await volume.sample(easting, northing);
     if (v !== null) habitat *= clamp01(v / species.minVolume);
   }
+
+  let hostVol = 0;
+  let anyHost = false;
+  for (const [tree, w] of Object.entries(species.hosts)) {
+    const layer = store.rasters.get(tree);
+    if (!layer) continue;
+    const v = await layer.sample(easting, northing);
+    if (v !== null) {
+      anyHost = true;
+      hostVol += v * w;
+    }
+  }
+  if (anyHost) habitat *= clamp01(hostVol / species.minVolume);
+
+  const grundyta = store.rasters.get("grundyta");
+  if (grundyta) {
+    const v = await grundyta.sample(easting, northing);
+    if (v !== null) {
+      const [lo, hi] = species.grundyta;
+      habitat *= v < lo ? clamp01(v / lo) : v > hi ? clamp01(1 - (v - hi) / hi) : 1;
+    }
+  }
+
+  const keyBiotope = store.vectors.get("nyckelbiotoper");
+  if (keyBiotope && keyBiotope.contains(easting, northing)) habitat *= 1.3;
 
   const moisture = store.rasters.get("markfuktighet");
   if (moisture) {
