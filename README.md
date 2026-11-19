@@ -139,7 +139,26 @@ real hotspots glow (pinpoint mode). `static=1` shows layers 1–7 only.
 
 ## How the hotspot score works
 
-Each map cell gets `score = static habitat score × dynamic fruiting multiplier` (0–100):
+Gated biological equation per cell:
+`score = G_hard × G_host × S_env × M_bonus × D_weather` (0–100):
+
+- **G_hard** (0/1): zero if outside the OSM forest mask, inside an OSM exclusion
+  (water/buildings/roads/urban/military/landfill…), inside a clear-cut, or DEM
+  elevation < 0.5 m (sea).
+- **G_host** (0–1): obligate mycorrhizal gate from the per-species volume rasters
+  (gran/tall/björk/ek/bok) — below the species' minimum host volume the cell is 0;
+  above it, ramps 0.2→1.0. Falls back to total `volym` (flagged via `hostFallback`
+  in `/api/meta`) when species rasters are missing.
+- **S_env** = 100 × (0.35·moisture + 0.25·maturity + 0.20·canopy + 0.10·soil + 0.10·terrain),
+  with hard env vetoes per species (e.g. trädhöjd < min, markfuktighet class veto).
+- **M_bonus**: ×1.3 inside nyckelbiotoper, up to ×1.15 at forest edges (species-weighted).
+- **D_weather** = SMHI 14-day rain factor × latitude-shifted season × frost cutoff
+  (0 for frost-sensitive species if min temp last 48 h ≤ −3 °C; SMHI metobs param 1).
+
+Weather (rain + min temp) is cached 6 h per location and pre-warmed every 6 h for a
+~30-point grid over Sweden, so requests never hit SMHI live after startup.
+
+Each map cell gets `score` as above (0–100):
 
 - **Dynamic multiplier** — computed per request from SMHI Open Data (metobs API,
   parameter 5 = daily precipitation, `latest-months` period): the summed rain over the

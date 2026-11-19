@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
 import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
-import { SPECIES, seasonalFactor, staticHabitatScore } from "./habitat.js";
+import { SPECIES, hostFallback, seasonalFactor, staticHabitatScore } from "./habitat.js";
 
 const MODEL = "mistral-small-latest";
 const SYSTEM_PROMPT =
@@ -136,6 +136,38 @@ async function rainLast14Days(lat: number, lon: number, asOf: Date): Promise<num
     .reduce((sum, v) => sum + Number(v.value), 0);
   rainCache.set(key, { at: Date.now(), rain14 });
   return rain14;
+}
+
+const TEMP_PARAMETER = "1";
+const tempCache = new Map<string, { at: number; min48: number | null }>();
+
+async function minTempLast48h(lat: number, lon: number): Promise<number | null> {
+  const key = `${lat.toFixed(1)},${lon.toFixed(1)}`;
+  const cached = tempCache.get(key);
+  if (cached && Date.now() - cached.at < 6 * 3600 * 1000) return cached.min48;
+  try {
+    const stations = await getStations();
+    const active = stations.filter((s) => s.active);
+    const station = nearestStation(active.length > 0 ? active : stations, lat, lon);
+    const r = await fetch(
+      `${SMHI_BASE}/parameter/${TEMP_PARAMETER}/station/${station.id}/period/latest-months/data.json`,
+      { signal: AbortSignal.timeout(20_000) },
+    );
+    if (!r.ok) throw new Error(`SMHI temp: HTTP ${r.status}`);
+    const body = (await r.json()) as { value?: { to?: unknown; date?: unknown; value?: unknown }[] };
+    const values = (body.value ?? [])
+      .map((v) => ({ to: Number(v.to ?? v.date), value: v.value }))
+      .filter((v) => Number.isFinite(v.to) && typeof v.value === "string")
+      .sort((a, b) => a.to - b.to);
+    const cutoff = Date.now() - 48 * 3600 * 1000;
+    const recent = values.filter((v) => v.to >= cutoff).map((v) => Number(v.value));
+    const min48 = recent.length > 0 ? Math.min(...recent) : null;
+    tempCache.set(key, { at: Date.now(), min48 });
+    return min48;
+  } catch (err) {
+    console.error("SMHI temp fetch failed:", err);
+    return null;
+  }
 }
 
 const OVERPASS_HOSTS = [
@@ -481,6 +513,12 @@ async function computeCells(
     console.error("SMHI fetch failed:", err);
   }
   const rainFactor = rain14 === null ? 0.5 : Math.min(1, rain14 / 60);
+  let minTemp: number | null = null;
+  let frost = 1;
+  if (!staticOnly) {
+    minTemp = await minTempLast48h(centerLat, centerLon);
+    if (species.frostSensitive && minTemp !== null && minTemp <= -3) frost = 0;
+  }
 
   const span = Math.max(maxLon - minLon, maxLat - minLat);
   let forestPolys: [number, number][][] = [];
@@ -529,8 +567,8 @@ async function computeCells(
         roadFactor,
         forestEdge,
       });
-      const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * rainFactor;
-      const score = Math.round(100 * habitat * dynamic);
+      const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * rainFactor * frost;
+      const score = Math.min(100, Math.round(100 * habitat * dynamic));
       const heat = heatOf(score, 0);
       cells.push({ lon: clon, lat: clat, score, heat: Number(heat.toFixed(3)) });
     }
@@ -543,6 +581,9 @@ async function computeCells(
       rain14,
       rainFactor: Number(rainFactor.toFixed(3)),
       seasonFactor: Number(seasonalFactor(species, centerLat, asOf).toFixed(2)),
+      minTemp48h: minTemp,
+      frost,
+      hostFallback: hostFallback(store),
       staticOnly,
       asOf: asOf.toISOString().slice(0, 10),
       forestAreas: forestPolys.length,
@@ -730,12 +771,17 @@ app.get("/api/meta", async (req, res) => {
     forestPolygonsForBox(17.6, 59.0, 18.4, 59.6),
     exclusionsForBox(17.6, 59.0, 18.4, 59.6),
   ]);
+  const minTemp = await minTempLast48h(62.5, 15.5);
+  const frost = species.frostSensitive && minTemp !== null && minTemp <= -3 ? 0 : 1;
   res.json({
     species: key,
     label: species.label,
     rain14,
     rainFactor: rain14 === null ? 0.5 : Number(Math.min(1, rain14 / 60).toFixed(3)),
     seasonFactor: Number(seasonalFactor(species, 62.5, asOf).toFixed(2)),
+    minTemp48h: minTemp,
+    frost,
+    hostFallback: hostFallback(store),
     asOf: asOf.toISOString().slice(0, 10),
     layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
     forestAreas: f.status === "fulfilled" ? f.value.length : 0,
@@ -768,7 +814,7 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
   }
   const span = Math.max(bbox.maxLon - bbox.minLon, bbox.maxLat - bbox.minLat);
   const cell = cellForSpan(span);
-  const M = 8;
+  const M = 12;
   const eMinLon = bbox.minLon - M * cell;
   const eMaxLon = bbox.maxLon + M * cell;
   const eMinLat = bbox.minLat - M * cell;
@@ -822,7 +868,7 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
       }
     }
   }
-  const BLUR = 4;
+  const BLUR = 6;
   for (let pass = 0; pass < 3; pass++) {
     const src = Buffer.from(img);
     for (let py = 0; py < H; py++) {
@@ -975,3 +1021,23 @@ const port = Number(process.env.PORT ?? 3000);
 app.listen(port, () => {
   console.log(`Chat app running at http://localhost:${port}`);
 });
+
+const PREWARM_POINTS: [number, number][] = [];
+for (let lat = 55; lat <= 65; lat += 2) {
+  for (let lon = 11; lon <= 23; lon += 3) PREWARM_POINTS.push([lat, lon]);
+}
+PREWARM_POINTS.push([59.35, 18.05]);
+
+async function prewarmWeather(): Promise<void> {
+  for (const [lat, lon] of PREWARM_POINTS) {
+    try {
+      await rainLast14Days(lat, lon, new Date());
+      await minTempLast48h(lat, lon);
+    } catch {
+      /* cached or failed; next interval retries */
+    }
+  }
+}
+
+setInterval(() => void prewarmWeather(), 6 * 3600 * 1000);
+void prewarmWeather();
