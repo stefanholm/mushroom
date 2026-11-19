@@ -91,6 +91,12 @@ export class RasterLayer {
     return v;
   }
 
+  has(easting: number, northing: number): boolean {
+    const px = Math.floor((easting - this.originX) / this.pixelX);
+    const py = Math.floor((northing - this.originY) / this.pixelY);
+    return px >= 0 && py >= 0 && px < this.width && py < this.height;
+  }
+
   async sample(easting: number, northing: number): Promise<number | null> {
     await this.ensureData();
     const px = Math.floor((easting - this.originX) / this.pixelX);

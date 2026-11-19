@@ -73,13 +73,21 @@ for the same area; restart the server to reload layers.
 
 Static (where mycelium *can* live), sampled per map cell:
 
-1. **OSM forest mask** — Overpass (`landuse=forest`/`natural=wood`), cached 24 h. Hard filter: non-forest ≈ 0.
+1. **OSM forest mask** — Overpass (`landuse=forest`/`natural=wood`/`natural=scrub`), cached 24 h. Hard filter: non-forest ≈ 0.
+   1b. **Forest-edge bonus** — cells within ~100 m of the forest boundary get a species-weighted bonus (kantarell loves edges/paths).
+2. **Negative OSM layers** — Overpass, cached 24 h, multiple fallback hosts: hard zero inside `natural=water`, `waterway`, `building=*`, `landuse=industrial|commercial|residential|urban|cemetery|allotments|quarry`, `leisure=pitch|golf_course`; ×0.2 within 30 m of any `highway`/`railway`/`aeroway`.
+3. **DEM water cutoff** — with the höjdmodell loaded, in-coverage cells with nodata or elevation < 0.5 m are sea/water → hard zero (works even if Overpass is unreachable).
 2. **Trädhöjd** (`tradhojd`, SLU Skogskarta/Skogliga grunddata) — stand maturity threshold per species.
 3. **Volym** (`volym`, SLU) — same, volume-based.
 4. **Markfuktighet** (`markfuktighet`, SLU Markfuktighetskarta, class 1–5) — per-species moisture preference.
 5. **Jordart** (`jordart`, SGU) — acidic vs calcareous soil per species.
 6. **Höjdmodell** (`hojd`, Lantmäteriet NH) — derived in code: **aspect → sun exposure** (south-facing = sunny/warm) and **depression depth** (crevasses/svackor: lower than the surrounding 250 m ring).
 7. **Avverkningar** (`avverkningar`, Skogsstyrelsen, vector) — hard zero inside recent clear-cuts.
+
+Out-of-the-box ideas for later: Artportalen observations as a validation/training layer,
+Sentinel-2 NDVI greenness, SMHI radar (PMP) for spatial rain variation instead of one
+station, `highway=path`/`footway` proximity as a positive layer (kantarell along trails),
+and soil pH from SGU berggrund in addition to jordart.
 
 Dynamic (when it *fruits*), from SMHI metobs (`latest-months`):
 

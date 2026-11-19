@@ -135,7 +135,40 @@ async function rainLast14Days(lat: number, lon: number, asOf: Date): Promise<num
   return rain14;
 }
 
-const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+const OVERPASS_HOSTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+];
+
+async function overpassQuery(q: string): Promise<{ elements?: { tags?: Record<string, string>; geometry?: { lat: number; lon: number }[] }[] }> {
+  let lastErr: unknown = new Error("no host");
+  for (const host of OVERPASS_HOSTS) {
+    try {
+      const r = await fetch(host, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "data=" + encodeURIComponent(q),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return (await r.json()) as { elements?: { tags?: Record<string, string>; geometry?: { lat: number; lon: number }[] }[] };
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+function gridKey(minLon: number, minLat: number, maxLon: number, maxLat: number): [number, number, number, number, string] {
+  const g = 0.5;
+  const kMinLon = Math.floor(minLon / g) * g;
+  const kMinLat = Math.floor(minLat / g) * g;
+  const kMaxLon = Math.ceil(maxLon / g) * g;
+  const kMaxLat = Math.ceil(maxLat / g) * g;
+  return [kMinLon, kMinLat, kMaxLon, kMaxLat, `${kMinLon},${kMinLat},${kMaxLon},${kMaxLat}`];
+}
+
 const forestCache = new Map<string, { at: number; polys: [number, number][][] }>();
 
 async function forestPolygonsForBox(
@@ -144,23 +177,12 @@ async function forestPolygonsForBox(
   maxLon: number,
   maxLat: number,
 ): Promise<[number, number][][]> {
-  const g = 0.5;
-  const kMinLon = Math.floor(minLon / g) * g;
-  const kMinLat = Math.floor(minLat / g) * g;
-  const kMaxLon = Math.ceil(maxLon / g) * g;
-  const kMaxLat = Math.ceil(maxLat / g) * g;
-  const key = `${kMinLon},${kMinLat},${kMaxLon},${kMaxLat}`;
+  const [kMinLon, kMinLat, kMaxLon, kMaxLat, key] = gridKey(minLon, minLat, maxLon, maxLat);
   const cached = forestCache.get(key);
   if (cached && Date.now() - cached.at < 24 * 3600 * 1000) return cached.polys;
-  const q = `[out:json][timeout:60];(way["landuse"="forest"](${kMinLat},${kMinLon},${kMaxLat},${kMaxLon});way["natural"="wood"](${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}););out geom;`;
-  const r = await fetch(OVERPASS_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: "data=" + encodeURIComponent(q),
-    signal: AbortSignal.timeout(90_000),
-  });
-  if (!r.ok) throw new Error(`Overpass: HTTP ${r.status}`);
-  const body = (await r.json()) as { elements?: { geometry?: { lat: number; lon: number }[] }[] };
+  const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
+  const q = `[out:json][timeout:60];(way["landuse"="forest"](${b});way["natural"="wood"](${b});way["natural"="scrub"](${b}););out geom;`;
+  const body = await overpassQuery(q);
   const polys = (body.elements ?? [])
     .map((e) => (e.geometry ?? []).map((p) => [p.lon, p.lat] as [number, number]))
     .filter((ring) => ring.length >= 3);
@@ -168,7 +190,61 @@ async function forestPolygonsForBox(
   return polys;
 }
 
-function pointInForest(polys: [number, number][][], lon: number, lat: number): boolean {
+type Exclusions = { polys: [number, number][][]; lines: [number, number][][] };
+const exclusionCache = new Map<string, { at: number; ex: Exclusions }>();
+
+async function exclusionsForBox(
+  minLon: number,
+  minLat: number,
+  maxLon: number,
+  maxLat: number,
+): Promise<Exclusions> {
+  const [kMinLon, kMinLat, kMaxLon, kMaxLat, key] = gridKey(minLon, minLat, maxLon, maxLat);
+  const cached = exclusionCache.get(key);
+  if (cached && Date.now() - cached.at < 24 * 3600 * 1000) return cached.ex;
+  const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
+  const area = `way["natural"="water"](${b});way["waterway"](${b});way["building"](${b});way["landuse"~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry)$"](${b});way["leisure"~"^(pitch|golf_course)$"](${b});`;
+  const lines = `way["highway"](${b});way["railway"](${b});way["aeroway"](${b});`;
+  const q = `[out:json][timeout:60];(${area}${lines});out geom;`;
+  const body = await overpassQuery(q);
+  const ex: Exclusions = { polys: [], lines: [] };
+  for (const e of body.elements ?? []) {
+    const ring = (e.geometry ?? []).map((p) => [p.lon, p.lat] as [number, number]);
+    if (ring.length < 2) continue;
+    const t = e.tags ?? {};
+    if (t.highway || t.railway || t.aeroway) ex.lines.push(ring);
+    else ex.polys.push(ring);
+  }
+  exclusionCache.set(key, { at: Date.now(), ex });
+  return ex;
+}
+
+function distToLinesMeters(lines: [number, number][][], lon: number, lat: number): number {
+  const cosLat = Math.cos((lat * Math.PI) / 180);
+  let best = Infinity;
+  for (const line of lines) {
+    for (let i = 0; i + 1 < line.length; i++) {
+      const [x1, y1] = line[i];
+      const [x2, y2] = line[i + 1];
+      const ax = (x1 - lon) * 111320 * cosLat;
+      const ay = (y1 - lat) * 110540;
+      const bx = (x2 - lon) * 111320 * cosLat;
+      const by = (y2 - lat) * 110540;
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      let t = len2 === 0 ? 0 : (-(ax * dx + ay * dy)) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const px = ax + t * dx;
+      const py = ay + t * dy;
+      const d = Math.hypot(px, py);
+      if (d < best) best = d;
+    }
+  }
+  return best;
+}
+
+function pointInPolygon(polys: [number, number][][], lon: number, lat: number): boolean {
   for (const ring of polys) {
     let minX = Infinity;
     let maxX = -Infinity;
@@ -250,29 +326,54 @@ app.get("/api/hotspots", async (req, res) => {
   const rainFactor = rain14 === null ? 0.5 : Math.min(1, rain14 / 60);
   const seasonAtCenter = seasonalFactor(species, centerLat, asOf);
 
+  const span = Math.max(maxLon - minLon, maxLat - minLat);
   let forestPolys: [number, number][][] = [];
-  if (Math.max(maxLon - minLon, maxLat - minLat) <= 2) {
+  let exclusions: Exclusions = { polys: [], lines: [] };
+  if (span <= 2) {
     try {
       forestPolys = await forestPolygonsForBox(minLon, minLat, maxLon, maxLat);
     } catch (err) {
       console.error("Forest layer fetch failed:", err);
+    }
+    try {
+      exclusions = await exclusionsForBox(minLon, minLat, maxLon, maxLat);
+    } catch (err) {
+      console.error("Exclusion layer fetch failed:", err);
     }
   }
 
   const store = await getLayerStore();
   const clearcuts = store.vectors.get("avverkningar");
 
-  const span = Math.max(maxLon - minLon, maxLat - minLat);
-  const cell = Math.max(span / 60, span / 64, 0.00003);
+  const cell = Math.max(span / 60, 0.00003);
   const features = [];
   for (let lat = minLat; lat < maxLat; lat += cell) {
     for (let lon = minLon; lon < maxLon; lon += cell) {
       const clat = lat + cell / 2;
       const clon = lon + cell / 2;
-      const inForest = forestPolys.length === 0 || pointInForest(forestPolys, clon, clat);
+      const inForest = forestPolys.length === 0 || pointInPolygon(forestPolys, clon, clat);
+      const excluded =
+        exclusions.polys.length > 0 && pointInPolygon(exclusions.polys, clon, clat);
+      const roadFactor =
+        exclusions.lines.length > 0 && distToLinesMeters(exclusions.lines, clon, clat) < 30
+          ? 0.2
+          : 1;
+      const forestEdge =
+        inForest &&
+        forestPolys.length > 0 &&
+        (!pointInPolygon(forestPolys, clon + 0.001, clat) ||
+          !pointInPolygon(forestPolys, clon - 0.001, clat) ||
+          !pointInPolygon(forestPolys, clon, clat + 0.001) ||
+          !pointInPolygon(forestPolys, clon, clat - 0.001));
       const [e, n] = toSWEREF(clon, clat);
       const inClearcut = clearcuts ? clearcuts.contains(e, n) : false;
-      const habitat = await staticHabitatScore(store, key, clon, clat, inForest, inClearcut);
+      const habitat = await staticHabitatScore(store, key, clon, clat, {
+        forestOk: inForest,
+        inClearcut,
+        excluded,
+        roadFactor,
+        forestEdge,
+      });
       const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * rainFactor;
       const score = Math.round(100 * habitat * dynamic);
       const heat = Math.min(1, Math.max(0, (score - 60) / 40));
@@ -294,8 +395,16 @@ app.get("/api/hotspots", async (req, res) => {
       staticOnly,
       asOf: asOf.toISOString().slice(0, 10),
       forestAreas: forestPolys.length,
+      excludedAreas: exclusions.polys.length,
       layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
-      layers: ["smhi-precip-14d", "osm-forest-mask", ...store.rasters.keys(), ...store.vectors.keys()],
+      layers: [
+        "smhi-precip-14d",
+        "osm-forest-mask",
+        "osm-exclusions(water/urban/roads/buildings)",
+        "dem-water-cutoff",
+        ...store.rasters.keys(),
+        ...store.vectors.keys(),
+      ],
       generatedAt: new Date().toISOString(),
     },
     features,

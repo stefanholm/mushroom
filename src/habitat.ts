@@ -11,6 +11,15 @@ export type SpeciesProfile = {
   soil: Record<string, number>;
   sun: number;
   depression: number;
+  edge: number;
+};
+
+export type HabitatContext = {
+  forestOk: boolean;
+  inClearcut: boolean;
+  excluded: boolean;
+  roadFactor: number;
+  forestEdge: boolean;
 };
 
 export const SPECIES: Record<string, SpeciesProfile> = {
@@ -25,6 +34,7 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     soil: { acidic: 1, calcareous: 0.6, neutral: 0.8 },
     sun: 1,
     depression: 0.3,
+    edge: 1,
   },
   trattkantarell: {
     label: "Trattkantarell",
@@ -37,6 +47,7 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     soil: { acidic: 1, calcareous: 0.4, neutral: 0.8 },
     sun: -1,
     depression: 1,
+    edge: 0.2,
   },
   karljohan: {
     label: "Karljohan",
@@ -49,6 +60,7 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     soil: { acidic: 0.9, calcareous: 0.8, neutral: 0.85 },
     sun: 0.5,
     depression: 0.2,
+    edge: 0.5,
   },
   "svart-trumpetsvamp": {
     label: "Svart trumpetsvamp",
@@ -61,6 +73,7 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     soil: { acidic: 0.4, calcareous: 1, neutral: 0.7 },
     sun: -1,
     depression: 1,
+    edge: 0.3,
   },
 };
 
@@ -96,15 +109,15 @@ export async function staticHabitatScore(
   speciesKey: string,
   lon: number,
   lat: number,
-  forestOk: boolean,
-  inClearcut: boolean,
+  ctx: HabitatContext,
 ): Promise<number> {
   const species = SPECIES[speciesKey];
-  if (inClearcut) return 0;
-  if (!forestOk) return 0.05 * species.base;
+  if (ctx.inClearcut || ctx.excluded) return 0;
+  if (!ctx.forestOk) return 0.05 * species.base;
   const [easting, northing] = toSWEREF(lon, lat);
 
-  let habitat = species.base;
+  let habitat = species.base * ctx.roadFactor;
+  if (ctx.forestEdge) habitat *= 1 + 0.15 * species.edge;
 
   const height = store.rasters.get("tradhojd");
   if (height) {
@@ -134,6 +147,10 @@ export async function staticHabitatScore(
   }
 
   const dem = store.rasters.get("hojd");
+  if (dem && dem.has(easting, northing)) {
+    const elev = await dem.sample(easting, northing);
+    if (elev === null || elev < 0.5) return 0;
+  }
   if (dem) {
     const aspect = await aspectDegrees(dem, easting, northing);
     if (aspect !== null) {

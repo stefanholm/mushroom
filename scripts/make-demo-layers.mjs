@@ -72,6 +72,7 @@ for (let j = 0; j < height; j++) {
     jordart[k] = r < 0.75 ? 1 : 2;
     hojd[k] =
       10 + 80 * (0.5 + 0.5 * Math.sin(i * 0.05) * Math.cos(j * 0.04)) + 5 * rand();
+    if (i >= 150 && i < 210 && j >= 300 && j < 390) hojd[k] = -9999;
   }
 }
 
