@@ -27,7 +27,7 @@ npm run typecheck
 ## How it works
 
 - `src/server.ts` — Express server. Serves the static UI from `public/` and exposes
-  `POST /api/chat`, which forwards the conversation to `client.chat.complete()` and returns
-  `{ "reply": "..." }`.
+  `POST /api/chat`, which prepends a Swedish system prompt, forwards the conversation to
+  `client.chat.complete()`, and returns `{ "reply": "..." }`.
 - `public/index.html` — plain HTML/JS chat interface; keeps the conversation history in the
   browser and posts it to `/api/chat` on each message.

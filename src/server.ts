@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
 
 const MODEL = "mistral-small-latest";
+const SYSTEM_PROMPT =
+  "Du är en hjälpsam assistent för svampplockning i Sverige. Svara alltid på svenska.";
 
 if (!process.env.MISTRAL_API_KEY) {
   console.error("MISTRAL_API_KEY is not set. Copy .env.example to .env and add your key.");
@@ -41,7 +43,10 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    const response = await client.chat.complete({ model: MODEL, messages });
+    const response = await client.chat.complete({
+      model: MODEL,
+      messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
+    });
     const content = response.choices?.[0]?.message?.content;
     const reply =
       typeof content === "string"
