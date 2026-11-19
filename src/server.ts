@@ -398,31 +398,35 @@ function cacheFresh(entry: { at: number; ok: boolean } | undefined): boolean {
   return Date.now() - entry.at < ttl;
 }
 
+const OSM_TILE_SIZES = [0.4, 0.2, 0.1];
+
 async function diskForestTiles(
   minLon: number,
   minLat: number,
   maxLon: number,
   maxLat: number,
 ): Promise<Poly[] | null> {
-  const g = 0.4;
-  const polys: Poly[] = [];
-  for (let i = Math.floor(minLon / g); i * g < maxLon + 1e-9; i++) {
-    for (let j = Math.floor(minLat / g); j * g < maxLat + 1e-9; j++) {
-      const key = `${(i * g).toFixed(6)},${(j * g).toFixed(6)},${((i + 1) * g).toFixed(6)},${((j + 1) * g).toFixed(6)}`;
-      let raw: unknown;
-      try {
-        raw = JSON.parse(
-          await fsp.readFile(path.join(here, "..", "data", "osm", `forest_${key}.json`), "utf8"),
-        );
-      } catch {
-        return null;
-      }
-      for (const p of Array.isArray(raw) ? raw : []) {
-        polys.push(Array.isArray(p) ? { outer: p as [number, number][], inner: [] as [number, number][][] } : (p as Poly));
+  for (const g of OSM_TILE_SIZES) {
+    const polys: Poly[] = [];
+    let allPresent = true;
+    for (let i = Math.floor(minLon / g); i * g < maxLon + 1e-9 && allPresent; i++) {
+      for (let j = Math.floor(minLat / g); j * g < maxLat + 1e-9 && allPresent; j++) {
+        const key = `${(i * g).toFixed(6)},${(j * g).toFixed(6)},${((i + 1) * g).toFixed(6)},${((j + 1) * g).toFixed(6)}`;
+        try {
+          const raw = JSON.parse(
+            await fsp.readFile(path.join(here, "..", "data", "osm", `forest_${key}.json`), "utf8"),
+          );
+          for (const p of Array.isArray(raw) ? raw : []) {
+            polys.push(Array.isArray(p) ? { outer: p as [number, number][], inner: [] as [number, number][][] } : (p as Poly));
+          }
+        } catch {
+          allPresent = false;
+        }
       }
     }
+    if (allPresent) return polys;
   }
-  return polys;
+  return null;
 }
 
 async function diskExclusionTiles(
@@ -431,26 +435,28 @@ async function diskExclusionTiles(
   maxLon: number,
   maxLat: number,
 ): Promise<Exclusions | null> {
-  const g = 0.4;
-  const ex: Exclusions = { polys: [], lines: [] };
-  for (let i = Math.floor(minLon / g); i * g < maxLon + 1e-9; i++) {
-    for (let j = Math.floor(minLat / g); j * g < maxLat + 1e-9; j++) {
-      const key = `${(i * g).toFixed(6)},${(j * g).toFixed(6)},${((i + 1) * g).toFixed(6)},${((j + 1) * g).toFixed(6)}`;
-      let raw: { polys?: unknown; lines?: unknown };
-      try {
-        raw = JSON.parse(
-          await fsp.readFile(path.join(here, "..", "data", "osm", `exclusion_${key}.json`), "utf8"),
-        );
-      } catch {
-        return null;
+  for (const g of OSM_TILE_SIZES) {
+    const ex: Exclusions = { polys: [], lines: [] };
+    let allPresent = true;
+    for (let i = Math.floor(minLon / g); i * g < maxLon + 1e-9 && allPresent; i++) {
+      for (let j = Math.floor(minLat / g); j * g < maxLat + 1e-9 && allPresent; j++) {
+        const key = `${(i * g).toFixed(6)},${(j * g).toFixed(6)},${((i + 1) * g).toFixed(6)},${((j + 1) * g).toFixed(6)}`;
+        try {
+          const raw = JSON.parse(
+            await fsp.readFile(path.join(here, "..", "data", "osm", `exclusion_${key}.json`), "utf8"),
+          ) as { polys?: unknown; lines?: unknown };
+          for (const p of Array.isArray(raw?.polys) ? raw.polys : []) {
+            ex.polys.push(Array.isArray(p) ? { outer: p as [number, number][], inner: [] as [number, number][][] } : (p as Poly));
+          }
+          for (const l of Array.isArray(raw?.lines) ? raw.lines : []) ex.lines.push(l as [number, number][]);
+        } catch {
+          allPresent = false;
+        }
       }
-      for (const p of Array.isArray(raw?.polys) ? raw.polys : []) {
-        ex.polys.push(Array.isArray(p) ? { outer: p as [number, number][], inner: [] as [number, number][][] } : (p as Poly));
-      }
-      for (const l of Array.isArray(raw?.lines) ? raw.lines : []) ex.lines.push(l as [number, number][]);
     }
+    if (allPresent) return ex;
   }
-  return ex;
+  return null;
 }
 
 async function forestPolygonsForBox(
@@ -682,9 +688,9 @@ async function computeCells(
   const useMask = store.mask !== null;
   let forestPolys: Poly[] | null = null;
   let exclusions: Exclusions | null = null;
-  if (span <= 2) {
+  if (span <= 2 && !useMask) {
     const jobs: Promise<unknown>[] = [];
-    if (!useMask) jobs.push(forestPolygonsForBox(minLon, minLat, maxLon, maxLat));
+    jobs.push(forestPolygonsForBox(minLon, minLat, maxLon, maxLat));
     jobs.push(exclusionsForBox(minLon, minLat, maxLon, maxLat));
     const settled = await Promise.allSettled(jobs);
     let idx = 0;
@@ -1199,7 +1205,7 @@ app.get("/api/debug/cell", async (req, res) => {
   const store = await getLayerStore();
   const useMask = store.mask !== null;
   const [forestPolys, exclusions] = useMask
-    ? [null, await exclusionsForBox(lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2)]
+    ? [null, null]
     : await Promise.all([
         forestPolygonsForBox(lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2),
         exclusionsForBox(lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2),
@@ -1372,10 +1378,20 @@ app.listen(port, () => {
         const j = JSON.parse(await fsp.readFile(path.join(dir, f), "utf8"));
         exclPolys += Array.isArray(j?.polys) ? j.polys.length : 0;
       }
+      let nmdOk = false;
+      try {
+        const mf = JSON.parse(await fsp.readFile(path.join(here, "..", "data", "layers", "manifest.json"), "utf8")) as { mask?: { file?: string } };
+        if (mf.mask?.file) await fsp.access(path.join(here, "..", "data", "layers", mf.mask.file));
+        nmdOk = true;
+      } catch { /* no nmd */ }
       if (forest === 0 || excl === 0 || forestRings === 0 || exclPolys === 0) {
-        console.error(
-          `VARNING: OSM-mask saknas/tom (skog-filer: ${forest} med ${forestRings} polygoner, exkl-filer: ${excl} med ${exclPolys} polygoner) — karta blir tom tills du kör: npm run osm-cache -- <minLon> <minLat> <maxLon> <maxLat>`,
-        );
+        if (nmdOk) {
+          console.log("NMD-mask hittad — OSM-mask behövs inte (bara om du vill ha vägar).");
+        } else {
+          console.error(
+            `VARNING: OSM-mask saknas/tom och ingen NMD-mask (skog-filer: ${forest} med ${forestRings} polygoner, exkl-filer: ${excl} med ${exclPolys} polygoner) — karta blir tom tills du kör: npm run osm-cache -- <minLon> <minLat> <maxLon> <maxLat> eller lägger in data/layers/nmd_10m.tif`,
+          );
+        }
       } else {
         console.log(`OSM-mask: ${forest} skog-tiles (${forestRings} polygoner), ${excl} exkl-tiles (${exclPolys} polygoner)`);
       }

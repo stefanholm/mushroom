@@ -158,19 +158,35 @@ npm run osm-bake -- /tmp/forest.geojson /tmp/excl.geojson 17.7 59.1 18.5 59.7
 ```
 
 (`osmium export` writes GeoJSON in EPSG:4326 with OSM tags in `properties`; the bake script clips
-them into the same per-0.4°-tile cache files. Bake a bbox slightly larger than your area of
-interest — masking is fail-closed, so anything outside the baked tiles scores 0.) An optional **NMD 10 m mask** (`nmd_10m.tif` + `mask` entry in
-`manifest.json`, forest classes 111–128, 30 m dilation) acts as an additional hard gate.
-Exclusion polygons get a 30 m buffer; paved roads hard-zero within 20 m; forest paths stay open. Habitat tiles are rendered as **circles, not blur**: each hot cell
-splats a soft-edged circle whose radius grows with its cluster step; overlapping
-circles soft-blend (weighted-average colour, max alpha) into one smooth blob —
-no box blur, so hotspots stay pinpoint without visible circle outlines.
+them into per-tile cache files — the server probes tile sizes 0.4°/0.2°/0.1° on disk, so pass the
+same size as the 5th arg if you bake smaller tiles. Bake a bbox slightly larger than your area of
+interest — masking is fail-closed, so anything outside the baked tiles scores 0.)
+Exclusion polygons get a 30 m buffer; paved roads hard-zero within 20 m; forest paths stay open.
+
+**NMD 10 m mask (recommended, replaces OSM entirely):** official download page:
+[naturvardsverket.se → Ladda ner Nationella marktäckedata](https://www.naturvardsverket.se/verktyg-och-tjanster/kartor-och-karttjanster/nationella-marktackedata/ladda-ner-nationella-marktackedata/),
+direct files at [geodata.naturvardsverket.se/nedladdning/marktacke/NMD2023/](https://geodata.naturvardsverket.se/nedladdning/marktacke/NMD2023/) (basskikt GeoTIFF, EPSG:3006). Clip your region once instead of loading all of Sweden:
+
+```
+brew install gdal
+curl -L -o /tmp/NMD_basskikt.tif "<basskikt .tif från geodata.naturvardsverket.se/nedladdning/marktacke/NMD2023/>"
+gdalwarp -te 620000 6540000 725000 6685000 -co COMPRESS=DEFLATE -co TILED=YES /tmp/NMD_basskikt.tif data/layers/nmd_10m.tif
+```
+
+`manifest.json` wires it as the hard gate: `forestClasses` = 111–117 + 121–127 (NMD classes
+**118/128 are clear-cuts — excluded**), `dilateClasses` = [51, 52, 53] (buildings / yards /
+roads+rail) dilated 3 px ≈ 30 m; water (61/62) and all other non-forest classes are hard 0
+without eroding forest edges. When the mask is present, OSM masks are skipped entirely
+(`maskUsed: true` in `/api/meta`).
+
+Habitat tiles are a continuous blurred scalar field (150 m gutter, premultiplied separable blur)
+with a sharp post-blur `G_hard` clip and a teal→emerald→amber→orange→crimson ramp.
 Each cell gets a `heat` value: 0 below score 70, ramping to 1 at score 100 with a steep
-alpha curve (`heat^2`), so only real hotspots glow — red starts around heat 0.85.
+alpha curve (`heat^2`), so only real hotspots glow — red starts around heat 0.88.
 **Cluster boost:** at street-level zooms, each cell also counts hot neighbours within
-~50 m; 1 hot neighbour adds +0.06 heat and a bigger circle, 2 add +0.12, 3+ add +0.2,
-so only circles that actually touch/overlap form the big red clusters. `static=1` shows
-layers 1–7 only.
+~50 m; 1 hot neighbour adds +0.06 heat, 2 add +0.12, 3+ add +0.2,
+so connected hotspots climb toward red. `static=1` shows layers 1–7 only. Rendered PNGs are
+disk-cached under `data/tiles/<tileVersion>/` and served from disk on repeat views.
 
 ## How the hotspot score works
 

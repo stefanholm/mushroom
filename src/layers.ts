@@ -27,7 +27,7 @@ export type Manifest = {
   crs?: string;
   rasters?: RasterEntry[];
   vectors?: VectorEntry[];
-  mask?: { file: string; forestClasses: number[]; dilatePx?: number };
+  mask?: { file: string; forestClasses: number[]; dilatePx?: number; dilateClasses?: number[] };
 };
 
 export class MaskLayer {
@@ -40,12 +40,14 @@ export class MaskLayer {
     readonly pixelY: number,
     private forestClasses: Set<number>,
     private dilatePx: number,
+    private dilateClasses: Set<number>,
   ) {}
 
   static async load(
     file: string,
     forestClasses: number[],
     dilatePx = 3,
+    dilateClasses: number[] = [51, 52, 53],
   ): Promise<MaskLayer> {
     const tiff = await fromFile(file);
     const image = await tiff.getImage();
@@ -60,6 +62,7 @@ export class MaskLayer {
       resolution[1],
       new Set(forestClasses),
       dilatePx,
+      new Set(dilateClasses),
     );
   }
 
@@ -82,29 +85,30 @@ export class MaskLayer {
       if (typeof v === "number" && this.forestClasses.has(Math.round(v))) forest[k] = 1;
     }
     let blocked = new Uint8Array(w * h);
-    for (let k = 0; k < w * h; k++) blocked[k] = forest[k] ? 0 : 1;
+    for (let k = 0; k < w * h; k++) {
+      const v = data[k];
+      blocked[k] = typeof v === "number" && this.dilateClasses.has(Math.round(v)) ? 1 : 0;
+    }
     const r = Math.max(1, this.dilatePx);
     const tmp = new Uint8Array(w * h);
-    for (let pass = 0; pass < 2; pass++) {
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          let m = 0;
-          for (let dx = -r; dx <= r && !m; dx++) {
-            const xx = x + dx;
-            if (xx >= 0 && xx < w && blocked[y * w + xx]) m = 1;
-          }
-          tmp[y * w + x] = m;
-        }
-      }
+    for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
-        for (let y = 0; y < h; y++) {
-          let m = 0;
-          for (let dy = -r; dy <= r && !m; dy++) {
-            const yy = y + dy;
-            if (yy >= 0 && yy < h && tmp[yy * w + x]) m = 1;
-          }
-          blocked[y * w + x] = m;
+        let m = 0;
+        for (let dx = -r; dx <= r && !m; dx++) {
+          const xx = x + dx;
+          if (xx >= 0 && xx < w && blocked[y * w + xx]) m = 1;
         }
+        tmp[y * w + x] = m;
+      }
+    }
+    for (let x = 0; x < w; x++) {
+      for (let y = 0; y < h; y++) {
+        let m = 0;
+        for (let dy = -r; dy <= r && !m; dy++) {
+          const yy = y + dy;
+          if (yy >= 0 && yy < h && tmp[yy * w + x]) m = 1;
+        }
+        blocked[y * w + x] = m;
       }
     }
     this.allowed = new Uint8Array(w * h);
@@ -362,7 +366,12 @@ export class LayerStore {
     }
     if (manifest.mask) {
       try {
-        store.mask = await MaskLayer.load(path.join(dir, manifest.mask.file), manifest.mask.forestClasses, manifest.mask.dilatePx ?? 3);
+        store.mask = await MaskLayer.load(
+          path.join(dir, manifest.mask.file),
+          manifest.mask.forestClasses,
+          manifest.mask.dilatePx ?? 3,
+          manifest.mask.dilateClasses ?? [51, 52, 53],
+        );
         await store.mask.build();
       } catch {
         store.missing.push(manifest.mask.file);

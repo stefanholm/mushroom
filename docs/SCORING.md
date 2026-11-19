@@ -22,9 +22,10 @@ D       = seasonalFactor × rainFactor × frost                        (0–1, d
   **Strictly fail-closed:** if the mask is unknown (fetch failed / outside baked tiles),
   `inForest = false` → score 0 — the map never shows hotspots where the mask is missing
   (`forestKnown` in `/api/meta` tells you). If the optional **NMD mask** raster
-  (`nmd_10m.tif`, Naturvårdsverket 10 m marktäckedata, classes 111–128 = productive
-  forest, 3 px ≈ 30 m dilation of non-forest baked at load) is present, it is an
-  additional hard gate: non-forest class → 0.
+  (`nmd_10m.tif`, Naturvårdsverket NMD 10 m) is present it **replaces** the OSM forest gate:
+  `forestClasses` = 111–117 + 121–127 pass (NMD 118/128 = clear-cuts, excluded);
+  classes 51/52/53 (buildings/yards/roads+rail) are dilated 3 px ≈ 30 m and subtracted;
+  water (61/62) and all other classes are hard 0 without eroding forest edges.
 - inside an OSM exclusion polygon **or within 30 m of one** (yard/building buffer):
   water, waterway, buildings, urban/residential/industrial/…, parks, pitches, shops…
   (`data/osm/exclusion_*.json`). Multipolygon `role="inner"` rings are subtracted from

@@ -48,6 +48,7 @@ async function overpass(q) {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         if (wait > 0) await sleep(wait);
+        if (process.env.OSM_VERBOSE) console.log(`  försöker ${host} (försök ${attempt + 1})...`);
         const r = await fetch(`${host}?data=${encodeURIComponent(q)}`, {
           signal: AbortSignal.timeout(45_000),
           headers: UA,
