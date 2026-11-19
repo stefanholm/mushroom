@@ -282,6 +282,15 @@ async function forestPolygonsForBox(
   const [kMinLon, kMinLat, kMaxLon, kMaxLat, key] = gridKey(minLon, minLat, maxLon, maxLat);
   const cached = forestCache.get(key);
   if (cached && Date.now() - cached.at < 24 * 3600 * 1000) return cached.polys;
+  try {
+    const disk = JSON.parse(
+      await fsp.readFile(path.join(here, "..", "data", "osm", `forest_${key}.json`), "utf8"),
+    );
+    if (Array.isArray(disk) && disk.length > 0) {
+      forestCache.set(key, { at: Date.now(), polys: disk });
+      return disk;
+    }
+  } catch { /* no disk cache */ }
   const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
   const q = `[out:json][timeout:60];(way["landuse"="forest"](${b});way["natural"="wood"](${b});way["natural"="scrub"](${b});relation["landuse"="forest"](${b});relation["natural"="wood"](${b}););out geom;`;
   let polys: [number, number][][];
@@ -310,6 +319,15 @@ async function exclusionsForBox(
   const [kMinLon, kMinLat, kMaxLon, kMaxLat, key] = gridKey(minLon, minLat, maxLon, maxLat);
   const cached = exclusionCache.get(key);
   if (cached && Date.now() - cached.at < 24 * 3600 * 1000) return cached.ex;
+  try {
+    const disk = JSON.parse(
+      await fsp.readFile(path.join(here, "..", "data", "osm", `exclusion_${key}.json`), "utf8"),
+    );
+    if (disk && Array.isArray(disk.polys) && (disk.polys.length > 0 || disk.lines.length > 0)) {
+      exclusionCache.set(key, { at: Date.now(), ex: disk });
+      return disk;
+    }
+  } catch { /* no disk cache */ }
   const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
   const area = `way["natural"="water"](${b});way["waterway"](${b});way["building"](${b});way["landuse"~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$"](${b});way["leisure"~"^(pitch|golf_course|recreation_ground)$"](${b});way["amenity"="parking"](${b});way["natural"="grass"](${b});way["shop"](${b});way["man_made"~"^(wastewater_plant|storage_tank)$"](${b});relation["natural"="water"](${b});relation["building"](${b});relation["landuse"~"^(industrial|commercial|residential|urban|landfill|military|retail)$"](${b});`;
   const lines = `way["highway"](${b});way["railway"](${b});way["aeroway"](${b});`;
@@ -716,7 +734,8 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
     return res.send(await fsp.readFile(cacheFile));
   }
   const span = Math.max(bbox.maxLon - bbox.minLon, bbox.maxLat - bbox.minLat);
-  const cell = span / 128;
+  const G = 128;
+  const cell = span / G;
   const { cells } = await computeCells(key, bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat, cell, asOf, staticOnly);
   const startLon = Math.floor(bbox.minLon / cell) * cell;
   const startLat = Math.floor(bbox.minLat / cell) * cell;
@@ -728,25 +747,64 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
     const j = Math.floor((c.lat - startLat) / cell);
     if (j >= 0 && j < rows && i >= 0 && i < cols) grid[j][i] = c;
   }
-  const size = 256;
-  const png = new PNG({ width: size, height: size });
-  const n = 2 ** z;
-  for (let py = 0; py < size; py++) {
-    for (let px = 0; px < size; px++) {
-      const wx = (x + (px + 0.5) / size) / n;
-      const wy = (y + (py + 0.5) / size) / n;
-      const lon = wx * 360 - 180;
-      const lat = (Math.atan(Math.sinh(Math.PI * (1 - 2 * wy))) * 180) / Math.PI;
-      const i = Math.floor((lon - startLon) / cell);
-      const j = Math.floor((lat - startLat) / cell);
-      const c = j >= 0 && j < rows && i >= 0 && i < cols ? grid[j][i] : null;
+  const cellRGBA = new Uint8Array(G * G * 4);
+  for (let j = 0; j < G; j++) {
+    for (let i = 0; i < G; i++) {
+      const c = j < rows && i < cols ? grid[j][i] : null;
       const heat = c ? Math.min(1, Math.max(0, (c.score - (60 + sens)) / 40)) : 0;
       const [r, g, b, a] = heatColor(heat);
+      const idx = (j * G + i) * 4;
+      cellRGBA[idx] = r;
+      cellRGBA[idx + 1] = g;
+      cellRGBA[idx + 2] = b;
+      cellRGBA[idx + 3] = a;
+    }
+  }
+  const size = 256;
+  const png = new PNG({ width: size, height: size });
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      const fx = ((px + 0.5) / size) * G - 0.5;
+      const fy = ((py + 0.5) / size) * G - 0.5;
+      const x0 = Math.max(0, Math.min(G - 1, Math.floor(fx)));
+      const y0 = Math.max(0, Math.min(G - 1, Math.floor(fy)));
+      const x1 = Math.min(G - 1, x0 + 1);
+      const y1 = Math.min(G - 1, y0 + 1);
+      const tx = Math.max(0, Math.min(1, fx - x0));
+      const ty = Math.max(0, Math.min(1, fy - y0));
       const idx = (py * size + px) * 4;
-      png.data[idx] = r;
-      png.data[idx + 1] = g;
-      png.data[idx + 2] = b;
-      png.data[idx + 3] = a;
+      for (let ch = 0; ch < 4; ch++) {
+        const v00 = cellRGBA[(y0 * G + x0) * 4 + ch];
+        const v10 = cellRGBA[(y0 * G + x1) * 4 + ch];
+        const v01 = cellRGBA[(y1 * G + x0) * 4 + ch];
+        const v11 = cellRGBA[(y1 * G + x1) * 4 + ch];
+        png.data[idx + ch] = Math.round(
+          v00 * (1 - tx) * (1 - ty) + v10 * tx * (1 - ty) + v01 * (1 - tx) * ty + v11 * tx * ty,
+        );
+      }
+    }
+  }
+  for (let pass = 0; pass < 2; pass++) {
+    const src = Buffer.from(png.data);
+    for (let py = 0; py < size; py++) {
+      for (let px = 0; px < size; px++) {
+        let r = 0, g = 0, b = 0, a = 0, cnt = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = px + dx;
+            const ny = py + dy;
+            if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+            const si = (ny * size + nx) * 4;
+            r += src[si]; g += src[si + 1]; b += src[si + 2]; a += src[si + 3];
+            cnt++;
+          }
+        }
+        const idx = (py * size + px) * 4;
+        png.data[idx] = Math.round(r / cnt);
+        png.data[idx + 1] = Math.round(g / cnt);
+        png.data[idx + 2] = Math.round(b / cnt);
+        png.data[idx + 3] = Math.round(a / cnt);
+      }
     }
   }
   const buf = PNG.sync.write(png);

@@ -4,3 +4,4 @@ dist/
 data/layers/*.tif
 data/layers/*.geojson
 data/tiles/
+data/osm/

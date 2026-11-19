@@ -127,9 +127,12 @@ cells — hotspots don't jump around when zooming; at max zoom the ~3 m grid fol
 2 m höjdmodell. The overlay is a **blurred MapLibre heatmap layer** with a smooth 9-stop
 gradient and a zoom-adaptive radius.
 
-OSM masks (forest + exclusions) are fetched from Overpass (5 fallback hosts) with a
-fallback to the main OSM API (`api.openstreetmap.org/api/0.6/map`) parsed locally, cached
-24 h per 0.4° tile. Each cell also gets
+OSM masks (forest + exclusions) are read **disk-first** from `data/osm/{forest,exclusion}_<tile>.json`
+(git-ignored) — pre-bake them once per area with `npm run osm-cache -- <minLon> <minLat> <maxLon> <maxLat>`
+(e.g. `npm run osm-cache -- 17.7 59.1 18.5 59.7` for the demo/Botkyrka area). If no disk
+cache exists, the server falls back to Overpass (5 hosts) then the main OSM API, cached
+24 h per 0.4° tile. Habitat tiles are rendered on a 128×128 grid, bilinearly upscaled to
+256×256 and box-blurred, so the heatmap is a smooth gradient, not squares. Each cell also gets
 a `heat` value: 0 below score 60, ramping linearly to 1 at score 100 — the heatmap is
 weighted above that threshold, so only
 real hotspots glow (pinpoint mode). `static=1` shows layers 1–7 only.
