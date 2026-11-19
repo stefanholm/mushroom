@@ -223,9 +223,10 @@ app.get("/api/hotspots", async (req, res) => {
   let [minLon, minLat, maxLon, maxLat] = box;
   if (minLon > maxLon) [minLon, maxLon] = [maxLon, minLon];
   if (minLat > maxLat) [minLat, maxLat] = [maxLat, minLat];
-  if (maxLon - minLon > 2 || maxLat - minLat > 2) {
-    return res.status(400).json({ error: "Bounding box too large (max 2 degrees per side)." });
+  if (maxLon - minLon > 4 || maxLat - minLat > 4) {
+    return res.status(400).json({ error: "Bounding box too large (max 4 degrees per side)." });
   }
+  const staticOnly = req.query.static === "1";
 
   const centerLat = (minLat + maxLat) / 2;
   const centerLon = (minLon + maxLon) / 2;
@@ -237,12 +238,15 @@ app.get("/api/hotspots", async (req, res) => {
   }
   const now = new Date();
   const rainFactor = rain14 === null ? 0.5 : Math.min(1, rain14 / 60);
+  const seasonAtCenter = seasonalFactor(species, centerLat, now);
 
   let forestPolys: [number, number][][] = [];
-  try {
-    forestPolys = await forestPolygonsForBox(minLon, minLat, maxLon, maxLat);
-  } catch (err) {
-    console.error("Forest layer fetch failed:", err);
+  if (Math.max(maxLon - minLon, maxLat - minLat) <= 2) {
+    try {
+      forestPolys = await forestPolygonsForBox(minLon, minLat, maxLon, maxLat);
+    } catch (err) {
+      console.error("Forest layer fetch failed:", err);
+    }
   }
 
   const store = await getLayerStore();
@@ -258,7 +262,7 @@ app.get("/api/hotspots", async (req, res) => {
       const [e, n] = toSWEREF(clon, clat);
       const inClearcut = clearcuts ? clearcuts.contains(e, n) : false;
       const habitat = await staticHabitatScore(store, key, clon, clat, inForest, inClearcut);
-      const dynamic = seasonalFactor(species, clat, now) * rainFactor;
+      const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, now) * rainFactor;
       const score = Math.round(100 * habitat * dynamic);
       features.push({
         type: "Feature",
@@ -285,6 +289,8 @@ app.get("/api/hotspots", async (req, res) => {
       label: species.label,
       rain14,
       rainFactor: Number(rainFactor.toFixed(3)),
+      seasonFactor: Number(seasonAtCenter.toFixed(2)),
+      staticOnly,
       forestAreas: forestPolys.length,
       layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
       layers: ["smhi-precip-14d", "osm-forest-mask", ...store.rasters.keys(), ...store.vectors.keys()],

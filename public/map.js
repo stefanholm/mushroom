@@ -1,6 +1,7 @@
 const mapContainer = document.getElementById("map");
 const speciesSelect = document.getElementById("species");
 const opacityInput = document.getElementById("opacity");
+const staticOnlyInput = document.getElementById("staticOnly");
 const metaEl = document.getElementById("meta");
 
 let map = null;
@@ -20,15 +21,18 @@ async function refreshHotspots() {
     maxLon: b.getEast().toFixed(4),
     maxLat: b.getNorth().toFixed(4),
   });
+  if (staticOnlyInput.checked) q.set("static", "1");
   try {
     const r = await fetch("/api/hotspots?" + q);
     if (!r.ok) return;
     const gj = await r.json();
     map.getSource("hotspots").setData(gj);
     metaEl.textContent = gj.meta
-      ? `Regn senaste 14 d: ${
+      ? `Regn 14 d: ${
           gj.meta.rain14 === null ? "okänt" : gj.meta.rain14.toFixed(1) + " mm"
-        } · väderfaktor: ${gj.meta.rainFactor} · skogsområden: ${gj.meta.forestAreas}`
+        } · väder: ${gj.meta.rainFactor} · säsong: ${gj.meta.seasonFactor} · skogsområden: ${
+          gj.meta.forestAreas
+        }${gj.meta.staticOnly ? " · (endast habitat)" : ""}`
       : "";
   } catch {
     metaEl.textContent = "Kunde inte hämta hotspots.";
@@ -56,6 +60,18 @@ function initMap(maplibregl) {
   });
 
   map.addControl(new maplibregl.NavigationControl());
+  const geolocate = new maplibregl.GeolocateControl({
+    positionOptions: { enableHighAccuracy: true },
+    trackUserLocation: false,
+    showUserLocation: true,
+  });
+  map.addControl(geolocate);
+  let autoZoomed = false;
+  geolocate.on("geolocate", (e) => {
+    if (autoZoomed) return;
+    autoZoomed = true;
+    map.flyTo({ center: [e.coords.longitude, e.coords.latitude], zoom: 11 });
+  });
 
   map.on("load", () => {
     map.addSource("hotspots", {
@@ -86,6 +102,7 @@ function initMap(maplibregl) {
       },
     });
     refreshHotspots();
+    geolocate.trigger();
     map.on("moveend", () => {
       clearTimeout(refreshTimer);
       refreshTimer = setTimeout(refreshHotspots, 400);
@@ -96,6 +113,7 @@ function initMap(maplibregl) {
   new ResizeObserver(() => map.resize()).observe(mapContainer);
 
   speciesSelect.addEventListener("change", refreshHotspots);
+  staticOnlyInput.addEventListener("change", refreshHotspots);
   opacityInput.addEventListener("input", () => {
     if (map.getLayer("hotspots")) {
       map.setPaintProperty("hotspots", "fill-opacity", opacityExpression());
