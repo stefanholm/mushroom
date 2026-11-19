@@ -72,7 +72,10 @@ the glow threshold — visible only at low sensitivity).
 ```
 M_bonus = 1.3                                  if inside nyckelbiotoper.geojson
         × (1 + 0.15 × species.edge)           if within ~1 cell of the forest-mask edge
-roadFactor = 0.2 if within 30 m of an exclusion line (roads), else 1
+roadFactor = 0 if within 15 m of an exclusion line (roads/rail — hard zero),
+             0.5 if within 30 m, else 1
+(OSM relation members are assembled into closed rings before point-in-polygon, so
+ building/water relations are masked correctly)
 ```
 
 ### D — dynamic fruiting multiplier (SMHI metobs, `latest-months`)

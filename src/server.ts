@@ -210,21 +210,65 @@ async function overpassQuery(q: string): Promise<{ elements?: OverpassElement[] 
   return Promise.any(attempts);
 }
 
-function ringsFromOverpass(body: { elements?: OverpassElement[] }): [number, number][][] {
+function assembleRings(geoms: [number, number][][]): [number, number][][] {
+  const EPS = 1e-7;
   const rings: [number, number][][] = [];
-  for (const e of body.elements ?? []) {
-    if (e.geometry) {
-      const ring = e.geometry.map((p) => [p.lon, p.lat] as [number, number]);
-      if (ring.length >= 2) rings.push(ring);
-    }
-    for (const m of e.members ?? []) {
-      if (m.geometry) {
-        const ring = m.geometry.map((p) => [p.lon, p.lat] as [number, number]);
-        if (ring.length >= 2) rings.push(ring);
+  const open: [number, number][][] = [];
+  for (const g of geoms) {
+    if (g.length < 2) continue;
+    const [fx, fy] = g[0];
+    const [lx, ly] = g[g.length - 1];
+    if (Math.abs(fx - lx) < EPS && Math.abs(fy - ly) < EPS) {
+      if (g.length >= 3) rings.push(g);
+    } else open.push(g);
+  }
+  let progress = true;
+  while (open.length > 0 && progress) {
+    progress = false;
+    for (let i = 0; i < open.length; i++) {
+      const seg = open[i];
+      const [sx, sy] = seg[0];
+      const [ex, ey] = seg[seg.length - 1];
+      for (let j = 0; j < open.length; j++) {
+        if (i === j) continue;
+        const other = open[j];
+        const [ox, oy] = other[0];
+        const [px, py] = other[other.length - 1];
+        if (Math.abs(ex - ox) < EPS && Math.abs(ey - oy) < EPS) {
+          open[i] = [...seg, ...other.slice(1)];
+        } else if (Math.abs(ex - px) < EPS && Math.abs(ey - py) < EPS) {
+          open[i] = [...seg, ...[...other].reverse().slice(1)];
+        } else if (Math.abs(sx - px) < EPS && Math.abs(sy - py) < EPS) {
+          open[i] = [...other.slice(0, -1), ...seg];
+        } else if (Math.abs(sx - ox) < EPS && Math.abs(sy - oy) < EPS) {
+          open[i] = [...[...other].reverse().slice(0, -1), ...seg];
+        } else {
+          continue;
+        }
+        open.splice(j, 1);
+        if (j < i) i--;
+        progress = true;
+        break;
       }
     }
   }
+  for (const seg of open) {
+    const [fx, fy] = seg[0];
+    const [lx, ly] = seg[seg.length - 1];
+    if (seg.length >= 3 && Math.abs(fx - lx) < EPS && Math.abs(fy - ly) < EPS) rings.push(seg);
+  }
   return rings;
+}
+
+function ringsFromOverpass(body: { elements?: OverpassElement[] }): [number, number][][] {
+  const geoms: [number, number][][] = [];
+  for (const e of body.elements ?? []) {
+    if (e.geometry) geoms.push(e.geometry.map((p) => [p.lon, p.lat] as [number, number]));
+    for (const m of e.members ?? []) {
+      if (m.geometry) geoms.push(m.geometry.map((p) => [p.lon, p.lat] as [number, number]));
+    }
+  }
+  return assembleRings(geoms).filter((r) => r.length >= 3);
 }
 
 type OsmFeature = { tags: Record<string, string>; rings: [number, number][][] };
@@ -376,7 +420,7 @@ async function exclusionsForBox(
     const disk = JSON.parse(
       await fsp.readFile(path.join(here, "..", "data", "osm", `exclusion_${key}.json`), "utf8"),
     );
-    if (disk && Array.isArray(disk.polys) && (disk.polys.length > 0 || disk.lines.length > 0)) {
+    if (disk && Array.isArray(disk.polys) && Array.isArray(disk.lines)) {
       exclusionCache.set(key, { at: Date.now(), ex: disk, ok: true });
       return disk;
     }
@@ -392,14 +436,13 @@ async function exclusionsForBox(
     const pushElement = (e: OverpassElement) => {
       const t = e.tags ?? {};
       const line = Boolean(t.highway || t.railway || t.aeroway);
-      const geoms = [e.geometry, ...(e.members ?? []).map((m) => m.geometry)].filter(
-        (g): g is { lat: number; lon: number }[] => Array.isArray(g),
-      );
-      for (const g of geoms) {
-        const ring = g.map((p) => [p.lon, p.lat] as [number, number]);
-        if (ring.length < 2) continue;
-        if (line) ex.lines.push(ring);
-        else ex.polys.push(ring);
+      const geoms = [e.geometry, ...(e.members ?? []).map((m) => m.geometry)]
+        .filter((g): g is { lat: number; lon: number }[] => Array.isArray(g))
+        .map((g) => g.map((p) => [p.lon, p.lat] as [number, number]));
+      if (line) {
+        for (const ring of geoms) if (ring.length >= 2) ex.lines.push(ring);
+      } else {
+        for (const ring of assembleRings(geoms)) if (ring.length >= 3) ex.polys.push(ring);
       }
     };
     for (const e of body.elements ?? []) pushElement(e);
@@ -558,10 +601,9 @@ async function computeCells(
       const inForest = forestPolys === null ? true : pointInPolygon(forestPolys, clon, clat);
       const excluded =
         exclusions.polys.length > 0 && pointInPolygon(exclusions.polys, clon, clat);
-      const roadFactor =
-        exclusions.lines.length > 0 && distToLinesMeters(exclusions.lines, clon, clat) < 30
-          ? 0.2
-          : 1;
+      const roadDist =
+        exclusions.lines.length > 0 ? distToLinesMeters(exclusions.lines, clon, clat) : Infinity;
+      const roadFactor = roadDist < 15 ? 0 : roadDist < 30 ? 0.5 : 1;
       const forestEdge =
         inForest &&
         forestPolys !== null &&
@@ -748,7 +790,7 @@ app.get("/api/hillshade", async (req, res) => {
   res.send(PNG.sync.write(png));
 });
 
-const TILE_VERSION = "r12";
+const TILE_VERSION = "r13";
 const TILES_DIR = path.join(here, "..", "data", "tiles", TILE_VERSION);
 
 const HEAT_BASE = 70;
@@ -1023,8 +1065,9 @@ app.get("/api/debug/cell", async (req, res) => {
   ]);
   const inForest = forestPolys === null ? true : pointInPolygon(forestPolys, lon, lat);
   const excluded = exclusions.polys.length > 0 && pointInPolygon(exclusions.polys, lon, lat);
-  const roadFactor =
-    exclusions.lines.length > 0 && distToLinesMeters(exclusions.lines, lon, lat) < 30 ? 0.2 : 1;
+  const roadDist =
+    exclusions.lines.length > 0 ? distToLinesMeters(exclusions.lines, lon, lat) : Infinity;
+  const roadFactor = roadDist < 15 ? 0 : roadDist < 30 ? 0.5 : 1;
   const forestEdge =
     inForest &&
     forestPolys !== null &&

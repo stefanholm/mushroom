@@ -103,21 +103,59 @@ const isExclArea = (t) =>
   t.natural === "grass" || t.shop !== undefined || (t.man_made !== undefined && EXCL_MM.has(t.man_made));
 const isLine = (t) => t.highway !== undefined || t.railway !== undefined || t.aeroway !== undefined;
 
-function ringsOf(body) {
+function assembleRings(geoms) {
+  const EPS = 1e-7;
   const rings = [];
-  for (const e of body.elements ?? []) {
-    if (e.geometry) {
-      const ring = e.geometry.map((p) => [p.lon, p.lat]);
-      if (ring.length >= 2) rings.push(ring);
-    }
-    for (const m of e.members ?? []) {
-      if (m.geometry) {
-        const ring = m.geometry.map((p) => [p.lon, p.lat]);
-        if (ring.length >= 2) rings.push(ring);
+  const open = [];
+  for (const g of geoms) {
+    if (g.length < 2) continue;
+    const [fx, fy] = g[0];
+    const [lx, ly] = g[g.length - 1];
+    if (Math.abs(fx - lx) < EPS && Math.abs(fy - ly) < EPS) {
+      if (g.length >= 3) rings.push(g);
+    } else open.push(g);
+  }
+  let progress = true;
+  while (open.length > 0 && progress) {
+    progress = false;
+    for (let i = 0; i < open.length; i++) {
+      const seg = open[i];
+      const [sx, sy] = seg[0];
+      const [ex, ey] = seg[seg.length - 1];
+      for (let j = 0; j < open.length; j++) {
+        if (i === j) continue;
+        const other = open[j];
+        const [ox, oy] = other[0];
+        const [px, py] = other[other.length - 1];
+        if (Math.abs(ex - ox) < EPS && Math.abs(ey - oy) < EPS) open[i] = [...seg, ...other.slice(1)];
+        else if (Math.abs(ex - px) < EPS && Math.abs(ey - py) < EPS) open[i] = [...seg, ...[...other].reverse().slice(1)];
+        else if (Math.abs(sx - px) < EPS && Math.abs(sy - py) < EPS) open[i] = [...other.slice(0, -1), ...seg];
+        else if (Math.abs(sx - ox) < EPS && Math.abs(sy - oy) < EPS) open[i] = [...[...other].reverse().slice(0, -1), ...seg];
+        else continue;
+        open.splice(j, 1);
+        if (j < i) i--;
+        progress = true;
+        break;
       }
     }
   }
+  for (const seg of open) {
+    const [fx, fy] = seg[0];
+    const [lx, ly] = seg[seg.length - 1];
+    if (seg.length >= 3 && Math.abs(fx - lx) < EPS && Math.abs(fy - ly) < EPS) rings.push(seg);
+  }
   return rings;
+}
+
+function ringsOf(body) {
+  const geoms = [];
+  for (const e of body.elements ?? []) {
+    if (e.geometry) geoms.push(e.geometry.map((p) => [p.lon, p.lat]));
+    for (const m of e.members ?? []) {
+      if (m.geometry) geoms.push(m.geometry.map((p) => [p.lon, p.lat]));
+    }
+  }
+  return assembleRings(geoms).filter((r) => r.length >= 3);
 }
 
 const forestQ = (b) => `[out:json][timeout:60];(way["landuse"="forest"](${b});way["natural"="wood"](${b});way["natural"="scrub"](${b});relation["landuse"="forest"](${b});relation["natural"="wood"](${b}););out geom;`;
@@ -142,12 +180,13 @@ for (const t of tiles) {
     for (const e of exclBody.elements ?? []) {
       const tg = e.tags ?? {};
       const line = Boolean(tg.highway || tg.railway || tg.aeroway);
-      const geoms = [e.geometry, ...(e.members ?? []).map((m) => m.geometry)].filter(Array.isArray);
-      for (const gg of geoms) {
-        const ring = gg.map((p) => [p.lon, p.lat]);
-        if (ring.length < 2) continue;
-        if (line) ex.lines.push(ring);
-        else ex.polys.push(ring);
+      const geoms = [e.geometry, ...(e.members ?? []).map((m) => m.geometry)]
+        .filter(Array.isArray)
+        .map((gg) => gg.map((p) => [p.lon, p.lat]));
+      if (line) {
+        for (const ring of geoms) if (ring.length >= 2) ex.lines.push(ring);
+      } else {
+        for (const ring of assembleRings(geoms)) if (ring.length >= 3) ex.polys.push(ring);
       }
     }
     console.log(`[${key}] fetched via Overpass`);
