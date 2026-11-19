@@ -11,6 +11,7 @@ const basemapButtons = Array.from(document.querySelectorAll(".bm"));
 const metaEl = document.getElementById("meta");
 
 let map = null;
+const TILE_V = "r10";
 
 function selectedDate() {
   const days = Number(dateSlider.value);
@@ -28,6 +29,7 @@ function habitatTileUrl() {
   const d = selectedDate();
   if (d) q.set("date", d);
   q.set("sens", String(Number(sensInput.value)));
+  q.set("v", TILE_V);
   return `/api/tiles/habitat/${speciesSelect.value}/{z}/{x}/{y}.png?${q.toString()}`;
 }
 

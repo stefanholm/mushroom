@@ -862,6 +862,7 @@ app.get("/api/meta", async (req, res) => {
     hostFallback: hostFallback(store),
     asOf: asOf.toISOString().slice(0, 10),
     layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
+    tileVersion: path.basename(TILES_DIR),
     forestAreas: f.status === "fulfilled" ? f.value.length : 0,
     excludedAreas: x.status === "fulfilled" ? x.value.polys.length : 0,
   });

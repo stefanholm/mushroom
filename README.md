@@ -69,7 +69,15 @@ data/
 
 The web UI (`public/map.js`) uses the raster tiles, so panning/zooming never recomputes —
 MapLibre fetches tiles and they're cached on disk and in the browser.
+
+**Native app (Xcode):** use the habitat **PNG tiles** as a MapLibre raster source, not the
+GeoJSON points — the tiles are pre-rendered smooth circle-blobs, while a client-side
+heatmap layer over `/api/hotspots` points looks blocky. Always append the current renderer
+version as a query param so the app cache busts when the renderer changes:
+`GET /api/meta` returns `tileVersion` (e.g. `r10`), then request
+`/api/tiles/habitat/{species}/{z}/{x}/{y}.png?static=1&date=YYYY-MM-DD&sens=0&v=r10`.
 ```
+
 
 `manifest.json` maps each file to a layer id (`tradhojd`, `volym`, `markfuktighet`,
 `jordart`, `hojd`, `avverkningar`) with `nodata`, `band` and optional `recode`. Missing
