@@ -725,7 +725,7 @@ app.get("/api/hillshade", async (req, res) => {
   res.send(PNG.sync.write(png));
 });
 
-const TILES_DIR = path.join(here, "..", "data", "tiles", "r3");
+const TILES_DIR = path.join(here, "..", "data", "tiles", "r4");
 
 const HEAT_BASE = 55;
 const HEAT_RANGE = 45;
@@ -758,7 +758,7 @@ function heatColor(heat: number): [number, number, number, number] {
   const [h0, c0] = HEAT_RAMP[i];
   const [h1, c1] = HEAT_RAMP[i + 1];
   const t = h1 === h0 ? 1 : Math.min(1, Math.max(0, (pos - h0) / (h1 - h0)));
-  const alpha = Math.round(Math.pow(heat, 0.45) * 0.9 * 255);
+  const alpha = heat < 0.08 ? 0 : Math.round(Math.pow(heat, 0.45) * 0.9 * 255);
   return [
     Math.round(c0[0] + (c1[0] - c0[0]) * t),
     Math.round(c0[1] + (c1[1] - c0[1]) * t),
@@ -860,28 +860,18 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
   const img = new Uint8Array(W * H * 4);
   for (let py = 0; py < H; py++) {
     for (let px = 0; px < W; px++) {
-      const fx = (px + 0.5) / R - 0.5;
-      const fy = (py + 0.5) / R - 0.5;
-      const x0 = Math.max(0, Math.min(cols - 1, Math.floor(fx)));
-      const y0 = Math.max(0, Math.min(rows - 1, Math.floor(fy)));
-      const x1 = Math.min(cols - 1, x0 + 1);
-      const y1 = Math.min(rows - 1, y0 + 1);
-      const tx = Math.max(0, Math.min(1, fx - x0));
-      const ty = Math.max(0, Math.min(1, fy - y0));
+      const cx = Math.max(0, Math.min(cols - 1, Math.floor((px + 0.5) / R)));
+      const cy = Math.max(0, Math.min(rows - 1, Math.floor((py + 0.5) / R)));
       const idx = (py * W + px) * 4;
-      for (let ch = 0; ch < 4; ch++) {
-        const v00 = cellRGBA[(y0 * cols + x0) * 4 + ch];
-        const v10 = cellRGBA[(y0 * cols + x1) * 4 + ch];
-        const v01 = cellRGBA[(y1 * cols + x0) * 4 + ch];
-        const v11 = cellRGBA[(y1 * cols + x1) * 4 + ch];
-        img[idx + ch] = Math.round(
-          v00 * (1 - tx) * (1 - ty) + v10 * tx * (1 - ty) + v01 * (1 - tx) * ty + v11 * tx * ty,
-        );
-      }
+      const sidx = (cy * cols + cx) * 4;
+      img[idx] = cellRGBA[sidx];
+      img[idx + 1] = cellRGBA[sidx + 1];
+      img[idx + 2] = cellRGBA[sidx + 2];
+      img[idx + 3] = cellRGBA[sidx + 3];
     }
   }
-  const BLUR = 6;
-  for (let pass = 0; pass < 3; pass++) {
+  const BLUR = z >= 14 ? 5 : z >= 11 ? 3 : 1;
+  for (let pass = 0; pass < 2; pass++) {
     const src = Buffer.from(img);
     for (let py = 0; py < H; py++) {
       for (let px = 0; px < W; px++) {
