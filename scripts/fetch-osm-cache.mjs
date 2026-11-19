@@ -4,12 +4,16 @@ import { fileURLToPath } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data", "osm");
 
-const [minLon, minLat, maxLon, maxLat] = process.argv.slice(2).map(Number);
+const args = process.argv.slice(2);
+const [minLon, minLat, maxLon, maxLat] = args.slice(0, 4).map(Number);
+const g = args[4] !== undefined && Number.isFinite(Number(args[4])) ? Number(args[4]) : 0.4;
 if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) {
-  console.error("Usage: node scripts/fetch-osm-cache.mjs <minLon> <minLat> <maxLon> <maxLat>");
+  console.error("Usage: node scripts/fetch-osm-cache.mjs <minLon> <minLat> <maxLon> <maxLat> [tileDeg=0.4]");
   process.exit(1);
 }
-const g = 0.4;
+const DELAY_MS = Number(process.env.OSM_DELAY_MS ?? 3000);
+const UA = { "User-Agent": "mushroom-finder/1.0 (local research app)" };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tiles = [];
 for (let lon = Math.floor(minLon / g) * g; lon < maxLon + 1e-9; lon += g) {
   for (let lat = Math.floor(minLat / g) * g; lat < maxLat + 1e-9; lat += g) {
@@ -28,29 +32,44 @@ let b = "";
 
 const HOSTS = [
   "https://overpass-api.de/api/interpreter",
+  "https://lz4.overpass-api.de/api/interpreter",
+  "https://z.overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
   "https://overpass.private.coffee/api/interpreter",
   "https://overpass.nchc.org.tw/api/interpreter",
   "https://overpass.osm.ch/api/interpreter",
+  "https://overpass.openstreetmap.fr/api/interpreter",
 ];
 
 async function overpass(q) {
-  let lastErr = new Error("no host");
+  const errs = [];
   for (const host of HOSTS) {
-    try {
-      const r = await fetch(`${host}?data=${encodeURIComponent(q)}`, {
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const body = await r.json();
-      if (body.remark) console.log(`  overpass remark: ${body.remark}`);
-      if ((body.elements ?? []).length === 0) throw new Error("empty result");
-      return body;
-    } catch (e) {
-      lastErr = e;
+    let wait = 0;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (wait > 0) await sleep(wait);
+        const r = await fetch(`${host}?data=${encodeURIComponent(q)}`, {
+          signal: AbortSignal.timeout(45_000),
+          headers: UA,
+        });
+        if (r.status === 429 || r.status === 504) {
+          wait = wait === 0 ? 5000 : wait * 2;
+          errs.push(`${host}: HTTP ${r.status} (backoff ${wait}ms)`);
+          continue;
+        }
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const body = await r.json();
+        if (body.remark) throw new Error(`remark: ${String(body.remark).slice(0, 100)}`);
+        if ((body.elements ?? []).length === 0) throw new Error("empty result");
+        return body;
+      } catch (e) {
+        errs.push(`${host}: ${e.message}`);
+        if (e.message.startsWith("HTTP 429") || e.message.startsWith("HTTP 504")) continue;
+        break;
+      }
     }
   }
-  throw lastErr;
+  throw new Error(`all hosts failed — ${errs.join(" | ")}`);
 }
 
 async function osmApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon) {
@@ -190,11 +209,25 @@ const exclQ = (b) => `[out:json][timeout:60];(${areaQ(b)}${linesQ(b)});out geom;
 
 await fs.mkdir(root, { recursive: true });
 
+let failed = 0;
+let skipped = 0;
 for (const t of tiles) {
   const kMinLon = t.lon;
   const kMinLat = t.lat;
   const key = `${kMinLon.toFixed(6)},${kMinLat.toFixed(6)},${(kMinLon + g).toFixed(6)},${(kMinLat + g).toFixed(6)}`;
   const b = `${kMinLat},${kMinLon},${kMinLat + g},${kMinLon + g}`;
+  try {
+    const f = JSON.parse(await fs.readFile(path.join(root, `forest_${key}.json`), "utf8"));
+    const e = JSON.parse(await fs.readFile(path.join(root, `exclusion_${key}.json`), "utf8"));
+    if (Array.isArray(f) && f.length > 0 && ((e.polys?.length ?? 0) > 0 || (e.lines?.length ?? 0) > 0)) {
+      totalForest += f.length;
+      totalExcl += (e.polys?.length ?? 0) + (e.lines?.length ?? 0);
+      skipped++;
+      console.log(`[${key}] redan bakad, hoppar över`);
+      continue;
+    }
+  } catch { /* saknas på disk, hämta */ }
+  await sleep(DELAY_MS);
   let forest, ex;
   try {
     forest = ringsOf(await overpass(forestQ(b)));
@@ -214,7 +247,12 @@ for (const t of tiles) {
       }
     }
     console.log(`[${key}] fetched via Overpass`);
-  } catch {
+  } catch (e1) {
+    if (g > 0.25) {
+      failed++;
+      console.error(`[${key}] KUNDE INTE HÄMTA: ${String(e1.message).slice(0, 200)} (OSM /map används inte för tiles >0.25°)`);
+      continue;
+    }
     try {
       const features = await osmApiFeatures(kMinLat, kMinLon, kMinLat + g, kMinLon + g);
       forest = features
@@ -231,9 +269,9 @@ for (const t of tiles) {
       }
       console.log(`[${key}] fetched via OSM main API`);
     } catch (e2) {
-      forest = [];
-      ex = { polys: [], lines: [] };
-      console.error(`[${key}] KUNDE INTE HÄMTA (Overpass + OSM API nere): ${e2.message}`);
+      failed++;
+      console.error(`[${key}] KUNDE INTE HÄMTA (Overpass + OSM API nere): ${e2.message} — ingen tom fil skriven`);
+      continue;
     }
   }
   await fs.writeFile(path.join(root, `forest_${key}.json`), JSON.stringify(forest));
@@ -242,9 +280,9 @@ for (const t of tiles) {
   totalForest += forest.length;
   totalExcl += ex.polys.length + ex.lines.length;
 }
-console.log(`Totalt: ${totalForest} skog-polygoner, ${totalExcl} exkl-polygoner/linjer i ${tiles.length} tiles.`);
-if (totalForest === 0 || totalExcl === 0) {
-  console.error("FEL: Overpass/OSM returnerade tomma resultat — kontrollera nätverk/rate-limit. Radera data/osm och försök igen.");
+console.log(`Totalt: ${totalForest} skog-polygoner, ${totalExcl} exkl-polygoner/linjer; ${skipped} redan bakade, ${failed} misslyckades.`);
+if (failed > 0 || totalForest === 0 || totalExcl === 0) {
+  console.error("FEL: några tiles kunde inte hämtas — tomma filer skrivs ALDRIG vid fel. Kör igen (hoppar över bakade tiles), vänta vid 429, eller använd offline-läget: npm run osm-bake -- <forest.geojson> <excl.geojson> <minLon> <minLat> <maxLon> <maxLat>");
   process.exit(1);
 }
 console.log("Server reads these from data/osm/ before calling live APIs.");

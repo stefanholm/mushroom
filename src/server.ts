@@ -182,10 +182,13 @@ async function minTempLast48h(lat: number, lon: number): Promise<number | null> 
 
 const OVERPASS_HOSTS = [
   "https://overpass-api.de/api/interpreter",
+  "https://lz4.overpass-api.de/api/interpreter",
+  "https://z.overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
   "https://overpass.private.coffee/api/interpreter",
   "https://overpass.nchc.org.tw/api/interpreter",
   "https://overpass.osm.ch/api/interpreter",
+  "https://overpass.openstreetmap.fr/api/interpreter",
 ];
 
 type OverpassElement = {
@@ -197,19 +200,31 @@ type OverpassElement = {
 export type Poly = { outer: [number, number][]; inner: [number, number][][] };
 
 async function overpassQuery(q: string): Promise<{ elements?: OverpassElement[] }> {
+  const errors: string[] = [];
   const attempts = OVERPASS_HOSTS.map((host) =>
     (async () => {
-      const r = await fetch(`${host}?data=${encodeURIComponent(q)}`, {
-        signal: AbortSignal.timeout(8_000),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const body = (await r.json()) as { elements?: OverpassElement[]; remark?: string };
-      if (body.remark) throw new Error(`remark: ${body.remark}`);
-      if ((body.elements ?? []).length === 0) throw new Error("empty result");
-      return body as { elements?: OverpassElement[] };
+      try {
+        const r = await fetch(`${host}?data=${encodeURIComponent(q)}`, {
+          signal: AbortSignal.timeout(8_000),
+          headers: { "User-Agent": "mushroom-finder/1.0 (local research app)" },
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const body = (await r.json()) as { elements?: OverpassElement[]; remark?: string };
+        if (body.remark) throw new Error(`remark: ${body.remark.slice(0, 80)}`);
+        if ((body.elements ?? []).length === 0) throw new Error("empty result");
+        return body as { elements?: OverpassElement[] };
+      } catch (e) {
+        errors.push(`${host.replace("https://", "")}: ${(e as Error).message}`);
+        throw e;
+      }
     })(),
   );
-  return Promise.any(attempts);
+  try {
+    return await Promise.any(attempts);
+  } catch {
+    console.error(`Overpass misslyckades på alla ${OVERPASS_HOSTS.length} hostar — ${errors.join(" | ")}`);
+    throw new Error("all overpass hosts failed");
+  }
 }
 
 function assembleRings(geoms: [number, number][][]): [number, number][][] {
@@ -663,21 +678,27 @@ async function computeCells(
   }
 
   const span = Math.max(maxLon - minLon, maxLat - minLat);
+  const store = await getLayerStore();
+  const useMask = store.mask !== null;
   let forestPolys: Poly[] | null = null;
   let exclusions: Exclusions | null = null;
   if (span <= 2) {
-    const [f, x] = await Promise.allSettled([
-      forestPolygonsForBox(minLon, minLat, maxLon, maxLat),
-      exclusionsForBox(minLon, minLat, maxLon, maxLat),
-    ]);
-    if (f.status === "fulfilled") forestPolys = f.value;
-    else console.error("Forest layer fetch failed:", f.reason);
-    if (x.status === "fulfilled") exclusions = x.value;
+    const jobs: Promise<unknown>[] = [];
+    if (!useMask) jobs.push(forestPolygonsForBox(minLon, minLat, maxLon, maxLat));
+    jobs.push(exclusionsForBox(minLon, minLat, maxLon, maxLat));
+    const settled = await Promise.allSettled(jobs);
+    let idx = 0;
+    if (!useMask) {
+      const f = settled[idx++];
+      if (f.status === "fulfilled") forestPolys = f.value as Poly[] | null;
+      else console.error("Forest layer fetch failed:", f.reason);
+    }
+    const x = settled[idx];
+    if (x.status === "fulfilled") exclusions = x.value as Exclusions | null;
     else console.error("Exclusion layer fetch failed:", x.reason);
   }
   const ex: Exclusions = exclusions ?? { polys: [], lines: [] };
 
-  const store = await getLayerStore();
   const clearcuts = store.vectors.get("avverkningar");
 
   const startLon = Math.floor(minLon / cell) * cell;
@@ -687,7 +708,10 @@ async function computeCells(
     for (let lon = startLon; lon < maxLon; lon += cell) {
       const clat = lat + cell / 2;
       const clon = lon + cell / 2;
-      const inForest = forestPolys !== null && pointInPolys(forestPolys, clon, clat);
+      const [e0, n0] = toSWEREF(clon, clat);
+      const inForest = useMask
+        ? store.mask!.has(e0, n0) && store.mask!.allows(e0, n0)
+        : forestPolys !== null && pointInPolys(forestPolys, clon, clat);
       const excluded =
         ex.polys.length > 0 &&
         (pointInPolys(ex.polys, clon, clat) || distToPolysMeters(ex.polys, clon, clat) < 30);
@@ -702,7 +726,7 @@ async function computeCells(
           !pointInPolys(forestPolys, clon - 0.001, clat) ||
           !pointInPolys(forestPolys, clon, clat + 0.001) ||
           !pointInPolys(forestPolys, clon, clat - 0.001));
-      const [e, n] = toSWEREF(clon, clat);
+      const [e, n] = [e0, n0];
       const inClearcut = clearcuts ? clearcuts.contains(e, n) : false;
       const habitat = staticHabitatScore(store, key, clon, clat, {
         forestOk: inForest,
@@ -753,7 +777,8 @@ async function computeCells(
       staticOnly,
       asOf: asOf.toISOString().slice(0, 10),
       forestAreas: forestPolys?.length ?? 0,
-      forestKnown: forestPolys !== null,
+      forestKnown: useMask ? true : forestPolys !== null,
+      maskUsed: useMask,
       excludedAreas: ex.polys.length,
       layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
     },
@@ -999,7 +1024,8 @@ app.get("/api/meta", async (req, res) => {
     layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
     tileVersion: path.basename(TILES_DIR),
     forestAreas: f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
-    forestKnown: f.status === "fulfilled" && f.value !== null,
+    forestKnown: store.mask !== null || (f.status === "fulfilled" && f.value !== null),
+    maskUsed: store.mask !== null,
     excludedAreas: x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
     forestCount: f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
     exclCount: x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
@@ -1170,11 +1196,18 @@ app.get("/api/debug/cell", async (req, res) => {
   }
   const asOf = parseAsOf(String(req.query.date ?? ""));
   const staticOnly = req.query.static === "1";
-  const [forestPolys, exclusions] = await Promise.all([
-    forestPolygonsForBox(lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2),
-    exclusionsForBox(lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2),
-  ]);
-  const inForest = forestPolys !== null && pointInPolys(forestPolys, lon, lat);
+  const store = await getLayerStore();
+  const useMask = store.mask !== null;
+  const [forestPolys, exclusions] = useMask
+    ? [null, await exclusionsForBox(lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2)]
+    : await Promise.all([
+        forestPolygonsForBox(lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2),
+        exclusionsForBox(lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2),
+      ]);
+  const [e0, n0] = toSWEREF(lon, lat);
+  const inForest = useMask
+    ? store.mask!.has(e0, n0) && store.mask!.allows(e0, n0)
+    : forestPolys !== null && pointInPolys(forestPolys, lon, lat);
   const ex = exclusions ?? { polys: [] as Poly[], lines: [] as [number, number][][] };
   const excluded =
     ex.polys.length > 0 && (pointInPolys(ex.polys, lon, lat) || distToPolysMeters(ex.polys, lon, lat) < 30);
@@ -1188,8 +1221,7 @@ app.get("/api/debug/cell", async (req, res) => {
       !pointInPolys(forestPolys, lon - 0.001, lat) ||
       !pointInPolys(forestPolys, lon, lat + 0.001) ||
       !pointInPolys(forestPolys, lon, lat - 0.001));
-  const [e, n] = toSWEREF(lon, lat);
-  const store = await getLayerStore();
+  const [e, n] = [e0, n0];
   const clearcuts = store.vectors.get("avverkningar");
   const inClearcut = clearcuts ? clearcuts.contains(e, n) : false;
   const dbg: Record<string, unknown> = {};
@@ -1213,7 +1245,8 @@ app.get("/api/debug/cell", async (req, res) => {
     species: key,
     lon,
     lat,
-    forestKnown: forestPolys !== null,
+    forestKnown: useMask ? true : forestPolys !== null,
+    maskUsed: useMask,
     forestPolys: forestPolys?.length ?? 0,
     inForest,
     excluded,

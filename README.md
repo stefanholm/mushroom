@@ -141,8 +141,25 @@ OSM masks (forest + exclusions) are read **disk-first** from `data/osm/{forest,e
 0.4° tile files covering the query bbox (keys are `toFixed(6)`-formatted — always re-bake with
 `rm -rf data/osm` after pulling, old float-artifact keys won't match). Masking is **fail-closed**:
 if no mask is available for an area, nothing renders there (`forestKnown` in `/api/meta`).
-If no disk cache exists, the server falls back to Overpass (5 hosts, GET) then the main OSM API,
-cached 24 h per tile. An optional **NMD 10 m mask** (`nmd_10m.tif` + `mask` entry in
+If no disk cache exists, the server falls back to Overpass (8 hosts, GET) then the main OSM API,
+cached 24 h per tile.
+
+**Offline fallback (if Overpass/OSM-API are blocked or rate-limited from your network)** — bake
+from a local OSM extract instead of the network:
+
+```
+brew install osmium-tool
+curl -L -o /tmp/sweden.osm.pbf https://download.geofabrik.de/europe/sweden-latest.osm.pbf
+osmium tags-filter /tmp/sweden.osm.pbf w/landuse=forest w/natural=wood w/natural=scrub r/landuse=forest r/natural=wood -o /tmp/forest.osm.pbf --overwrite
+osmium export /tmp/forest.osm.pbf -f geojson -o /tmp/forest.geojson --overwrite
+osmium tags-filter /tmp/sweden.osm.pbf w/natural=water w/waterway~".*" w/building~".*" w/landuse~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$" w/leisure~"^(pitch|golf_course|recreation_ground|park|garden|playground|dog_park)$" w/amenity=parking w/natural=grass w/shop~".*" w/man_made~"^(wastewater_plant|storage_tank)$" w/highway~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|service|living_street|bus_guideway|raceway|road)$" w/railway~".*" w/aeroway~".*" r/natural=water r/building r/landuse~"^(industrial|commercial|residential|urban|landfill|military|retail)$" -o /tmp/excl.osm.pbf --overwrite
+osmium export /tmp/excl.osm.pbf -f geojson -o /tmp/excl.geojson --overwrite
+npm run osm-bake -- /tmp/forest.geojson /tmp/excl.geojson 17.7 59.1 18.5 59.7
+```
+
+(`osmium export` writes GeoJSON in EPSG:4326 with OSM tags in `properties`; the bake script clips
+them into the same per-0.4°-tile cache files. Bake a bbox slightly larger than your area of
+interest — masking is fail-closed, so anything outside the baked tiles scores 0.) An optional **NMD 10 m mask** (`nmd_10m.tif` + `mask` entry in
 `manifest.json`, forest classes 111–128, 30 m dilation) acts as an additional hard gate.
 Exclusion polygons get a 30 m buffer; paved roads hard-zero within 20 m; forest paths stay open. Habitat tiles are rendered as **circles, not blur**: each hot cell
 splats a soft-edged circle whose radius grows with its cluster step; overlapping
