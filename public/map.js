@@ -78,10 +78,10 @@ function initMap(maplibregl) {
       sources: {
         osm: {
           type: "raster",
-          tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+          tiles: ["https://tile.opentopomap.org/{z}/{x}/{y}.png"],
           tileSize: 256,
           attribution:
-            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
         },
         hillshade: {
           type: "raster",
@@ -90,16 +90,7 @@ function initMap(maplibregl) {
         },
       },
       layers: [
-        {
-          id: "osm",
-          type: "raster",
-          source: "osm",
-          paint: {
-            "raster-saturation": -0.75,
-            "raster-brightness-max": 0.92,
-            "raster-contrast": 0.08,
-          },
-        },
+        { id: "osm", type: "raster", source: "osm" },
         {
           id: "hillshade",
           type: "raster",
@@ -136,22 +127,23 @@ function initMap(maplibregl) {
   window.addEventListener("resize", () => map.resize());
   new ResizeObserver(() => map.resize()).observe(mapContainer);
 
-  speciesSelect.addEventListener("change", () => {
-    rebuildHabitat();
-    refreshMeta();
-  });
-  staticOnlyInput.addEventListener("change", () => {
-    rebuildHabitat();
-    refreshMeta();
-  });
+  let rebuildTimer = null;
+  function scheduleRebuild() {
+    clearTimeout(rebuildTimer);
+    rebuildTimer = setTimeout(() => {
+      rebuildHabitat();
+      refreshMeta();
+    }, 400);
+  }
+  speciesSelect.addEventListener("change", scheduleRebuild);
+  staticOnlyInput.addEventListener("change", scheduleRebuild);
   dateSlider.addEventListener("input", () => {
     updateDateLabel();
-    rebuildHabitat();
-    refreshMeta();
+    scheduleRebuild();
   });
   sensInput.addEventListener("input", () => {
-    sensLabel.textContent = String(50 + Number(sensInput.value));
-    rebuildHabitat();
+    sensLabel.textContent = String(55 + Number(sensInput.value));
+    scheduleRebuild();
   });
   opacityInput.addEventListener("input", () => {
     if (map.getLayer("habitat")) {

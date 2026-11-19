@@ -148,13 +148,24 @@ async function minTempLast48h(lat: number, lon: number): Promise<number | null> 
   try {
     const stations = await getStations();
     const active = stations.filter((s) => s.active);
-    const station = nearestStation(active.length > 0 ? active : stations, lat, lon);
-    const r = await fetch(
-      `${SMHI_BASE}/parameter/${TEMP_PARAMETER}/station/${station.id}/period/latest-months/data.json`,
-      { signal: AbortSignal.timeout(20_000) },
+    const candidates = active.length > 0 ? active : stations;
+    const cosLat = Math.cos((lat * Math.PI) / 180);
+    const ranked = [...candidates].sort(
+      (a, b) =>
+        (a.lat - lat) ** 2 + ((a.lon - lon) * cosLat) ** 2 - ((b.lat - lat) ** 2 + ((b.lon - lon) * cosLat) ** 2),
     );
-    if (!r.ok) throw new Error(`SMHI temp: HTTP ${r.status}`);
-    const body = (await r.json()) as { value?: { to?: unknown; date?: unknown; value?: unknown }[] };
+    let body: { value?: { to?: unknown; date?: unknown; value?: unknown }[] } | null = null;
+    for (const station of ranked.slice(0, 4)) {
+      const r = await fetch(
+        `${SMHI_BASE}/parameter/${TEMP_PARAMETER}/station/${station.id}/period/latest-months/data.json`,
+        { signal: AbortSignal.timeout(15_000) },
+      );
+      if (r.ok) {
+        body = (await r.json()) as { value?: { to?: unknown; date?: unknown; value?: unknown }[] };
+        if ((body.value ?? []).length > 0) break;
+      }
+    }
+    if (!body) throw new Error("no temp data");
     const values = (body.value ?? [])
       .map((v) => ({ to: Number(v.to ?? v.date), value: v.value }))
       .filter((v) => Number.isFinite(v.to) && typeof v.value === "string")
@@ -164,8 +175,7 @@ async function minTempLast48h(lat: number, lon: number): Promise<number | null> 
     const min48 = recent.length > 0 ? Math.min(...recent) : null;
     tempCache.set(key, { at: Date.now(), min48 });
     return min48;
-  } catch (err) {
-    console.error("SMHI temp fetch failed:", err);
+  } catch {
     return null;
   }
 }
@@ -712,8 +722,8 @@ app.get("/api/hillshade", async (req, res) => {
 
 const TILES_DIR = path.join(here, "..", "data", "tiles", "r3");
 
-const HEAT_BASE = 50;
-const HEAT_RANGE = 50;
+const HEAT_BASE = 55;
+const HEAT_RANGE = 45;
 
 function tileBBox(z: number, x: number, y: number) {
   const n = 2 ** z;
@@ -737,7 +747,7 @@ function heatOf(score: number, sens: number): number {
 
 function heatColor(heat: number): [number, number, number, number] {
   if (heat <= 0) return [0, 0, 0, 0];
-  const pos = Math.pow(heat, 0.7);
+  const pos = Math.pow(heat, 0.8);
   let i = 0;
   while (i < HEAT_RAMP.length - 2 && HEAT_RAMP[i + 1][0] < pos) i++;
   const [h0, c0] = HEAT_RAMP[i];
@@ -1027,12 +1037,8 @@ PREWARM_POINTS.push([59.35, 18.05]);
 
 async function prewarmWeather(): Promise<void> {
   for (const [lat, lon] of PREWARM_POINTS) {
-    try {
-      await rainLast14Days(lat, lon, new Date());
-      await minTempLast48h(lat, lon);
-    } catch {
-      /* cached or failed; next interval retries */
-    }
+    await rainLast14Days(lat, lon, new Date()).catch(() => {});
+    await minTempLast48h(lat, lon);
   }
 }
 
