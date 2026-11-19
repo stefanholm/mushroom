@@ -271,7 +271,13 @@ function gridKey(minLon: number, minLat: number, maxLon: number, maxLat: number)
   return [kMinLon, kMinLat, kMaxLon, kMaxLat, `${kMinLon},${kMinLat},${kMaxLon},${kMaxLat}`];
 }
 
-const forestCache = new Map<string, { at: number; polys: [number, number][][] }>();
+const forestCache = new Map<string, { at: number; polys: [number, number][][]; ok: boolean }>();
+
+function cacheFresh(entry: { at: number; ok: boolean } | undefined): boolean {
+  if (!entry) return false;
+  const ttl = entry.ok ? 24 * 3600 * 1000 : 10 * 60 * 1000;
+  return Date.now() - entry.at < ttl;
+}
 
 async function forestPolygonsForBox(
   minLon: number,
@@ -281,34 +287,39 @@ async function forestPolygonsForBox(
 ): Promise<[number, number][][]> {
   const [kMinLon, kMinLat, kMaxLon, kMaxLat, key] = gridKey(minLon, minLat, maxLon, maxLat);
   const cached = forestCache.get(key);
-  if (cached && Date.now() - cached.at < 24 * 3600 * 1000) return cached.polys;
+  if (cacheFresh(cached)) return cached!.polys;
   try {
     const disk = JSON.parse(
       await fsp.readFile(path.join(here, "..", "data", "osm", `forest_${key}.json`), "utf8"),
     );
     if (Array.isArray(disk) && disk.length > 0) {
-      forestCache.set(key, { at: Date.now(), polys: disk });
+      forestCache.set(key, { at: Date.now(), polys: disk, ok: true });
       return disk;
     }
   } catch { /* no disk cache */ }
   const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
   const q = `[out:json][timeout:60];(way["landuse"="forest"](${b});way["natural"="wood"](${b});way["natural"="scrub"](${b});relation["landuse"="forest"](${b});relation["natural"="wood"](${b}););out geom;`;
-  let polys: [number, number][][];
+  let polys: [number, number][][] = [];
+  let ok = true;
   try {
     polys = ringsFromOverpass(await overpassQuery(q)).filter((ring) => ring.length >= 3);
   } catch {
-    const features = await osmMainApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon);
-    polys = features
-      .filter((f) => isForestTag(f.tags))
-      .flatMap((f) => f.rings)
-      .filter((ring) => ring.length >= 3);
+    try {
+      const features = await osmMainApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon);
+      polys = features
+        .filter((f) => isForestTag(f.tags))
+        .flatMap((f) => f.rings)
+        .filter((ring) => ring.length >= 3);
+    } catch {
+      ok = false;
+    }
   }
-  forestCache.set(key, { at: Date.now(), polys });
+  forestCache.set(key, { at: Date.now(), polys, ok });
   return polys;
 }
 
 type Exclusions = { polys: [number, number][][]; lines: [number, number][][] };
-const exclusionCache = new Map<string, { at: number; ex: Exclusions }>();
+const exclusionCache = new Map<string, { at: number; ex: Exclusions; ok: boolean }>();
 
 async function exclusionsForBox(
   minLon: number,
@@ -318,13 +329,13 @@ async function exclusionsForBox(
 ): Promise<Exclusions> {
   const [kMinLon, kMinLat, kMaxLon, kMaxLat, key] = gridKey(minLon, minLat, maxLon, maxLat);
   const cached = exclusionCache.get(key);
-  if (cached && Date.now() - cached.at < 24 * 3600 * 1000) return cached.ex;
+  if (cacheFresh(cached)) return cached!.ex;
   try {
     const disk = JSON.parse(
       await fsp.readFile(path.join(here, "..", "data", "osm", `exclusion_${key}.json`), "utf8"),
     );
     if (disk && Array.isArray(disk.polys) && (disk.polys.length > 0 || disk.lines.length > 0)) {
-      exclusionCache.set(key, { at: Date.now(), ex: disk });
+      exclusionCache.set(key, { at: Date.now(), ex: disk, ok: true });
       return disk;
     }
   } catch { /* no disk cache */ }
@@ -350,13 +361,18 @@ async function exclusionsForBox(
     };
     for (const e of body.elements ?? []) pushElement(e);
   } catch {
-    const features = await osmMainApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon);
-    for (const f of features) {
-      if (isLineTag(f.tags)) ex.lines.push(...f.rings);
-      else if (isExcludedAreaTag(f.tags)) ex.polys.push(...f.rings);
+    try {
+      const features = await osmMainApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon);
+      for (const f of features) {
+        if (isLineTag(f.tags)) ex.lines.push(...f.rings);
+        else if (isExcludedAreaTag(f.tags)) ex.polys.push(...f.rings);
+      }
+    } catch {
+      exclusionCache.set(key, { at: Date.now(), ex, ok: false });
+      return ex;
     }
   }
-  exclusionCache.set(key, { at: Date.now(), ex });
+  exclusionCache.set(key, { at: Date.now(), ex, ok: true });
   return ex;
 }
 
