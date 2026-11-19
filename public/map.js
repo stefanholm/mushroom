@@ -104,7 +104,7 @@ function initMap(maplibregl) {
 }
 
 import("/vendor/maplibre/maplibre-gl.mjs")
-  .then((mod) => initMap(mod.default))
+  .then((mod) => initMap(mod.default ?? mod))
   .catch((err) => {
     console.error(err);
     mapContainer.textContent = `Kunde inte ladda kartbiblioteket: ${err.message}. Kör \`npm install\` i projektmappen och ladda om sidan.`;
