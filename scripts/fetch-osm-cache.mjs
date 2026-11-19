@@ -36,10 +36,7 @@ async function overpass(q) {
   let lastErr = new Error("no host");
   for (const host of HOSTS) {
     try {
-      const r = await fetch(host, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: "data=" + encodeURIComponent(q),
+      const r = await fetch(`${host}?data=${encodeURIComponent(q)}`, {
         signal: AbortSignal.timeout(30_000),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);

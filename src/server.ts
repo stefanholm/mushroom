@@ -197,14 +197,14 @@ type OverpassElement = {
 async function overpassQuery(q: string): Promise<{ elements?: OverpassElement[] }> {
   const attempts = OVERPASS_HOSTS.map((host) =>
     (async () => {
-      const r = await fetch(host, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: "data=" + encodeURIComponent(q),
+      const r = await fetch(`${host}?data=${encodeURIComponent(q)}`, {
         signal: AbortSignal.timeout(8_000),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return (await r.json()) as { elements?: OverpassElement[] };
+      const body = (await r.json()) as { elements?: OverpassElement[]; remark?: string };
+      if (body.remark) throw new Error(`remark: ${body.remark}`);
+      if ((body.elements ?? []).length === 0) throw new Error("empty result");
+      return body as { elements?: OverpassElement[] };
     })(),
   );
   return Promise.any(attempts);
