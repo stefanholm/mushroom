@@ -73,6 +73,10 @@ for (let j = 0; j < height; j++) {
     hojd[k] =
       10 + 80 * (0.5 + 0.5 * Math.sin(i * 0.05) * Math.cos(j * 0.04)) + 5 * rand();
     if (i >= 150 && i < 210 && j >= 300 && j < 390) hojd[k] = -9999;
+    if (i >= 250 && i < 340 && j >= 80 && j < 200) {
+      tradhojd[k] = 0;
+      volym[k] = 0;
+    }
   }
 }
 

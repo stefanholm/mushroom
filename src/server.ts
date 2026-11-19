@@ -3,6 +3,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
+import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
 import { SPECIES, seasonalFactor, staticHabitatScore } from "./habitat.js";
 
@@ -139,9 +140,17 @@ const OVERPASS_HOSTS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
   "https://overpass.private.coffee/api/interpreter",
+  "https://overpass.nchc.org.tw/api/interpreter",
+  "https://overpass.osm.ch/api/interpreter",
 ];
 
-async function overpassQuery(q: string): Promise<{ elements?: { tags?: Record<string, string>; geometry?: { lat: number; lon: number }[] }[] }> {
+type OverpassElement = {
+  tags?: Record<string, string>;
+  geometry?: { lat: number; lon: number }[];
+  members?: { geometry?: { lat: number; lon: number }[] }[];
+};
+
+async function overpassQuery(q: string): Promise<{ elements?: OverpassElement[] }> {
   let lastErr: unknown = new Error("no host");
   for (const host of OVERPASS_HOSTS) {
     try {
@@ -152,12 +161,29 @@ async function overpassQuery(q: string): Promise<{ elements?: { tags?: Record<st
         signal: AbortSignal.timeout(60_000),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return (await r.json()) as { elements?: { tags?: Record<string, string>; geometry?: { lat: number; lon: number }[] }[] };
+      return (await r.json()) as { elements?: OverpassElement[] };
     } catch (err) {
       lastErr = err;
     }
   }
   throw lastErr;
+}
+
+function ringsFromOverpass(body: { elements?: OverpassElement[] }): [number, number][][] {
+  const rings: [number, number][][] = [];
+  for (const e of body.elements ?? []) {
+    if (e.geometry) {
+      const ring = e.geometry.map((p) => [p.lon, p.lat] as [number, number]);
+      if (ring.length >= 2) rings.push(ring);
+    }
+    for (const m of e.members ?? []) {
+      if (m.geometry) {
+        const ring = m.geometry.map((p) => [p.lon, p.lat] as [number, number]);
+        if (ring.length >= 2) rings.push(ring);
+      }
+    }
+  }
+  return rings;
 }
 
 function gridKey(minLon: number, minLat: number, maxLon: number, maxLat: number): [number, number, number, number, string] {
@@ -181,11 +207,9 @@ async function forestPolygonsForBox(
   const cached = forestCache.get(key);
   if (cached && Date.now() - cached.at < 24 * 3600 * 1000) return cached.polys;
   const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
-  const q = `[out:json][timeout:60];(way["landuse"="forest"](${b});way["natural"="wood"](${b});way["natural"="scrub"](${b}););out geom;`;
+  const q = `[out:json][timeout:60];(way["landuse"="forest"](${b});way["natural"="wood"](${b});way["natural"="scrub"](${b});relation["landuse"="forest"](${b});relation["natural"="wood"](${b}););out geom;`;
   const body = await overpassQuery(q);
-  const polys = (body.elements ?? [])
-    .map((e) => (e.geometry ?? []).map((p) => [p.lon, p.lat] as [number, number]))
-    .filter((ring) => ring.length >= 3);
+  const polys = ringsFromOverpass(body).filter((ring) => ring.length >= 3);
   forestCache.set(key, { at: Date.now(), polys });
   return polys;
 }
@@ -203,18 +227,25 @@ async function exclusionsForBox(
   const cached = exclusionCache.get(key);
   if (cached && Date.now() - cached.at < 24 * 3600 * 1000) return cached.ex;
   const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
-  const area = `way["natural"="water"](${b});way["waterway"](${b});way["building"](${b});way["landuse"~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry)$"](${b});way["leisure"~"^(pitch|golf_course)$"](${b});`;
+  const area = `way["natural"="water"](${b});way["waterway"](${b});way["building"](${b});way["landuse"~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$"](${b});way["leisure"~"^(pitch|golf_course|recreation_ground)$"](${b});way["amenity"="parking"](${b});way["natural"="grass"](${b});way["shop"](${b});way["man_made"~"^(wastewater_plant|storage_tank)$"](${b});relation["natural"="water"](${b});relation["building"](${b});relation["landuse"~"^(industrial|commercial|residential|urban|landfill|military|retail)$"](${b});`;
   const lines = `way["highway"](${b});way["railway"](${b});way["aeroway"](${b});`;
   const q = `[out:json][timeout:60];(${area}${lines});out geom;`;
   const body = await overpassQuery(q);
   const ex: Exclusions = { polys: [], lines: [] };
-  for (const e of body.elements ?? []) {
-    const ring = (e.geometry ?? []).map((p) => [p.lon, p.lat] as [number, number]);
-    if (ring.length < 2) continue;
+  const pushElement = (e: OverpassElement) => {
     const t = e.tags ?? {};
-    if (t.highway || t.railway || t.aeroway) ex.lines.push(ring);
-    else ex.polys.push(ring);
-  }
+    const isLine = Boolean(t.highway || t.railway || t.aeroway);
+    const geoms = [e.geometry, ...(e.members ?? []).map((m) => m.geometry)].filter(
+      (g): g is { lat: number; lon: number }[] => Array.isArray(g),
+    );
+    for (const g of geoms) {
+      const ring = g.map((p) => [p.lon, p.lat] as [number, number]);
+      if (ring.length < 2) continue;
+      if (isLine) ex.lines.push(ring);
+      else ex.polys.push(ring);
+    }
+  };
+  for (const e of body.elements ?? []) pushElement(e);
   exclusionCache.set(key, { at: Date.now(), ex });
   return ex;
 }
@@ -409,6 +440,83 @@ app.get("/api/hotspots", async (req, res) => {
     },
     features,
   });
+});
+
+app.get("/api/hillshade", async (req, res) => {
+  const box = ["minLon", "minLat", "maxLon", "maxLat"].map((k) => Number(req.query[k]));
+  if (box.some((n) => !Number.isFinite(n))) {
+    return res.status(400).json({ error: "Expected query params: minLon, minLat, maxLon, maxLat." });
+  }
+  let [minLon, minLat, maxLon, maxLat] = box;
+  if (minLon > maxLon) [minLon, maxLon] = [maxLon, minLon];
+  if (minLat > maxLat) [minLat, maxLat] = [maxLat, minLat];
+  if (maxLon - minLon > 4 || maxLat - minLat > 4) {
+    return res.status(400).json({ error: "Bounding box too large (max 4 degrees per side)." });
+  }
+  const store = await getLayerStore();
+  const dem = store.rasters.get("hojd");
+  if (!dem) return res.status(404).json({ error: "hojdmodell (data/layers/hojdmodell_2m.tif) saknas." });
+
+  const [w, s] = toSWEREF(minLon, minLat);
+  const [e, n] = toSWEREF(maxLon, maxLat);
+  const minE = Math.min(w, e);
+  const maxE = Math.max(w, e);
+  const minN = Math.min(s, n);
+  const maxN = Math.max(s, n);
+  const px0 = Math.max(0, Math.floor((minE - dem.originX) / dem.pixelX));
+  const px1 = Math.min(dem.width, Math.ceil((maxE - dem.originX) / dem.pixelX));
+  const py0 = Math.max(0, Math.floor((maxN - dem.originY) / dem.pixelY));
+  const py1 = Math.min(dem.height, Math.ceil((minN - dem.originY) / dem.pixelY));
+  if (px1 - px0 < 2 || py1 - py0 < 2) {
+    return res.status(404).json({ error: "Ingen höjdmodell-täckning i detta område." });
+  }
+  const out = 512;
+  const arr = await dem.readWindow(px0, py0, px1, py1);
+  const bands = dem.bands();
+  const winW = px1 - px0;
+  const winH = py1 - py0;
+  const cs = dem.pixelX;
+  const at = (x: number, y: number): number => {
+    const v = arr[(y * winW + x) * bands];
+    return typeof v === "number" ? v : NaN;
+  };
+  const png = new PNG({ width: out, height: out });
+  const zenith = (45 * Math.PI) / 180;
+  const azimuth = (315 * Math.PI) / 180;
+  for (let oy = 0; oy < out; oy++) {
+    for (let ox = 0; ox < out; ox++) {
+      const fx = (ox / (out - 1)) * (winW - 1);
+      const fy = (oy / (out - 1)) * (winH - 1);
+      const x = Math.round(fx);
+      const y = Math.round(fy);
+      const z = at(x, y);
+      const idx = (oy * out + ox) * 4;
+      if (!Number.isFinite(z)) {
+        png.data[idx + 3] = 0;
+        continue;
+      }
+      const zW = x > 0 ? at(x - 1, y) : z;
+      const zE = x < winW - 1 ? at(x + 1, y) : z;
+      const zN = y > 0 ? at(x, y - 1) : z;
+      const zS = y < winH - 1 ? at(x, y + 1) : z;
+      const dzdx = (zE - zW) / (2 * cs);
+      const dzdy = (zS - zN) / (2 * cs);
+      const slope = Math.atan(Math.hypot(dzdx, dzdy));
+      const aspect = Math.atan2(dzdy, -dzdx);
+      const shade =
+        255 *
+        (Math.cos(zenith) * Math.cos(slope) +
+          Math.sin(zenith) * Math.sin(slope) * Math.cos(azimuth - aspect));
+      const v = Math.max(0, Math.min(255, Math.round(shade)));
+      png.data[idx] = v;
+      png.data[idx + 1] = v;
+      png.data[idx + 2] = v;
+      png.data[idx + 3] = 170;
+    }
+  }
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "no-cache");
+  res.send(PNG.sync.write(png));
 });
 
 const port = Number(process.env.PORT ?? 3000);

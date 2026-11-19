@@ -4,7 +4,14 @@ const opacityInput = document.getElementById("opacity");
 const staticOnlyInput = document.getElementById("staticOnly");
 const dateSlider = document.getElementById("dateSlider");
 const dateLabel = document.getElementById("dateLabel");
+const sensInput = document.getElementById("sens");
+const sensLabel = document.getElementById("sensLabel");
+const hillshadeInput = document.getElementById("hillshade");
 const metaEl = document.getElementById("meta");
+
+function sensitivityThreshold() {
+  return 60 + Number(sensInput.value);
+}
 
 function selectedDate() {
   const days = Number(dateSlider.value);
@@ -20,8 +27,9 @@ let map = null;
 let refreshTimer = null;
 
 function heatmapPaint() {
+  const t = sensitivityThreshold();
   return {
-    "heatmap-weight": ["interpolate", ["linear"], ["get", "heat"], 0, 0, 1, 1],
+    "heatmap-weight": ["interpolate", ["linear"], ["get", "score"], t, 0, 100, 1],
     "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 5, 0.6, 9, 1.2, 12, 2.5, 16, 5],
     "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 5, 10, 9, 22, 12, 40, 16, 80],
     "heatmap-color": [
@@ -30,17 +38,53 @@ function heatmapPaint() {
       ["heatmap-density"],
       0,
       "rgba(0,0,0,0)",
-      0.2,
-      "#fee08b",
-      0.5,
-      "#fdae61",
+      0.15,
+      "#ffffcc",
+      0.3,
+      "#ffeda0",
+      0.45,
+      "#fed976",
+      0.6,
+      "#feb24c",
       0.75,
-      "#f46d43",
+      "#fd8d3c",
+      0.88,
+      "#f03b20",
       1,
-      "#d73027",
+      "#bd0026",
     ],
     "heatmap-opacity": Number(opacityInput.value) / 100,
   };
+}
+
+function updateHillshade() {
+  if (map.getLayer("hillshade")) map.removeLayer("hillshade");
+  if (map.getSource("hillshade")) map.removeSource("hillshade");
+  if (!hillshadeInput.checked || !map.loaded()) return;
+  const b = map.getBounds();
+  const url =
+    "/api/hillshade?minLon=" +
+    b.getWest().toFixed(5) +
+    "&minLat=" +
+    b.getSouth().toFixed(5) +
+    "&maxLon=" +
+    b.getEast().toFixed(5) +
+    "&maxLat=" +
+    b.getNorth().toFixed(5);
+  map.addSource("hillshade", {
+    type: "image",
+    url,
+    coordinates: [
+      [b.getWest(), b.getSouth()],
+      [b.getEast(), b.getSouth()],
+      [b.getEast(), b.getNorth()],
+      [b.getWest(), b.getNorth()],
+    ],
+  });
+  map.addLayer(
+    { id: "hillshade", type: "raster", source: "hillshade", paint: { "raster-opacity": 0.5 } },
+    "hotspots",
+  );
 }
 
 async function refreshHotspots() {
@@ -119,10 +163,14 @@ function initMap(maplibregl) {
       paint: heatmapPaint(),
     });
     refreshHotspots();
+    updateHillshade();
     geolocate.trigger();
     map.on("moveend", () => {
       clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(refreshHotspots, 400);
+      refreshTimer = setTimeout(() => {
+        refreshHotspots();
+        updateHillshade();
+      }, 400);
     });
   });
 
@@ -136,6 +184,21 @@ function initMap(maplibregl) {
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(refreshHotspots, 400);
   });
+  sensInput.addEventListener("input", () => {
+    sensLabel.textContent = String(sensitivityThreshold());
+    if (map.getLayer("hotspots")) {
+      map.setPaintProperty("hotspots", "heatmap-weight", [
+        "interpolate",
+        ["linear"],
+        ["get", "score"],
+        sensitivityThreshold(),
+        0,
+        100,
+        1,
+      ]);
+    }
+  });
+  hillshadeInput.addEventListener("change", updateHillshade);
   opacityInput.addEventListener("input", () => {
     if (map.getLayer("hotspots")) {
       map.setPaintProperty("hotspots", "heatmap-opacity", Number(opacityInput.value) / 100);

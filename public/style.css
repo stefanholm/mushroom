@@ -139,3 +139,8 @@ button:disabled {
   border: 1px solid #ddd;
   min-height: 0;
 }
+.disclaimer {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #842029;
+}

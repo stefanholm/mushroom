@@ -73,9 +73,9 @@ for the same area; restart the server to reload layers.
 
 Static (where mycelium *can* live), sampled per map cell:
 
-1. **OSM forest mask** — Overpass (`landuse=forest`/`natural=wood`/`natural=scrub`), cached 24 h. Hard filter: non-forest ≈ 0.
+1. **OSM forest mask** — Overpass (ways **and multipolygon relations**: `landuse=forest`/`natural=wood`/`natural=scrub`), cached 24 h, 5 fallback hosts. Hard filter: non-forest ≈ 0.
    1b. **Forest-edge bonus** — cells within ~100 m of the forest boundary get a species-weighted bonus (kantarell loves edges/paths).
-2. **Negative OSM layers** — Overpass, cached 24 h, multiple fallback hosts: hard zero inside `natural=water`, `waterway`, `building=*`, `landuse=industrial|commercial|residential|urban|cemetery|allotments|quarry`, `leisure=pitch|golf_course`; ×0.2 within 30 m of any `highway`/`railway`/`aeroway`.
+2. **Negative OSM layers** — Overpass (ways + relations, cached 24 h, fallback hosts). Hard zero inside `natural=water`, `waterway`, `building=*`, `landuse=industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green`, `leisure=pitch|golf_course|recreation_ground`, `amenity=parking`, `natural=grass`, `shop=*`, `man_made=wastewater_plant|storage_tank`; ×0.2 within 30 m of any `highway`/`railway`/`aeroway`. (Safety: military/landfill/pollution excluded.)
 3. **DEM water cutoff** — with the höjdmodell loaded, in-coverage cells with nodata or elevation < 0.5 m are sea/water → hard zero (works even if Overpass is unreachable).
 2. **Trädhöjd** (`tradhojd`, SLU Skogskarta/Skogliga grunddata) — stand maturity threshold per species.
 3. **Volym** (`volym`, SLU) — same, volume-based.
@@ -94,11 +94,17 @@ Dynamic (when it *fruits*), from SMHI metobs (`latest-months`):
 8. **Rain, last 14 days** at the nearest active station, ending at the selected date (date slider).
 9. **Seasonal window** per species, shifted by latitude.
 
+Karta-tab extras: **hillshade** (`/api/hillshade?...` renders a 512×512 PNG from
+`hojdmodell_2m.tif`, shown under the heatmap; toggle "Terräng"), a **sensitivitet slider**
+(shifts the hotspot threshold ±10 around score 60), and a safety disclaimer
+(Giftinformationscentralen / lookalikes).
+
 Cells are scored on a fixed fine grid (span/60, floored at ~3 m so the 2 m höjdmodell is
 the limiting layer, max 60×60 per request) and rendered as a **blurred MapLibre
-heatmap layer** whose radius adapts to zoom — so the heatmap no longer changes shape
-when you zoom; a hot zone stays hot. Each cell also gets a `heat` value: 0 below score
-60, ramping linearly to 1 at score 100 — the heatmap is weighted by `heat`, so only
+heatmap layer** with a smooth multi-stop gradient, whose radius adapts to zoom — so the
+heatmap no longer changes shape when you zoom; a hot zone stays hot. Each cell also gets
+a `heat` value: 0 below score 60, ramping linearly to 1 at score 100 — the heatmap is
+weighted above that threshold, so only
 real hotspots glow (pinpoint mode). `static=1` shows layers 1–7 only.
 
 ## How the hotspot score works

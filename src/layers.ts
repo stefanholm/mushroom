@@ -69,7 +69,7 @@ export class RasterLayer {
 
   private data: ArrayLike<number> | null = null;
 
-  private bands(): number {
+  bands(): number {
     return this.image.getSamplesPerPixel();
   }
 
@@ -81,7 +81,7 @@ export class RasterLayer {
     }
   }
 
-  private async readWindow(x0: number, y0: number, x1: number, y1: number): Promise<ArrayLike<number>> {
+  async readWindow(x0: number, y0: number, x1: number, y1: number): Promise<ArrayLike<number>> {
     const rasters = await this.image.readRasters({ window: [x0, y0, x1, y1], interleave: true });
     return rasters as ArrayLike<number>;
   }

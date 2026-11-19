@@ -44,9 +44,23 @@
             <input id="dateSlider" type="range" min="0" max="110" value="0" />
             <span id="dateLabel">nu</span>
           </label>
+          <label>
+            Sensitivitet
+            <input id="sens" type="range" min="-10" max="10" value="0" step="1" />
+            <span id="sensLabel">60</span>
+          </label>
+          <label>
+            <input id="hillshade" type="checkbox" checked />
+            Terräng (hillshade)
+          </label>
           <span id="meta"></span>
         </div>
         <div id="map"></div>
+        <p class="disclaimer">
+          Säkerhet: ät aldrig svamp du inte är 100 % säker på. Förväxlingsarter kan vara dödligt
+          giftiga (t.ex. toppig giftspindling). Vid misstanke om förgiftning kontakta
+          Giftinformationscentralen, tel 112 vid akuta symtom.
+        </p>
       </section>
     </main>
     <script src="/app.js"></script>
