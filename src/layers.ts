@@ -67,8 +67,18 @@ export class RasterLayer {
     return this.image.getHeight();
   }
 
+  private data: ArrayLike<number> | null = null;
+
   private bands(): number {
     return this.image.getSamplesPerPixel();
+  }
+
+  private async ensureData(): Promise<void> {
+    if (this.data) return;
+    if (this.width * this.height * this.bands() <= 64_000_000) {
+      const rasters = await this.image.readRasters({ interleave: true });
+      this.data = rasters as ArrayLike<number>;
+    }
   }
 
   private async readWindow(x0: number, y0: number, x1: number, y1: number): Promise<ArrayLike<number>> {
@@ -76,33 +86,41 @@ export class RasterLayer {
     return rasters as ArrayLike<number>;
   }
 
-  async sample(easting: number, northing: number): Promise<number | null> {
-    const px = Math.floor((easting - this.originX) / this.pixelX);
-    const py = Math.floor((northing - this.originY) / this.pixelY);
-    if (px < 0 || py < 0 || px >= this.width || py >= this.height) return null;
-    const arr = await this.readWindow(px, py, px + 1, py + 1);
-    const v = arr[this.band - 1];
+  private valid(v: number): number | null {
     if (typeof v !== "number" || (this.nodata !== undefined && v === this.nodata)) return null;
     return v;
   }
 
+  async sample(easting: number, northing: number): Promise<number | null> {
+    await this.ensureData();
+    const px = Math.floor((easting - this.originX) / this.pixelX);
+    const py = Math.floor((northing - this.originY) / this.pixelY);
+    if (px < 0 || py < 0 || px >= this.width || py >= this.height) return null;
+    const bands = this.bands();
+    if (this.data) return this.valid(this.data[(py * this.width + px) * bands + (this.band - 1)]);
+    const arr = await this.readWindow(px, py, px + 1, py + 1);
+    return this.valid(arr[this.band - 1]);
+  }
+
   async sampleGrid(easting: number, northing: number, spacingM = 50): Promise<number[][] | null> {
+    await this.ensureData();
     const px = Math.floor((easting - this.originX) / this.pixelX);
     const py = Math.floor((northing - this.originY) / this.pixelY);
     const r = Math.max(1, Math.round(spacingM / Math.abs(this.pixelX)));
     const x0 = px - r;
     const y0 = py - r;
     if (x0 < 0 || y0 < 0 || x0 + 2 * r >= this.width || y0 + 2 * r >= this.height) return null;
-    const arr = await this.readWindow(x0, y0, x0 + 2 * r + 1, y0 + 2 * r + 1);
     const bands = this.bands();
     const w = 2 * r + 1;
+    const arr = this.data ?? (await this.readWindow(x0, y0, x0 + 2 * r + 1, y0 + 2 * r + 1));
     const grid: number[][] = [];
     for (let j = 0; j < w; j++) {
       const row: number[] = [];
       for (let i = 0; i < w; i++) {
-        const v = arr[(j * w + i) * bands + (this.band - 1)];
-        if (typeof v !== "number" || (this.nodata !== undefined && v === this.nodata)) return null;
-        row.push(v);
+        const v = arr[((y0 + j) * this.width + (x0 + i)) * bands + (this.band - 1)];
+        const val = this.valid(v);
+        if (val === null) return null;
+        row.push(val);
       }
       grid.push(row);
     }

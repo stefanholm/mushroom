@@ -9,7 +9,8 @@ export type SpeciesProfile = {
   minVolume: number;
   moisture: Record<number, number>;
   soil: Record<string, number>;
-  wantsShade: boolean;
+  sun: number;
+  depression: number;
 };
 
 export const SPECIES: Record<string, SpeciesProfile> = {
@@ -22,7 +23,8 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     minVolume: 80,
     moisture: { 1: 0.2, 2: 1, 3: 0.8, 4: 0.4, 5: 0.1 },
     soil: { acidic: 1, calcareous: 0.6, neutral: 0.8 },
-    wantsShade: false,
+    sun: 1,
+    depression: 0.3,
   },
   trattkantarell: {
     label: "Trattkantarell",
@@ -33,7 +35,8 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     minVolume: 120,
     moisture: { 1: 0.1, 2: 0.5, 3: 1, 4: 1, 5: 0.6 },
     soil: { acidic: 1, calcareous: 0.4, neutral: 0.8 },
-    wantsShade: true,
+    sun: -1,
+    depression: 1,
   },
   karljohan: {
     label: "Karljohan",
@@ -44,7 +47,8 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     minVolume: 100,
     moisture: { 1: 0.3, 2: 1, 3: 0.9, 4: 0.5, 5: 0.2 },
     soil: { acidic: 0.9, calcareous: 0.8, neutral: 0.85 },
-    wantsShade: false,
+    sun: 0.5,
+    depression: 0.2,
   },
   "svart-trumpetsvamp": {
     label: "Svart trumpetsvamp",
@@ -55,7 +59,8 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     minVolume: 60,
     moisture: { 1: 0.1, 2: 0.5, 3: 0.8, 4: 1, 5: 0.8 },
     soil: { acidic: 0.4, calcareous: 1, neutral: 0.7 },
-    wantsShade: true,
+    sun: -1,
+    depression: 1,
   },
 };
 
@@ -83,7 +88,7 @@ async function aspectDegrees(dem: RasterLayer, easting: number, northing: number
   const dzdy =
     (grid[w - 1][0] + 2 * grid[w - 1][c] + grid[w - 1][w - 1] - grid[0][0] - 2 * grid[0][c] - grid[0][w - 1]) /
     (8 * spacing);
-  return (Math.atan2(dzdy, -dzdx) * 180) / Math.PI + 360 % 360;
+  return (((Math.atan2(dzdy, -dzdx) * 180) / Math.PI) + 360) % 360;
 }
 
 export async function staticHabitatScore(
@@ -132,8 +137,24 @@ export async function staticHabitatScore(
   if (dem) {
     const aspect = await aspectDegrees(dem, easting, northing);
     if (aspect !== null) {
-      const northFacing = aspect >= 315 || aspect <= 45;
-      habitat *= species.wantsShade ? (northFacing ? 1.15 : 0.85) : northFacing ? 0.9 : 1.1;
+      const sunExposure = Math.cos(((aspect - 180) * Math.PI) / 180);
+      habitat *= 1 + 0.15 * species.sun * sunExposure;
+      const grid = await dem.sampleGrid(easting, northing, 250);
+      if (grid) {
+        const w = grid.length;
+        const c = (w - 1) / 2;
+        let ringSum = 0;
+        let ringN = 0;
+        for (let j = 0; j < w; j++) {
+          for (let i = 0; i < w; i++) {
+            if (i === c && j === c) continue;
+            ringSum += grid[j][i];
+            ringN++;
+          }
+        }
+        const depth = ringSum / ringN - grid[c][c];
+        habitat *= 1 + 0.2 * species.depression * clamp01(depth / 5);
+      }
     }
   }
 

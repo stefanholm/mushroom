@@ -69,6 +69,26 @@ synthetic layers for a test area around Stockholm (17.7–18.5°E, 59.1–59.7°
 `data/layers/`, including two clear-cut polygons. Replace the files with real downloads
 for the same area; restart the server to reload layers.
 
+## Layers used to pinpoint hotspots
+
+Static (where mycelium *can* live), sampled per map cell:
+
+1. **OSM forest mask** — Overpass (`landuse=forest`/`natural=wood`), cached 24 h. Hard filter: non-forest ≈ 0.
+2. **Trädhöjd** (`tradhojd`, SLU Skogskarta/Skogliga grunddata) — stand maturity threshold per species.
+3. **Volym** (`volym`, SLU) — same, volume-based.
+4. **Markfuktighet** (`markfuktighet`, SLU Markfuktighetskarta, class 1–5) — per-species moisture preference.
+5. **Jordart** (`jordart`, SGU) — acidic vs calcareous soil per species.
+6. **Höjdmodell** (`hojd`, Lantmäteriet NH) — derived in code: **aspect → sun exposure** (south-facing = sunny/warm) and **depression depth** (crevasses/svackor: lower than the surrounding 250 m ring).
+7. **Avverkningar** (`avverkningar`, Skogsstyrelsen, vector) — hard zero inside recent clear-cuts.
+
+Dynamic (when it *fruits*), from SMHI metobs (`latest-months`):
+
+8. **Rain, last 14 days** at the nearest active station, ending at the selected date (date slider).
+9. **Seasonal window** per species, shifted by latitude.
+
+Cell size is zoom-adaptive (~50×50 grid, down to ~30–50 m when zoomed in), so the
+heatmap is not blocky at street level. `static=1` shows layers 1–7 only.
+
 ## How the hotspot score works
 
 Each map cell gets `score = static habitat score × dynamic fruiting multiplier` (0–100):
