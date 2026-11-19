@@ -131,13 +131,15 @@ OSM masks (forest + exclusions) are read **disk-first** from `data/osm/{forest,e
 (git-ignored) — pre-bake them once per area with `npm run osm-cache -- <minLon> <minLat> <maxLon> <maxLat>`
 (e.g. `npm run osm-cache -- 17.7 59.1 18.5 59.7` for the demo/Botkyrka area). If no disk
 cache exists, the server falls back to Overpass (5 hosts) then the main OSM API, cached
-24 h per 0.4° tile. Habitat tiles are rendered on a 128×128 grid, bilinearly upscaled to
-256×256 and box-blurred, so the heatmap is a smooth gradient, not squares. Each cell gets
-a `heat` value: 0 below score 70, ramping to 1 at score 100 with a steep alpha curve
-(`heat^1.6`), so only real hotspots glow — red starts around heat 0.85. **Cluster boost:**
-at street-level zooms, each cell also counts hot neighbours within ~50 m; 1 hot neighbour
-adds +0.06 heat, 2 add +0.12, 3+ add +0.2, so connected clusters of hotspots climb one
-colour step each and only the biggest clusters reach red. `static=1` shows layers 1–7 only.
+24 h per 0.4° tile. Habitat tiles are rendered as **circles, not blur**: each hot cell
+splats a soft-edged circle whose radius grows with its cluster step, and overlapping
+circles merge additively into one blob — no box blur, so hotspots stay pinpoint.
+Each cell gets a `heat` value: 0 below score 70, ramping to 1 at score 100 with a steep
+alpha curve (`heat^1.6`), so only real hotspots glow — red starts around heat 0.85.
+**Cluster boost:** at street-level zooms, each cell also counts hot neighbours within
+~50 m; 1 hot neighbour adds +0.06 heat and a bigger circle, 2 add +0.12, 3+ add +0.2,
+so only circles that actually touch/overlap form the big red clusters. `static=1` shows
+layers 1–7 only.
 
 ## How the hotspot score works
 

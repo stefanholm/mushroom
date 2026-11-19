@@ -747,7 +747,7 @@ app.get("/api/hillshade", async (req, res) => {
   res.send(PNG.sync.write(png));
 });
 
-const TILES_DIR = path.join(here, "..", "data", "tiles", "r5");
+const TILES_DIR = path.join(here, "..", "data", "tiles", "r9");
 
 const HEAT_BASE = 70;
 const HEAT_RANGE = 30;
@@ -779,12 +779,18 @@ function clusterRadiusCells(cellDeg: number, centerLatDeg: number): number {
   return Math.max(1, Math.min(5, Math.round(50 / mPerCell)));
 }
 
+function clusterStep(hotNeighbors: number): number {
+  return hotNeighbors >= 3 ? 3 : hotNeighbors === 2 ? 2 : hotNeighbors === 1 ? 1 : 0;
+}
+
+function clusterHeatStep(step: number): number {
+  return step >= 3 ? 0.2 : step === 2 ? 0.12 : step === 1 ? 0.06 : 0;
+}
+
 function heatWithCluster(score: number, hotNeighbors: number, sens: number): number {
   const base = heatOf(score, sens);
   if (base <= 0) return 0;
-  const step =
-    hotNeighbors >= 3 ? 0.2 : hotNeighbors === 2 ? 0.12 : hotNeighbors === 1 ? 0.06 : 0;
-  return Math.min(1, base + step);
+  return Math.min(1, base + clusterHeatStep(clusterStep(hotNeighbors)));
 }
 
 function countHotNeighbors(
@@ -818,7 +824,7 @@ function heatColor(heat: number): [number, number, number, number] {
   const [h0, c0] = HEAT_RAMP[i];
   const [h1, c1] = HEAT_RAMP[i + 1];
   const t = h1 === h0 ? 1 : Math.min(1, Math.max(0, (pos - h0) / (h1 - h0)));
-  const alpha = heat < 0.08 ? 0 : Math.round(Math.pow(heat, 1.6) * 0.95 * 255);
+  const alpha = heat < 0.08 ? 0 : Math.round(Math.pow(heat, 2) * 0.95 * 255);
   return [
     Math.round(c0[0] + (c1[0] - c0[0]) * t),
     Math.round(c0[1] + (c1[1] - c0[1]) * t),
@@ -903,64 +909,55 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
     if (j >= 0 && j < rows && i >= 0 && i < cols) grid[j][i] = c;
   }
   const clusterRadius = clusterRadiusCells(cell, (bbox.minLat + bbox.maxLat) / 2);
-  const cellRGBA = new Uint8Array(cols * rows * 4);
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const c = grid[j][i];
-      const heat = c
-        ? heatWithCluster(
-            c.score,
-            clusterRadius > 0 ? countHotNeighbors(grid, rows, cols, j, i, clusterRadius, sens) : 0,
-            sens,
-          )
-        : 0;
-      const [r, g, b, a] = heatColor(heat);
-      const idx = (j * cols + i) * 4;
-      cellRGBA[idx] = r;
-      cellRGBA[idx + 1] = g;
-      cellRGBA[idx + 2] = b;
-      cellRGBA[idx + 3] = a;
-    }
-  }
   const R = 2;
   const W = cols * R;
   const H = rows * R;
-  const img = new Uint8Array(W * H * 4);
-  for (let py = 0; py < H; py++) {
-    for (let px = 0; px < W; px++) {
-      const cx = Math.max(0, Math.min(cols - 1, Math.floor((px + 0.5) / R)));
-      const cy = Math.max(0, Math.min(rows - 1, Math.floor((py + 0.5) / R)));
-      const idx = (py * W + px) * 4;
-      const sidx = (cy * cols + cx) * 4;
-      img[idx] = cellRGBA[sidx];
-      img[idx + 1] = cellRGBA[sidx + 1];
-      img[idx + 2] = cellRGBA[sidx + 2];
-      img[idx + 3] = cellRGBA[sidx + 3];
-    }
-  }
-  const BLUR = z >= 14 ? 5 : z >= 11 ? 3 : 1;
-  for (let pass = 0; pass < 2; pass++) {
-    const src = Buffer.from(img);
-    for (let py = 0; py < H; py++) {
-      for (let px = 0; px < W; px++) {
-        let r = 0, g = 0, b = 0, a = 0, cnt = 0;
-        for (let dy = -BLUR; dy <= BLUR; dy++) {
-          for (let dx = -BLUR; dx <= BLUR; dx++) {
-            const nx = px + dx;
-            const ny = py + dy;
-            if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-            const si = (ny * W + nx) * 4;
-            r += src[si]; g += src[si + 1]; b += src[si + 2]; a += src[si + 3];
-            cnt++;
+  const accA = new Float32Array(W * H);
+  const accR = new Float32Array(W * H);
+  const accG = new Float32Array(W * H);
+  const accB = new Float32Array(W * H);
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const c = grid[j][i];
+      if (!c) continue;
+      const n =
+        clusterRadius > 0 ? countHotNeighbors(grid, rows, cols, j, i, clusterRadius, sens) : 0;
+      const step = clusterStep(n);
+      const base = heatOf(c.score, sens);
+      if (base <= 0) continue;
+      const heat = Math.min(1, base + clusterHeatStep(step));
+      const [r, g, b, a] = heatColor(heat);
+      const radius = R * (0.55 + 0.4 * step) * (0.7 + 0.5 * heat);
+      const cx = i * R + R / 2;
+      const cy = j * R + R / 2;
+      const x0 = Math.max(0, Math.floor(cx - radius));
+      const x1 = Math.min(W - 1, Math.ceil(cx + radius));
+      const y0 = Math.max(0, Math.floor(cy - radius));
+      const y1 = Math.min(H - 1, Math.ceil(cy + radius));
+      const alpha = a / 255;
+      for (let py = y0; py <= y1; py++) {
+        for (let px = x0; px <= x1; px++) {
+          const d = Math.hypot(px + 0.5 - cx, py + 0.5 - cy);
+          if (d > radius) continue;
+          const add = alpha * (1 - (d / radius) * (d / radius));
+          const idx = py * W + px;
+          if (add > accA[idx]) {
+            accA[idx] = add;
+            accR[idx] = r / 255;
+            accG[idx] = g / 255;
+            accB[idx] = b / 255;
           }
         }
-        const idx = (py * W + px) * 4;
-        img[idx] = Math.round(r / cnt);
-        img[idx + 1] = Math.round(g / cnt);
-        img[idx + 2] = Math.round(b / cnt);
-        img[idx + 3] = Math.round(a / cnt);
       }
     }
+  }
+  const img = new Uint8Array(W * H * 4);
+  for (let k = 0; k < W * H; k++) {
+    const idx = k * 4;
+    img[idx + 3] = Math.round(Math.min(1, accA[k]) * 255);
+    img[idx] = Math.round(accR[k] * 255);
+    img[idx + 1] = Math.round(accG[k] * 255);
+    img[idx + 2] = Math.round(accB[k] * 255);
   }
   const size = 256;
   const png = new PNG({ width: size, height: size });
