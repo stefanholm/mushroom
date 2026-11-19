@@ -30,26 +30,28 @@ function heatmapPaint() {
   const t = sensitivityThreshold();
   return {
     "heatmap-weight": ["interpolate", ["linear"], ["get", "score"], t, 0, 100, 1],
-    "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 5, 0.6, 9, 1.2, 12, 2.5, 16, 5],
-    "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 5, 10, 9, 22, 12, 40, 16, 80],
+    "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 5, 0.5, 9, 1, 12, 2, 16, 4],
+    "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 5, 18, 9, 40, 12, 80, 16, 160],
     "heatmap-color": [
       "interpolate",
       ["linear"],
       ["heatmap-density"],
       0,
       "rgba(0,0,0,0)",
-      0.15,
+      0.08,
       "#ffffcc",
-      0.3,
+      0.2,
       "#ffeda0",
-      0.45,
+      0.32,
       "#fed976",
-      0.6,
+      0.45,
       "#feb24c",
-      0.75,
+      0.58,
       "#fd8d3c",
-      0.88,
-      "#f03b20",
+      0.72,
+      "#f46d43",
+      0.85,
+      "#d73027",
       1,
       "#bd0026",
     ],
@@ -108,9 +110,11 @@ async function refreshHotspots() {
     metaEl.textContent = gj.meta
       ? `Regn 14 d: ${
           gj.meta.rain14 === null ? "okänt" : gj.meta.rain14.toFixed(1) + " mm"
-        } · väder: ${gj.meta.rainFactor} · säsong: ${gj.meta.seasonFactor} · skogsområden: ${
+        } · väder: ${gj.meta.rainFactor} · säsong: ${gj.meta.seasonFactor} · skog: ${
           gj.meta.forestAreas
-        } · ${gj.meta.asOf ?? ""}${gj.meta.staticOnly ? " · (endast habitat)" : ""}`
+        } · exkl: ${gj.meta.excludedAreas ?? 0} · ${gj.meta.asOf ?? ""}${
+          gj.meta.staticOnly ? " · (endast habitat)" : ""
+        }`
       : "";
   } catch {
     metaEl.textContent = "Kunde inte hämta hotspots.";

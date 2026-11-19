@@ -186,8 +186,82 @@ function ringsFromOverpass(body: { elements?: OverpassElement[] }): [number, num
   return rings;
 }
 
+type OsmFeature = { tags: Record<string, string>; rings: [number, number][][] };
+
+const isForestTag = (t: Record<string, string>): boolean =>
+  t.landuse === "forest" || t.natural === "wood" || t.natural === "scrub";
+
+const EXCLUDE_LANDUSE_RE =
+  /^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$/;
+const EXCLUDE_LEISURE = new Set(["pitch", "golf_course", "recreation_ground"]);
+const EXCLUDE_MAN_MADE = new Set(["wastewater_plant", "storage_tank"]);
+
+const isExcludedAreaTag = (t: Record<string, string>): boolean =>
+  t.natural === "water" ||
+  t.waterway !== undefined ||
+  t.building !== undefined ||
+  (t.landuse !== undefined && EXCLUDE_LANDUSE_RE.test(t.landuse)) ||
+  (t.leisure !== undefined && EXCLUDE_LEISURE.has(t.leisure)) ||
+  t.amenity === "parking" ||
+  t.natural === "grass" ||
+  t.shop !== undefined ||
+  (t.man_made !== undefined && EXCLUDE_MAN_MADE.has(t.man_made));
+
+const isLineTag = (t: Record<string, string>): boolean =>
+  t.highway !== undefined || t.railway !== undefined || t.aeroway !== undefined;
+
+async function osmMainApiFeatures(
+  minLat: number,
+  minLon: number,
+  maxLat: number,
+  maxLon: number,
+): Promise<OsmFeature[]> {
+  const r = await fetch(
+    `https://api.openstreetmap.org/api/0.6/map?bbox=${minLon},${minLat},${maxLon},${maxLat}`,
+    { signal: AbortSignal.timeout(60_000) },
+  );
+  if (!r.ok) throw new Error(`OSM API: HTTP ${r.status}`);
+  const xml = await r.text();
+  const nodes = new Map<string, [number, number]>();
+  for (const m of xml.matchAll(/<node\b[^>]*>/g)) {
+    const tag = m[0];
+    const id = /id="(\d+)"/.exec(tag)?.[1];
+    const lat = /lat="(-?[\d.]+)"/.exec(tag)?.[1];
+    const lon = /lon="(-?[\d.]+)"/.exec(tag)?.[1];
+    if (id && lat && lon) nodes.set(id, [Number(lon), Number(lat)]);
+  }
+  const wayRings = new Map<string, { tags: Record<string, string>; ring: [number, number][] }>();
+  for (const m of xml.matchAll(/<way\b[^>]*>([\s\S]*?)<\/way>/g)) {
+    const head = m[0].slice(0, m[0].indexOf(">") + 1);
+    const id = /id="(\d+)"/.exec(head)?.[1] ?? "";
+    const tags: Record<string, string> = {};
+    for (const t of m[1].matchAll(/<tag\b[^>]*k="([^"]+)"[^>]*v="([^"]*)"/g)) tags[t[1]] = t[2];
+    const ring: [number, number][] = [];
+    for (const n of m[1].matchAll(/<nd\b[^>]*ref="(\d+)"/g)) {
+      const c = nodes.get(n[1]);
+      if (c) ring.push(c);
+    }
+    wayRings.set(id, { tags, ring });
+  }
+  const features: OsmFeature[] = [];
+  for (const w of wayRings.values()) {
+    if (w.ring.length >= 2) features.push({ tags: w.tags, rings: [w.ring] });
+  }
+  for (const m of xml.matchAll(/<relation\b[^>]*>([\s\S]*?)<\/relation>/g)) {
+    const tags: Record<string, string> = {};
+    for (const t of m[1].matchAll(/<tag\b[^>]*k="([^"]+)"[^>]*v="([^"]*)"/g)) tags[t[1]] = t[2];
+    const rings: [number, number][][] = [];
+    for (const mem of m[1].matchAll(/<member\b[^>]*type="way"[^>]*ref="(\d+)"/g)) {
+      const w = wayRings.get(mem[1]);
+      if (w && w.ring.length >= 2) rings.push(w.ring);
+    }
+    if (rings.length > 0) features.push({ tags, rings });
+  }
+  return features;
+}
+
 function gridKey(minLon: number, minLat: number, maxLon: number, maxLat: number): [number, number, number, number, string] {
-  const g = 0.5;
+  const g = 0.4;
   const kMinLon = Math.floor(minLon / g) * g;
   const kMinLat = Math.floor(minLat / g) * g;
   const kMaxLon = Math.ceil(maxLon / g) * g;
@@ -208,8 +282,16 @@ async function forestPolygonsForBox(
   if (cached && Date.now() - cached.at < 24 * 3600 * 1000) return cached.polys;
   const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
   const q = `[out:json][timeout:60];(way["landuse"="forest"](${b});way["natural"="wood"](${b});way["natural"="scrub"](${b});relation["landuse"="forest"](${b});relation["natural"="wood"](${b}););out geom;`;
-  const body = await overpassQuery(q);
-  const polys = ringsFromOverpass(body).filter((ring) => ring.length >= 3);
+  let polys: [number, number][][];
+  try {
+    polys = ringsFromOverpass(await overpassQuery(q)).filter((ring) => ring.length >= 3);
+  } catch {
+    const features = await osmMainApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon);
+    polys = features
+      .filter((f) => isForestTag(f.tags))
+      .flatMap((f) => f.rings)
+      .filter((ring) => ring.length >= 3);
+  }
   forestCache.set(key, { at: Date.now(), polys });
   return polys;
 }
@@ -230,22 +312,30 @@ async function exclusionsForBox(
   const area = `way["natural"="water"](${b});way["waterway"](${b});way["building"](${b});way["landuse"~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$"](${b});way["leisure"~"^(pitch|golf_course|recreation_ground)$"](${b});way["amenity"="parking"](${b});way["natural"="grass"](${b});way["shop"](${b});way["man_made"~"^(wastewater_plant|storage_tank)$"](${b});relation["natural"="water"](${b});relation["building"](${b});relation["landuse"~"^(industrial|commercial|residential|urban|landfill|military|retail)$"](${b});`;
   const lines = `way["highway"](${b});way["railway"](${b});way["aeroway"](${b});`;
   const q = `[out:json][timeout:60];(${area}${lines});out geom;`;
-  const body = await overpassQuery(q);
   const ex: Exclusions = { polys: [], lines: [] };
-  const pushElement = (e: OverpassElement) => {
-    const t = e.tags ?? {};
-    const isLine = Boolean(t.highway || t.railway || t.aeroway);
-    const geoms = [e.geometry, ...(e.members ?? []).map((m) => m.geometry)].filter(
-      (g): g is { lat: number; lon: number }[] => Array.isArray(g),
-    );
-    for (const g of geoms) {
-      const ring = g.map((p) => [p.lon, p.lat] as [number, number]);
-      if (ring.length < 2) continue;
-      if (isLine) ex.lines.push(ring);
-      else ex.polys.push(ring);
+  try {
+    const body = await overpassQuery(q);
+    const pushElement = (e: OverpassElement) => {
+      const t = e.tags ?? {};
+      const line = Boolean(t.highway || t.railway || t.aeroway);
+      const geoms = [e.geometry, ...(e.members ?? []).map((m) => m.geometry)].filter(
+        (g): g is { lat: number; lon: number }[] => Array.isArray(g),
+      );
+      for (const g of geoms) {
+        const ring = g.map((p) => [p.lon, p.lat] as [number, number]);
+        if (ring.length < 2) continue;
+        if (line) ex.lines.push(ring);
+        else ex.polys.push(ring);
+      }
+    };
+    for (const e of body.elements ?? []) pushElement(e);
+  } catch {
+    const features = await osmMainApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon);
+    for (const f of features) {
+      if (isLineTag(f.tags)) ex.lines.push(...f.rings);
+      else if (isExcludedAreaTag(f.tags)) ex.polys.push(...f.rings);
     }
-  };
-  for (const e of body.elements ?? []) pushElement(e);
+  }
   exclusionCache.set(key, { at: Date.now(), ex });
   return ex;
 }
@@ -376,10 +466,13 @@ app.get("/api/hotspots", async (req, res) => {
   const store = await getLayerStore();
   const clearcuts = store.vectors.get("avverkningar");
 
-  const cell = Math.max(span / 60, 0.00003);
+  let cell = 0.00003;
+  while (span / cell > 60) cell *= 2;
+  const startLon = Math.floor(minLon / cell) * cell;
+  const startLat = Math.floor(minLat / cell) * cell;
   const features = [];
-  for (let lat = minLat; lat < maxLat; lat += cell) {
-    for (let lon = minLon; lon < maxLon; lon += cell) {
+  for (let lat = startLat; lat < maxLat; lat += cell) {
+    for (let lon = startLon; lon < maxLon; lon += cell) {
       const clat = lat + cell / 2;
       const clon = lon + cell / 2;
       const inForest = forestPolys.length === 0 || pointInPolygon(forestPolys, clon, clat);
