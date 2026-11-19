@@ -176,8 +176,8 @@ match `manifest.json`). The national zip is ~2.5 GB and contains one national ui
 ```
 brew install gdal
 curl -L -o /tmp/NMD2023_v2_1.zip "https://geodata.naturvardsverket.se/nedladdning/marktacke/NMD2023/Basskikt_v2_x/NMD2023_basskikt_v2_1.zip"
-unzip -o /tmp/NMD2023_v2_1.zip -d /tmp/nmd && ls /tmp/nmd/*.tif
-gdalwarp -te 644000 6537000 707000 6640000 -tr 10 10 -co COMPRESS=DEFLATE -co TILED=YES /tmp/nmd/NMD2023bas_v2_1.tif data/layers/nmd_10m.tif
+unzip -o /tmp/NMD2023_v2_1.zip -d /tmp/nmd && ls /tmp/nmd/*/*.tif
+gdalwarp -te 644000 6537000 707000 6640000 -tr 10 10 -co COMPRESS=DEFLATE -co TILED=YES /tmp/nmd/NMD2023_basskikt_v2_1/NMD2023bas_v2_1.tif data/layers/nmd_10m.tif
 ```
 
 (`-te` is SWEREF99 TM meters: this clip covers ca 17.6–18.6°E, 59.0–59.8°N with margin. Keep the
