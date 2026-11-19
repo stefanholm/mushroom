@@ -49,9 +49,15 @@
             <input id="sens" type="range" min="-10" max="10" value="0" step="1" />
             <span id="sensLabel">55</span>
           </label>
+          <span class="basemap-switch">
+            Karta:
+            <button type="button" class="bm active" data-basemap="topo">Terräng</button>
+            <button type="button" class="bm" data-basemap="osm">OSM</button>
+            <button type="button" class="bm" data-basemap="sat">Satellit</button>
+          </span>
           <label>
-            <input id="hillshade" type="checkbox" checked />
-            Terräng (hillshade)
+            <input id="trails" type="checkbox" />
+            Stigar
           </label>
           <span id="meta"></span>
         </div>

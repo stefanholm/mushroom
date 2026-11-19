@@ -144,3 +144,21 @@ button:disabled {
   font-size: 0.75rem;
   color: #842029;
 }
+.basemap-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.bm {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 0.4rem;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.bm.active {
+  background: #2f6f3e;
+  border-color: #2f6f3e;
+  color: #fff;
+}

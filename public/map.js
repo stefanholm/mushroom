@@ -6,7 +6,8 @@ const dateSlider = document.getElementById("dateSlider");
 const dateLabel = document.getElementById("dateLabel");
 const sensInput = document.getElementById("sens");
 const sensLabel = document.getElementById("sensLabel");
-const hillshadeInput = document.getElementById("hillshade");
+const trailsInput = document.getElementById("trails");
+const basemapButtons = Array.from(document.querySelectorAll(".bm"));
 const metaEl = document.getElementById("meta");
 
 let map = null;
@@ -48,6 +49,48 @@ function rebuildHabitat() {
       "raster-resampling": "linear",
     },
   });
+  if (map.getLayer("trails")) map.moveLayer("trails");
+}
+
+function setBasemap(name) {
+  if (!map) return;
+  for (const key of ["topo", "osm", "sat"]) {
+    const layerId = "bm-" + key;
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "visibility", key === name ? "visible" : "none");
+    }
+  }
+  for (const btn of basemapButtons) {
+    btn.classList.toggle("active", btn.dataset.basemap === name);
+  }
+}
+
+function updateTrails() {
+  if (!map) return;
+  if (trailsInput.checked) {
+    if (!map.getSource("trails")) {
+      map.addSource("trails", {
+        type: "raster",
+        tiles: ["https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png"],
+        tileSize: 256,
+        maxzoom: 18,
+        attribution:
+          'Hiking trails: <a href="https://waymarkedtrails.org">Waymarked Trails</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors (CC-BY-SA)',
+      });
+    }
+    if (!map.getLayer("trails")) {
+      map.addLayer({
+        id: "trails",
+        type: "raster",
+        source: "trails",
+        paint: { "raster-opacity": 0.85 },
+      });
+    }
+    map.setLayoutProperty("trails", "visibility", "visible");
+    map.moveLayer("trails");
+  } else if (map.getLayer("trails")) {
+    map.setLayoutProperty("trails", "visibility", "none");
+  }
 }
 
 async function refreshMeta() {
@@ -76,28 +119,37 @@ function initMap(maplibregl) {
     style: {
       version: 8,
       sources: {
-        osm: {
+        topo: {
           type: "raster",
           tiles: ["https://tile.opentopomap.org/{z}/{x}/{y}.png"],
           tileSize: 256,
+          maxzoom: 17,
           attribution:
             'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
         },
-        hillshade: {
+        osm: {
           type: "raster",
-          tiles: ["/api/tiles/hillshade/{z}/{x}/{y}.png"],
+          tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
           tileSize: 256,
+          maxzoom: 19,
+          attribution:
+            'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        },
+        sat: {
+          type: "raster",
+          tiles: [
+            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+          ],
+          tileSize: 256,
+          maxzoom: 18,
+          attribution:
+            "Imagery &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community",
         },
       },
       layers: [
-        { id: "osm", type: "raster", source: "osm" },
-        {
-          id: "hillshade",
-          type: "raster",
-          source: "hillshade",
-          paint: { "raster-opacity": 0.5 },
-          layout: { visibility: hillshadeInput.checked ? "visible" : "none" },
-        },
+        { id: "bm-topo", type: "raster", source: "topo" },
+        { id: "bm-osm", type: "raster", source: "osm", layout: { visibility: "none" } },
+        { id: "bm-sat", type: "raster", source: "sat", layout: { visibility: "none" } },
       ],
     },
     center: [15.5, 62.0],
@@ -119,7 +171,9 @@ function initMap(maplibregl) {
   });
 
   map.on("load", () => {
+    setBasemap("topo");
     rebuildHabitat();
+    updateTrails();
     refreshMeta();
     geolocate.trigger();
   });
@@ -150,15 +204,10 @@ function initMap(maplibregl) {
       map.setPaintProperty("habitat", "raster-opacity", Number(opacityInput.value) / 100);
     }
   });
-  hillshadeInput.addEventListener("change", () => {
-    if (map.getLayer("hillshade")) {
-      map.setLayoutProperty(
-        "hillshade",
-        "visibility",
-        hillshadeInput.checked ? "visible" : "none",
-      );
-    }
-  });
+  trailsInput.addEventListener("change", updateTrails);
+  for (const btn of basemapButtons) {
+    btn.addEventListener("click", () => setBasemap(btn.dataset.basemap));
+  }
 }
 
 import("/vendor/maplibre/maplibre-gl.mjs")
