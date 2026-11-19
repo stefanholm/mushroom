@@ -75,8 +75,11 @@ Each map cell gets `score = static habitat score × dynamic fruiting multiplier`
 
 - **Dynamic multiplier** — computed per request from SMHI Open Data (metobs API,
   parameter 5 = daily precipitation, `latest-months` period): the summed rain over the
-  last 14 days at the nearest active station, scaled (`rain/60`, capped at 1), times a
-  seasonal window per species shifted by latitude. Results are cached server-side for 6 h.
+  14 days ending at the requested date at the nearest active station, scaled
+  (`rain/60`, capped at 1), times a seasonal window per species shifted by latitude.
+  Pass `date=YYYY-MM-DD` to `/api/hotspots` to time-travel (the Karta tab has a date
+  slider, max ~110 days back — that's what SMHI `latest-months` covers). Results are
+  cached server-side for 6 h. `static=1` skips weather/season and shows habitat only.
 - **Static habitat score** — per-species base × an OSM forest mask (Overpass API:
   `landuse=forest` / `natural=wood` polygons, cached 24 h per 0.5° grid cell; cells
   outside forest are hard-filtered) × the raster layers from `data/layers/` when present:

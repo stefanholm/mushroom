@@ -2,7 +2,19 @@ const mapContainer = document.getElementById("map");
 const speciesSelect = document.getElementById("species");
 const opacityInput = document.getElementById("opacity");
 const staticOnlyInput = document.getElementById("staticOnly");
+const dateSlider = document.getElementById("dateSlider");
+const dateLabel = document.getElementById("dateLabel");
 const metaEl = document.getElementById("meta");
+
+function selectedDate() {
+  const days = Number(dateSlider.value);
+  if (days === 0) return null;
+  return new Date(Date.now() - days * 86400_000).toISOString().slice(0, 10);
+}
+
+function updateDateLabel() {
+  dateLabel.textContent = selectedDate() ?? "nu";
+}
 
 let map = null;
 let refreshTimer = null;
@@ -22,6 +34,8 @@ async function refreshHotspots() {
     maxLat: b.getNorth().toFixed(4),
   });
   if (staticOnlyInput.checked) q.set("static", "1");
+  const d = selectedDate();
+  if (d) q.set("date", d);
   try {
     const r = await fetch("/api/hotspots?" + q);
     if (!r.ok) return;
@@ -32,7 +46,7 @@ async function refreshHotspots() {
           gj.meta.rain14 === null ? "okänt" : gj.meta.rain14.toFixed(1) + " mm"
         } · väder: ${gj.meta.rainFactor} · säsong: ${gj.meta.seasonFactor} · skogsområden: ${
           gj.meta.forestAreas
-        }${gj.meta.staticOnly ? " · (endast habitat)" : ""}`
+        } · ${gj.meta.asOf ?? ""}${gj.meta.staticOnly ? " · (endast habitat)" : ""}`
       : "";
   } catch {
     metaEl.textContent = "Kunde inte hämta hotspots.";
@@ -114,6 +128,11 @@ function initMap(maplibregl) {
 
   speciesSelect.addEventListener("change", refreshHotspots);
   staticOnlyInput.addEventListener("change", refreshHotspots);
+  dateSlider.addEventListener("input", () => {
+    updateDateLabel();
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(refreshHotspots, 400);
+  });
   opacityInput.addEventListener("input", () => {
     if (map.getLayer("hotspots")) {
       map.setPaintProperty("hotspots", "fill-opacity", opacityExpression());

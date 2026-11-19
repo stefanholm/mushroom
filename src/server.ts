@@ -108,8 +108,8 @@ function nearestStation(stations: SmhiStation[], lat: number, lon: number): Smhi
 
 const rainCache = new Map<string, { at: number; rain14: number }>();
 
-async function rainLast14Days(lat: number, lon: number): Promise<number> {
-  const key = `${lat.toFixed(1)},${lon.toFixed(1)}`;
+async function rainLast14Days(lat: number, lon: number, asOf: Date): Promise<number> {
+  const key = `${lat.toFixed(1)},${lon.toFixed(1)},${asOf.toISOString().slice(0, 10)}`;
   const cached = rainCache.get(key);
   if (cached && Date.now() - cached.at < 6 * 3600 * 1000) return cached.rain14;
   const stations = await getStations();
@@ -126,9 +126,10 @@ async function rainLast14Days(lat: number, lon: number): Promise<number> {
         typeof v?.to === "number" && typeof v?.value === "string",
     )
     .sort((a, b) => a.to - b.to);
-  const cutoff = Date.now() - 14 * 86400_000;
+  const end = asOf.getTime();
+  const cutoff = end - 14 * 86400_000;
   const rain14 = values
-    .filter((v) => v.to >= cutoff)
+    .filter((v) => v.to >= cutoff && v.to <= end)
     .reduce((sum, v) => sum + Number(v.value), 0);
   rainCache.set(key, { at: Date.now(), rain14 });
   return rain14;
@@ -228,17 +229,26 @@ app.get("/api/hotspots", async (req, res) => {
   }
   const staticOnly = req.query.static === "1";
 
+  let asOf = new Date();
+  const dateParam = String(req.query.date ?? "");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+    const parsed = new Date(`${dateParam}T12:00:00Z`);
+    const min = new Date(Date.now() - 120 * 86400_000);
+    if (!Number.isNaN(parsed.getTime()) && parsed >= min && parsed <= new Date()) {
+      asOf = parsed;
+    }
+  }
+
   const centerLat = (minLat + maxLat) / 2;
   const centerLon = (minLon + maxLon) / 2;
   let rain14: number | null = null;
   try {
-    rain14 = await rainLast14Days(centerLat, centerLon);
+    rain14 = await rainLast14Days(centerLat, centerLon, asOf);
   } catch (err) {
     console.error("SMHI fetch failed:", err);
   }
-  const now = new Date();
   const rainFactor = rain14 === null ? 0.5 : Math.min(1, rain14 / 60);
-  const seasonAtCenter = seasonalFactor(species, centerLat, now);
+  const seasonAtCenter = seasonalFactor(species, centerLat, asOf);
 
   let forestPolys: [number, number][][] = [];
   if (Math.max(maxLon - minLon, maxLat - minLat) <= 2) {
@@ -262,7 +272,7 @@ app.get("/api/hotspots", async (req, res) => {
       const [e, n] = toSWEREF(clon, clat);
       const inClearcut = clearcuts ? clearcuts.contains(e, n) : false;
       const habitat = await staticHabitatScore(store, key, clon, clat, inForest, inClearcut);
-      const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, now) * rainFactor;
+      const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * rainFactor;
       const score = Math.round(100 * habitat * dynamic);
       features.push({
         type: "Feature",
@@ -291,10 +301,11 @@ app.get("/api/hotspots", async (req, res) => {
       rainFactor: Number(rainFactor.toFixed(3)),
       seasonFactor: Number(seasonAtCenter.toFixed(2)),
       staticOnly,
+      asOf: asOf.toISOString().slice(0, 10),
       forestAreas: forestPolys.length,
       layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
       layers: ["smhi-precip-14d", "osm-forest-mask", ...store.rasters.keys(), ...store.vectors.keys()],
-      generatedAt: now.toISOString(),
+      generatedAt: new Date().toISOString(),
     },
     features,
   });
