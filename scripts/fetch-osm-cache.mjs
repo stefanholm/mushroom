@@ -10,12 +10,19 @@ if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) {
   process.exit(1);
 }
 const g = 0.4;
-const kMinLon = Math.floor(minLon / g) * g;
-const kMinLat = Math.floor(minLat / g) * g;
-const kMaxLon = Math.ceil(maxLon / g) * g;
-const kMaxLat = Math.ceil(maxLat / g) * g;
-const key = `${kMinLon},${kMinLat},${kMaxLon},${kMaxLat}`;
-const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
+const tiles = [];
+for (let lon = Math.floor(minLon / g) * g; lon < maxLon; lon += g) {
+  for (let lat = Math.floor(minLat / g) * g; lat < maxLat; lat += g) {
+    tiles.push({ lon, lat });
+  }
+}
+if (tiles.length > 25) {
+  console.error(`Too many 0.4° tiles (${tiles.length}); narrow the bbox.`);
+  process.exit(1);
+}
+console.log(`Baking ${tiles.length} tile(s)...`);
+let key = "";
+let b = "";
 
 const HOSTS = [
   "https://overpass-api.de/api/interpreter",
@@ -40,7 +47,7 @@ async function overpass(q) {
   throw new Error("all Overpass hosts failed");
 }
 
-async function osmApiFeatures() {
+async function osmApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon) {
   const r = await fetch(
     `https://api.openstreetmap.org/api/0.6/map?bbox=${kMinLon},${kMinLat},${kMaxLon},${kMaxLat}`,
     { signal: AbortSignal.timeout(30_000) },
@@ -109,44 +116,49 @@ function ringsOf(body) {
   return rings;
 }
 
-const forestQ = `[out:json][timeout:60];(way["landuse"="forest"](${b});way["natural"="wood"](${b});way["natural"="scrub"](${b});relation["landuse"="forest"](${b});relation["natural"="wood"](${b}););out geom;`;
-const area = `way["natural"="water"](${b});way["waterway"](${b});way["building"](${b});way["landuse"~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$"](${b});way["leisure"~"^(pitch|golf_course|recreation_ground)$"](${b});way["amenity"="parking"](${b});way["natural"="grass"](${b});way["shop"](${b});way["man_made"~"^(wastewater_plant|storage_tank)$"](${b});relation["natural"="water"](${b});relation["building"](${b});relation["landuse"~"^(industrial|commercial|residential|urban|landfill|military|retail)$"](${b});`;
-const lines = `way["highway"](${b});way["railway"](${b});way["aeroway"](${b});`;
-const exclQ = `[out:json][timeout:60];(${area}${lines});out geom;`;
+const forestQ = (b) => `[out:json][timeout:60];(way["landuse"="forest"](${b});way["natural"="wood"](${b});way["natural"="scrub"](${b});relation["landuse"="forest"](${b});relation["natural"="wood"](${b}););out geom;`;
+const areaQ = (b) => `way["natural"="water"](${b});way["waterway"](${b});way["building"](${b});way["landuse"~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$"](${b});way["leisure"~"^(pitch|golf_course|recreation_ground)$"](${b});way["amenity"="parking"](${b});way["natural"="grass"](${b});way["shop"](${b});way["man_made"~"^(wastewater_plant|storage_tank)$"](${b});relation["natural"="water"](${b});relation["building"](${b});relation["landuse"~"^(industrial|commercial|residential|urban|landfill|military|retail)$"](${b});`;
+const linesQ = (b) => `way["highway"](${b});way["railway"](${b});way["aeroway"](${b});`;
+const exclQ = (b) => `[out:json][timeout:60];(${areaQ(b)}${linesQ(b)});out geom;`;
 
 await fs.mkdir(root, { recursive: true });
 
-let forest, ex;
-try {
-  forest = ringsOf(await overpass(forestQ));
-  const exclBody = await overpass(exclQ);
-  ex = { polys: [], lines: [] };
-  for (const e of exclBody.elements ?? []) {
-    const t = e.tags ?? {};
-    const line = Boolean(t.highway || t.railway || t.aeroway);
-    const geoms = [e.geometry, ...(e.members ?? []).map((m) => m.geometry)].filter(Array.isArray);
-    for (const g of geoms) {
-      const ring = g.map((p) => [p.lon, p.lat]);
-      if (ring.length < 2) continue;
-      if (line) ex.lines.push(ring);
-      else ex.polys.push(ring);
+for (const t of tiles) {
+  const kMinLon = t.lon;
+  const kMinLat = t.lat;
+  const kMaxLon = t.lon + g;
+  const kMaxLat = t.lat + g;
+  const key = `${kMinLon},${kMinLat},${kMaxLon},${kMaxLat}`;
+  const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
+  let forest, ex;
+  try {
+    forest = ringsOf(await overpass(forestQ(b)));
+    const exclBody = await overpass(exclQ(b));
+    ex = { polys: [], lines: [] };
+    for (const e of exclBody.elements ?? []) {
+      const tg = e.tags ?? {};
+      const line = Boolean(tg.highway || tg.railway || tg.aeroway);
+      const geoms = [e.geometry, ...(e.members ?? []).map((m) => m.geometry)].filter(Array.isArray);
+      for (const gg of geoms) {
+        const ring = gg.map((p) => [p.lon, p.lat]);
+        if (ring.length < 2) continue;
+        if (line) ex.lines.push(ring);
+        else ex.polys.push(ring);
+      }
     }
+    console.log(`[${key}] fetched via Overpass`);
+  } catch {
+    const features = await osmApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon);
+    forest = features.filter((f) => isForestTag(f.tags)).flatMap((f) => f.rings).filter((r) => r.length >= 3);
+    ex = { polys: [], lines: [] };
+    for (const f of features) {
+      if (isLine(f.tags)) ex.lines.push(...f.rings);
+      else if (isExclArea(f.tags)) ex.polys.push(...f.rings);
+    }
+    console.log(`[${key}] fetched via OSM main API`);
   }
-  console.log("fetched via Overpass");
-} catch {
-  console.log("Overpass unreachable, falling back to api.openstreetmap.org /map ...");
-  const features = await osmApiFeatures();
-  forest = features.filter((f) => isForestTag(f.tags)).flatMap((f) => f.rings).filter((r) => r.length >= 3);
-  ex = { polys: [], lines: [] };
-  for (const f of features) {
-    if (isLine(f.tags)) ex.lines.push(...f.rings);
-    else if (isExclArea(f.tags)) ex.polys.push(...f.rings);
-  }
-  console.log("fetched via OSM main API");
+  await fs.writeFile(path.join(root, `forest_${key}.json`), JSON.stringify(forest));
+  await fs.writeFile(path.join(root, `exclusion_${key}.json`), JSON.stringify(ex));
+  console.log(`  forest_${key}.json: ${forest.length} rings, exclusion: ${ex.polys.length} polys / ${ex.lines.length} lines`);
 }
-
-await fs.writeFile(path.join(root, `forest_${key}.json`), JSON.stringify(forest));
-console.log(`forest_${key}.json: ${forest.length} rings`);
-await fs.writeFile(path.join(root, `exclusion_${key}.json`), JSON.stringify(ex));
-console.log(`exclusion_${key}.json: ${ex.polys.length} polys, ${ex.lines.length} lines`);
 console.log("Server reads these from data/osm/ before calling live APIs.");
