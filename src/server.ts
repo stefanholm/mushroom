@@ -343,6 +343,9 @@ async function forestPolygonsForBox(
   try {
     polys = ringsFromOverpass(await overpassQuery(q)).filter((ring) => ring.length >= 3);
   } catch {
+    ok = false;
+  }
+  if (polys.length === 0 && ok) {
     try {
       const features = await osmMainApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon);
       polys = features
@@ -353,6 +356,7 @@ async function forestPolygonsForBox(
       ok = false;
     }
   }
+  if (polys.length === 0) ok = false;
   forestCache.set(key, { at: Date.now(), polys, ok });
   return polys;
 }
@@ -385,6 +389,7 @@ async function exclusionsForBox(
   const ex: Exclusions = { polys: [], lines: [] };
   try {
     const body = await overpassQuery(q);
+    if ((body.elements ?? []).length === 0) throw new Error("empty overpass result");
     const pushElement = (e: OverpassElement) => {
       const t = e.tags ?? {};
       const line = Boolean(t.highway || t.railway || t.aeroway);

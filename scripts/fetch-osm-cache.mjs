@@ -33,6 +33,7 @@ const HOSTS = [
 ];
 
 async function overpass(q) {
+  let lastErr = new Error("no host");
   for (const host of HOSTS) {
     try {
       const r = await fetch(host, {
@@ -41,10 +42,16 @@ async function overpass(q) {
         body: "data=" + encodeURIComponent(q),
         signal: AbortSignal.timeout(30_000),
       });
-      if (r.ok) return await r.json();
-    } catch { /* next host */ }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const body = await r.json();
+      if (body.remark) console.log(`  overpass remark: ${body.remark}`);
+      if ((body.elements ?? []).length === 0) throw new Error("empty result");
+      return body;
+    } catch (e) {
+      lastErr = e;
+    }
   }
-  throw new Error("all Overpass hosts failed");
+  throw lastErr;
 }
 
 async function osmApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon) {

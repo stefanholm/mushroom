@@ -133,11 +133,12 @@ export function staticHabitatScore(
   const [easting, northing] = toSWEREF(lon, lat);
 
   const dem = store.rasters.get("hojd");
+  let covered = false;
   if (dem && dem.has(easting, northing)) {
     const elev = dem.sampleSync(easting, northing);
     if (elev === null || elev < 0.5) return 0;
+    covered = true;
   }
-
   let hostVol = 0;
   let anyHost = false;
   for (const [tree, w] of Object.entries(species.hosts)) {
@@ -146,19 +147,24 @@ export function staticHabitatScore(
     const v = layer.sampleSync(easting, northing);
     if (v !== null) {
       anyHost = true;
+      covered = true;
       hostVol += v * w;
     }
   }
-  let hostGate: number;
+  let hostGate = 1;
   if (anyHost) {
     if (hostVol < species.minHostVolume) return 0;
     hostGate = 0.2 + 0.8 * clamp01(hostVol / (2 * species.minHostVolume));
   } else {
     const vol = store.rasters.get("volym");
-    const v = vol ? vol.sampleSync(easting, northing) : null;
-    if (v === null) return species.hosts ? 0 : 1;
-    if (v < species.minHostVolume) return 0;
-    hostGate = 0.2 + 0.8 * clamp01(v / (2 * species.minHostVolume));
+    if (vol) {
+      const v = vol.sampleSync(easting, northing);
+      if (v !== null) {
+        covered = true;
+        if (v < species.minHostVolume) return 0;
+        hostGate = 0.2 + 0.8 * clamp01(v / (2 * species.minHostVolume));
+      }
+    }
   }
 
   const height = store.rasters.get("tradhojd");
@@ -166,6 +172,7 @@ export function staticHabitatScore(
   if (height) {
     const v = height.sampleSync(easting, northing);
     if (v !== null) {
+      covered = true;
       if (v < species.minTreeHeight) return 0;
       fMaturity = clamp01((v - species.minTreeHeight) / 10 + 0.5);
     }
@@ -176,6 +183,7 @@ export function staticHabitatScore(
   if (moisture) {
     const v = moisture.sampleSync(easting, northing);
     if (v !== null) {
+      covered = true;
       const cls = Math.round(v);
       if (species.vetoMoisture.includes(cls)) return 0;
       const [lo, hi] = species.moistureIdeal;
@@ -189,6 +197,7 @@ export function staticHabitatScore(
   if (canopy) {
     const v = canopy.sampleSync(easting, northing);
     if (v !== null) {
+      covered = true;
       const [lo, hi] = species.canopyIdeal;
       const dist = v < lo ? lo - v : v > hi ? v - hi : 0;
       fCanopy = clamp01(1 - dist / 10);
@@ -200,6 +209,7 @@ export function staticHabitatScore(
   if (soil) {
     const v = soil.sampleSync(easting, northing);
     if (v !== null) {
+      covered = true;
       const group = soil.recode?.[String(Math.round(v))] ?? "neutral";
       fSoil = species.soil[group] ?? 0.7;
     }
@@ -237,5 +247,6 @@ export function staticHabitatScore(
   if (keyBiotope && keyBiotope.contains(easting, northing)) mBonus *= 1.3;
   if (ctx.forestEdge) mBonus *= 1 + 0.15 * species.edge;
 
+  if (!covered) return 0.4;
   return hostGate * (sEnv / 100) * mBonus * ctx.roadFactor;
 }
