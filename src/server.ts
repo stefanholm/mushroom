@@ -656,7 +656,10 @@ app.get("/api/hillshade", async (req, res) => {
   res.send(PNG.sync.write(png));
 });
 
-const TILES_DIR = path.join(here, "..", "data", "tiles");
+const TILES_DIR = path.join(here, "..", "data", "tiles", "r3");
+
+const HEAT_BASE = 50;
+const HEAT_RANGE = 50;
 
 function tileBBox(z: number, x: number, y: number) {
   const n = 2 ** z;
@@ -674,20 +677,18 @@ const HEAT_RAMP: [number, [number, number, number]][] = [
   [1, [255, 255, 178]],
 ];
 
-const HEAT_BASE = 45;
-const HEAT_RANGE = 55;
-
 function heatOf(score: number, sens: number): number {
   return Math.min(1, Math.max(0, (score - (HEAT_BASE + sens)) / HEAT_RANGE));
 }
 
 function heatColor(heat: number): [number, number, number, number] {
   if (heat <= 0) return [0, 0, 0, 0];
+  const pos = Math.pow(heat, 0.7);
   let i = 0;
-  while (i < HEAT_RAMP.length - 2 && HEAT_RAMP[i + 1][0] < heat) i++;
+  while (i < HEAT_RAMP.length - 2 && HEAT_RAMP[i + 1][0] < pos) i++;
   const [h0, c0] = HEAT_RAMP[i];
   const [h1, c1] = HEAT_RAMP[i + 1];
-  const t = h1 === h0 ? 1 : Math.min(1, Math.max(0, (heat - h0) / (h1 - h0)));
+  const t = h1 === h0 ? 1 : Math.min(1, Math.max(0, (pos - h0) / (h1 - h0)));
   const alpha = Math.round(Math.pow(heat, 0.45) * 0.9 * 255);
   return [
     Math.round(c0[0] + (c1[0] - c0[0]) * t),
@@ -709,6 +710,10 @@ app.get("/api/meta", async (req, res) => {
     console.error("SMHI fetch failed:", err);
   }
   const store = await getLayerStore();
+  const [f, x] = await Promise.allSettled([
+    forestPolygonsForBox(17.6, 59.0, 18.4, 59.6),
+    exclusionsForBox(17.6, 59.0, 18.4, 59.6),
+  ]);
   res.json({
     species: key,
     label: species.label,
@@ -717,6 +722,8 @@ app.get("/api/meta", async (req, res) => {
     seasonFactor: Number(seasonalFactor(species, 62.5, asOf).toFixed(2)),
     asOf: asOf.toISOString().slice(0, 10),
     layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
+    forestAreas: f.status === "fulfilled" ? f.value.length : 0,
+    excludedAreas: x.status === "fulfilled" ? x.value.polys.length : 0,
   });
 });
 
@@ -745,7 +752,7 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
   }
   const span = Math.max(bbox.maxLon - bbox.minLon, bbox.maxLat - bbox.minLat);
   const cell = cellForSpan(span);
-  const M = 6;
+  const M = 8;
   const eMinLon = bbox.minLon - M * cell;
   const eMaxLon = bbox.maxLon + M * cell;
   const eMinLat = bbox.minLat - M * cell;

@@ -60,7 +60,9 @@ async function refreshMeta() {
     const m = await r.json();
     metaEl.textContent = `Regn 14 d: ${
       m.rain14 === null ? "okänt" : m.rain14.toFixed(1) + " mm"
-    } · väder: ${m.rainFactor} · säsong: ${m.seasonFactor} · lager: ${(m.layersLoaded ?? []).length} · ${
+    } · väder: ${m.rainFactor} · säsong: ${m.seasonFactor} · lager: ${(m.layersLoaded ?? []).length} · skog: ${
+      m.forestAreas ?? 0
+    } · exkl: ${m.excludedAreas ?? 0} · ${
       m.asOf ?? ""
     }${staticOnlyInput.checked ? " · (endast habitat)" : ""}`;
   } catch {
@@ -148,7 +150,7 @@ function initMap(maplibregl) {
     refreshMeta();
   });
   sensInput.addEventListener("input", () => {
-    sensLabel.textContent = String(45 + Number(sensInput.value));
+    sensLabel.textContent = String(50 + Number(sensInput.value));
     rebuildHabitat();
   });
   opacityInput.addEventListener("input", () => {
