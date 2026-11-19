@@ -1,0 +1,47 @@
+{
+  "crs": "EPSG:3006",
+  "comment": "Byt ut dessa demofiler mot riktiga nedladdningar (se README). Raster = GeoTIFF i EPSG:3006, band 1.",
+  "rasters": [
+    {
+      "id": "tradhojd",
+      "file": "skog_tradhojd_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "volym",
+      "file": "skog_volym_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "markfuktighet",
+      "file": "markfuktighet_10m.tif",
+      "nodata": 255,
+      "band": 1
+    },
+    {
+      "id": "jordart",
+      "file": "jordart_10m.tif",
+      "nodata": 255,
+      "band": 1,
+      "recode": {
+        "1": "acidic",
+        "2": "calcareous"
+      }
+    },
+    {
+      "id": "hojd",
+      "file": "hojdmodell_2m.tif",
+      "nodata": -9999,
+      "band": 1
+    }
+  ],
+  "vectors": [
+    {
+      "id": "avverkningar",
+      "file": "avverkningar_senaste_5ar.geojson",
+      "crs": "EPSG:3006"
+    }
+  ]
+}

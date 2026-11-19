@@ -3,6 +3,8 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
+import { LayerStore, toSWEREF } from "./layers.js";
+import { SPECIES, seasonalFactor, staticHabitatScore } from "./habitat.js";
 
 const MODEL = "mistral-small-latest";
 const SYSTEM_PROMPT =
@@ -190,27 +192,22 @@ function pointInForest(polys: [number, number][][], lon: number, lat: number): b
   return false;
 }
 
-type SpeciesProfile = { label: string; base: number; seasonStart: number; seasonEnd: number };
+const LAYERS_DIR = path.join(here, "..", "data", "layers");
+let layerStore: LayerStore | null = null;
 
-const SPECIES: Record<string, SpeciesProfile> = {
-  kantarell: { label: "Kantarell", base: 0.75, seasonStart: 7, seasonEnd: 10 },
-  trattkantarell: { label: "Trattkantarell", base: 0.6, seasonStart: 9, seasonEnd: 11 },
-  karljohan: { label: "Karljohan", base: 0.7, seasonStart: 8, seasonEnd: 9 },
-  "svart-trumpetsvamp": { label: "Svart trumpetsvamp", base: 0.5, seasonStart: 8, seasonEnd: 10 },
-};
-
-function staticHabitatScore(species: SpeciesProfile, lat: number, lon: number): number {
-  return species.base * (0.9 + 0.1 * Math.cos(((lat - 62) * Math.PI) / 8));
-}
-
-function seasonalFactor(species: SpeciesProfile, lat: number, now: Date): number {
-  const shift = Math.min(1, Math.max(-1, (59 - lat) * 0.1));
-  const month = now.getUTCMonth() + 1 + now.getUTCDate() / 30 + shift;
-  const { seasonStart, seasonEnd } = species;
-  if (month < seasonStart - 0.5 || month > seasonEnd + 0.5) return 0;
-  if (month < seasonStart) return (month - (seasonStart - 0.5)) / 0.5;
-  if (month > seasonEnd) return 1 - (month - seasonEnd) / 0.5;
-  return 1;
+async function getLayerStore(): Promise<LayerStore> {
+  if (layerStore && !layerStore.empty) return layerStore;
+  if (layerStore && !layerStore.shouldRetryEmpty()) return layerStore;
+  layerStore = await LayerStore.load(LAYERS_DIR);
+  if (!layerStore.empty) {
+    console.log(
+      `Laddade lager: ${[...layerStore.rasters.keys(), ...layerStore.vectors.keys()].join(", ")}`,
+    );
+    if (layerStore.missing.length > 0) {
+      console.log(`Saknade datafiler: ${layerStore.missing.join(", ")}`);
+    }
+  }
+  return layerStore;
 }
 
 app.get("/api/hotspots", async (req, res) => {
@@ -247,6 +244,9 @@ app.get("/api/hotspots", async (req, res) => {
     console.error("Forest layer fetch failed:", err);
   }
 
+  const store = await getLayerStore();
+  const clearcuts = store.vectors.get("avverkningar");
+
   const cell = Math.max((maxLon - minLon) / 40, (maxLat - minLat) / 40, 0.01);
   const features = [];
   for (let lat = minLat; lat < maxLat; lat += cell) {
@@ -254,7 +254,9 @@ app.get("/api/hotspots", async (req, res) => {
       const clat = lat + cell / 2;
       const clon = lon + cell / 2;
       const inForest = forestPolys.length === 0 || pointInForest(forestPolys, clon, clat);
-      const habitat = inForest ? staticHabitatScore(species, clat, clon) : 0.05 * species.base;
+      const [e, n] = toSWEREF(clon, clat);
+      const inClearcut = clearcuts ? clearcuts.contains(e, n) : false;
+      const habitat = await staticHabitatScore(store, key, clon, clat, inForest, inClearcut);
       const dynamic = seasonalFactor(species, clat, now) * rainFactor;
       const score = Math.round(100 * habitat * dynamic);
       features.push({
@@ -283,7 +285,8 @@ app.get("/api/hotspots", async (req, res) => {
       rain14,
       rainFactor: Number(rainFactor.toFixed(3)),
       forestAreas: forestPolys.length,
-      layers: ["smhi-precip-14d", "osm-forest-mask"],
+      layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
+      layers: ["smhi-precip-14d", "osm-forest-mask", ...store.rasters.keys(), ...store.vectors.keys()],
       generatedAt: now.toISOString(),
     },
     features,
