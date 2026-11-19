@@ -11,6 +11,7 @@ export type SpeciesProfile = {
   moistureIdeal: [number, number];
   canopyIdeal: [number, number];
   soil: Record<string, number>;
+  vetoSoil?: string[];
   sun: number;
   depression: number;
   edge: number;
@@ -77,6 +78,7 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     moistureIdeal: [4, 4],
     canopyIdeal: [22, 35],
     soil: { calcareous: 1, neutral: 0.7, acidic: 0.2 },
+    vetoSoil: ["acidic"],
     sun: -1,
     depression: 1,
     edge: 0.3,
@@ -126,8 +128,10 @@ export function staticHabitatScore(
   lon: number,
   lat: number,
   ctx: HabitatContext,
+  dbg?: Record<string, unknown>,
 ): number {
   const species = SPECIES[speciesKey];
+  if (dbg) Object.assign(dbg, { inClearcut: ctx.inClearcut, excluded: ctx.excluded, forestOk: ctx.forestOk, roadFactor: ctx.roadFactor, forestEdge: ctx.forestEdge });
   if (ctx.inClearcut || ctx.excluded) return 0;
   if (!ctx.forestOk) return 0;
   const [easting, northing] = toSWEREF(lon, lat);
@@ -136,6 +140,7 @@ export function staticHabitatScore(
   let covered = false;
   if (dem && dem.has(easting, northing)) {
     const elev = dem.sampleSync(easting, northing);
+    if (dbg) dbg.elev = elev;
     if (elev === null || elev < 0.5) return 0;
     covered = true;
   }
@@ -211,6 +216,7 @@ export function staticHabitatScore(
     if (v !== null) {
       covered = true;
       const group = soil.recode?.[String(Math.round(v))] ?? "neutral";
+      if (species.vetoSoil?.includes(group)) return 0;
       fSoil = species.soil[group] ?? 0.7;
     }
   }
@@ -239,13 +245,33 @@ export function staticHabitatScore(
     }
   }
 
+  const soft = (x: number) => Math.max(0.05, x);
   const sEnv =
-    100 * (0.35 * fMoisture + 0.25 * fMaturity + 0.2 * fCanopy + 0.1 * fSoil + 0.1 * fTerrain);
+    100 *
+    Math.pow(soft(fMoisture), 0.35) *
+    Math.pow(soft(fMaturity), 0.25) *
+    Math.pow(soft(fCanopy), 0.2) *
+    Math.pow(soft(fSoil), 0.1) *
+    Math.pow(soft(fTerrain), 0.1);
+  if (dbg) {
+    Object.assign(dbg, {
+      hostVol,
+      hostGate,
+      fMoisture,
+      fMaturity,
+      fCanopy,
+      fSoil,
+      fTerrain,
+      sEnv: Number(sEnv.toFixed(2)),
+      covered,
+    });
+  }
 
   let mBonus = 1;
   const keyBiotope = store.vectors.get("nyckelbiotoper");
   if (keyBiotope && keyBiotope.contains(easting, northing)) mBonus *= 1.3;
   if (ctx.forestEdge) mBonus *= 1 + 0.15 * species.edge;
+  if (dbg) dbg.mBonus = mBonus;
 
   if (!covered) return 0.4;
   return hostGate * (sEnv / 100) * mBonus * ctx.roadFactor;

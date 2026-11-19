@@ -18,11 +18,21 @@ D       = seasonalFactor × rainFactor × frost                        (0–1, d
 
 ### G_hard — global hard veto (0 or 1), returns score 0 immediately if any:
 
-- outside the OSM forest mask (`data/osm/forest_*.json`, baked via Overpass/OSM API)
+- outside the OSM forest mask (`data/osm/forest_*.json`, baked via Overpass/OSM API).
+  **Fail-closed:** if the mask was fetched successfully and contains no forest there,
+  the cell is *not* forest (score 0). Only a failed fetch (network error) falls back to
+  "unknown" (= treated as forest, flagged via `forestKnown: false` in `/api/meta`).
 - inside an OSM exclusion polygon: water, urban/residential, buildings, roads,
   military, landfill, … (`data/osm/exclusion_*.json`)
 - inside `avverkningar_senaste_5ar.geojson` (recent clear-cuts — dead mycorrhiza)
 - DEM (`hojdmodell_2m.tif`) nodata **or** elevation < 0.5 m (sea/lake surface)
+
+After rendering, tile alpha is **clipped to hot cells only** — circles from neighbouring
+hot cells are zeroed in any pixel whose cell has `G_hard = 0`, so blobs can never bleed
+into the sea, suburbs or roads.
+
+Debug a single point: `GET /api/debug/cell?lat=59.205&lon=17.905&species=kantarell` prints
+elevation, mask flags, hostVol, every `f*` factor and the final score.
 
 ### G_host — obligate mycorrhizal host gate (0–1)
 
@@ -39,13 +49,17 @@ else (fallback, flagged as hostFallback in /api/meta):
 ### S_env — environmental suitability (0–100)
 
 ```
-S_env = 100 × ( 0.35·fMoisture + 0.25·fMaturity + 0.20·fCanopy + 0.10·fSoil + 0.10·fTerrain )
+S_env = 100 × g(fMoisture)^0.35 × g(fMaturity)^0.25 × g(fCanopy)^0.20 × g(fSoil)^0.10 × g(fTerrain)^0.10
+        where g(x) = max(0.05, x)
+        (weighted GEOMETRIC mean — a single weak factor drags the whole cell down
+         instead of being averaged away; true hard vetoes below return score 0 directly)
 
 fMaturity = clamp01( (tradhojd − minTreeHeight) / 16 + 0.35 )     ; tradhojd < minTreeHeight → score 0
 fMoisture = clamp01( 1 − dist(markfuktighetsklass, moistureIdeal) / 1.5 )
             ; klass ∈ vetoMoisture → score 0                         (klass 1..5: torr..blöt)
 fCanopy   = clamp01( 1 − dist(grundyta, canopyIdeal) / 6 )          (m²/ha)
 fSoil     = species.soil[ jordart group ]  (jordart recode: 1→acidic, 2→calcareous, else neutral; default 0.7)
+            ; group ∈ species.vetoSoil → score 0  (svart trumpetsvamp vetoes acidic)
 fTerrain  = clamp01( 0.5 + 0.3·sun·cos(aspect−180°) + 0.2·depression·clamp01(ringDepth/5) )
             ; aspect & ring depth from a 7×7 window (250 m spacing) of hojdmodell_2m.tif
 ```

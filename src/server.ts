@@ -323,15 +323,15 @@ async function forestPolygonsForBox(
   minLat: number,
   maxLon: number,
   maxLat: number,
-): Promise<[number, number][][]> {
+): Promise<[number, number][][] | null> {
   const [kMinLon, kMinLat, kMaxLon, kMaxLat, key] = gridKey(minLon, minLat, maxLon, maxLat);
   const cached = forestCache.get(key);
-  if (cacheFresh(cached)) return cached!.polys;
+  if (cacheFresh(cached)) return cached!.ok ? cached!.polys : null;
   try {
     const disk = JSON.parse(
       await fsp.readFile(path.join(here, "..", "data", "osm", `forest_${key}.json`), "utf8"),
     );
-    if (Array.isArray(disk) && disk.length > 0) {
+    if (Array.isArray(disk)) {
       forestCache.set(key, { at: Date.now(), polys: disk, ok: true });
       return disk;
     }
@@ -356,9 +356,8 @@ async function forestPolygonsForBox(
       ok = false;
     }
   }
-  if (polys.length === 0) ok = false;
   forestCache.set(key, { at: Date.now(), polys, ok });
-  return polys;
+  return ok ? polys : null;
 }
 
 type Exclusions = { polys: [number, number][][]; lines: [number, number][][] };
@@ -533,7 +532,7 @@ async function computeCells(
   }
 
   const span = Math.max(maxLon - minLon, maxLat - minLat);
-  let forestPolys: [number, number][][] = [];
+  let forestPolys: [number, number][][] | null = null;
   let exclusions: Exclusions = { polys: [], lines: [] };
   if (span <= 2) {
     const [f, x] = await Promise.allSettled([
@@ -556,7 +555,7 @@ async function computeCells(
     for (let lon = startLon; lon < maxLon; lon += cell) {
       const clat = lat + cell / 2;
       const clon = lon + cell / 2;
-      const inForest = forestPolys.length === 0 || pointInPolygon(forestPolys, clon, clat);
+      const inForest = forestPolys === null ? true : pointInPolygon(forestPolys, clon, clat);
       const excluded =
         exclusions.polys.length > 0 && pointInPolygon(exclusions.polys, clon, clat);
       const roadFactor =
@@ -565,6 +564,7 @@ async function computeCells(
           : 1;
       const forestEdge =
         inForest &&
+        forestPolys !== null &&
         forestPolys.length > 0 &&
         (!pointInPolygon(forestPolys, clon + 0.001, clat) ||
           !pointInPolygon(forestPolys, clon - 0.001, clat) ||
@@ -620,7 +620,8 @@ async function computeCells(
       hostFallback: hostFallback(store),
       staticOnly,
       asOf: asOf.toISOString().slice(0, 10),
-      forestAreas: forestPolys.length,
+      forestAreas: forestPolys?.length ?? 0,
+      forestKnown: forestPolys !== null,
       excludedAreas: exclusions.polys.length,
       layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
     },
@@ -747,7 +748,7 @@ app.get("/api/hillshade", async (req, res) => {
   res.send(PNG.sync.write(png));
 });
 
-const TILE_VERSION = "r11";
+const TILE_VERSION = "r12";
 const TILES_DIR = path.join(here, "..", "data", "tiles", TILE_VERSION);
 
 const HEAT_BASE = 70;
@@ -864,7 +865,8 @@ app.get("/api/meta", async (req, res) => {
     asOf: asOf.toISOString().slice(0, 10),
     layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
     tileVersion: path.basename(TILES_DIR),
-    forestAreas: f.status === "fulfilled" ? f.value.length : 0,
+    forestAreas: f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
+    forestKnown: f.status === "fulfilled" && f.value !== null,
     excludedAreas: x.status === "fulfilled" ? x.value.polys.length : 0,
   });
 });
@@ -956,6 +958,10 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
   const img = new Uint8Array(W * H * 4);
   for (let k = 0; k < W * H; k++) {
     const idx = k * 4;
+    const px = k % W;
+    const py = (k / W) | 0;
+    const cell = grid[Math.min(rows - 1, Math.floor(py / R))]?.[Math.min(cols - 1, Math.floor(px / R))];
+    if (!cell || heatOf(cell.score, sens) <= 0) continue;
     img[idx + 3] = Math.round(Math.min(1, accA[k]) * 255);
     const w = accW[k];
     if (w > 0) {
@@ -999,6 +1005,76 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
   res.setHeader("Content-Type", "image/png");
   res.setHeader("Cache-Control", cacheControl);
   res.send(buf);
+});
+
+app.get("/api/debug/cell", async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lon = Number(req.query.lon);
+  const key = String(req.query.species ?? "kantarell");
+  const species = SPECIES[key];
+  if (!species || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return res.status(400).json({ error: "Expected query params: lat, lon, species." });
+  }
+  const asOf = parseAsOf(String(req.query.date ?? ""));
+  const staticOnly = req.query.static === "1";
+  const [forestPolys, exclusions] = await Promise.all([
+    forestPolygonsForBox(lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2),
+    exclusionsForBox(lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2),
+  ]);
+  const inForest = forestPolys === null ? true : pointInPolygon(forestPolys, lon, lat);
+  const excluded = exclusions.polys.length > 0 && pointInPolygon(exclusions.polys, lon, lat);
+  const roadFactor =
+    exclusions.lines.length > 0 && distToLinesMeters(exclusions.lines, lon, lat) < 30 ? 0.2 : 1;
+  const forestEdge =
+    inForest &&
+    forestPolys !== null &&
+    forestPolys.length > 0 &&
+    (!pointInPolygon(forestPolys, lon + 0.001, lat) ||
+      !pointInPolygon(forestPolys, lon - 0.001, lat) ||
+      !pointInPolygon(forestPolys, lon, lat + 0.001) ||
+      !pointInPolygon(forestPolys, lon, lat - 0.001));
+  const [e, n] = toSWEREF(lon, lat);
+  const store = await getLayerStore();
+  const clearcuts = store.vectors.get("avverkningar");
+  const inClearcut = clearcuts ? clearcuts.contains(e, n) : false;
+  const dbg: Record<string, unknown> = {};
+  const habitat = staticHabitatScore(
+    store,
+    key,
+    lon,
+    lat,
+    { forestOk: inForest, inClearcut, excluded, roadFactor, forestEdge },
+    dbg,
+  );
+  let rain14: number | null = null;
+  try {
+    rain14 = await rainLast14Days(lat, lon, asOf);
+  } catch {}
+  const rainFactor = rain14 === null ? 0.5 : Math.min(1, rain14 / 60);
+  const minTemp = staticOnly ? null : await minTempLast48h(lat, lon);
+  const frost = species.frostSensitive && minTemp !== null && minTemp <= -3 ? 0 : 1;
+  const dynamic = staticOnly ? 1 : seasonalFactor(species, lat, asOf) * rainFactor * frost;
+  res.json({
+    species: key,
+    lon,
+    lat,
+    forestKnown: forestPolys !== null,
+    forestPolys: forestPolys?.length ?? 0,
+    inForest,
+    excluded,
+    inClearcut,
+    roadFactor,
+    forestEdge,
+    ...dbg,
+    habitat: Number(habitat.toFixed(4)),
+    rain14,
+    rainFactor: Number(rainFactor.toFixed(3)),
+    seasonFactor: Number(seasonalFactor(species, lat, asOf).toFixed(2)),
+    minTemp48h: minTemp,
+    frost,
+    score: Math.min(100, Math.round(100 * habitat * dynamic)),
+    layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
+  });
 });
 
 app.get("/api/tiles/hillshade/:z/:x/:y.png", async (req, res) => {

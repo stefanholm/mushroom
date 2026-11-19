@@ -11,7 +11,7 @@ const basemapButtons = Array.from(document.querySelectorAll(".bm"));
 const metaEl = document.getElementById("meta");
 
 let map = null;
-const TILE_V = "r11";
+const TILE_V = "r12";
 
 function selectedDate() {
   const days = Number(dateSlider.value);
