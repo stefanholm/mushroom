@@ -21,8 +21,9 @@ const app = express();
 app.use(express.json());
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-app.use(express.static(path.join(here, "..", "public")));
-app.use("/vendor/maplibre", express.static(path.join(here, "..", "node_modules", "maplibre-gl", "dist")));
+const noCache = { etag: false, lastModified: false, setHeaders: (res: express.Response) => res.setHeader("Cache-Control", "no-cache") };
+app.use(express.static(path.join(here, "..", "public"), noCache));
+app.use("/vendor/maplibre", express.static(path.join(here, "..", "node_modules", "maplibre-gl", "dist"), noCache));
 
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 

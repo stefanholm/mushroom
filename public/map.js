@@ -107,8 +107,7 @@ import("/vendor/maplibre/maplibre-gl.mjs")
   .then((mod) => initMap(mod.default))
   .catch((err) => {
     console.error(err);
-    mapContainer.textContent =
-      "Kunde inte ladda kartbiblioteket — kör `npm install` i projektmappen och ladda om sidan.";
+    mapContainer.textContent = `Kunde inte ladda kartbiblioteket: ${err.message}. Kör \`npm install\` i projektmappen och ladda om sidan.`;
     mapContainer.style.cssText =
       "display:flex;align-items:center;justify-content:center;text-align:center;padding:1rem;color:#842029;";
   });
