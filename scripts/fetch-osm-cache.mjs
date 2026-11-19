@@ -194,7 +194,7 @@ for (const t of tiles) {
   const kMinLon = t.lon;
   const kMinLat = t.lat;
   const key = `${kMinLon.toFixed(6)},${kMinLat.toFixed(6)},${(kMinLon + g).toFixed(6)},${(kMinLat + g).toFixed(6)}`;
-  const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
+  const b = `${kMinLat},${kMinLon},${kMinLat + g},${kMinLon + g}`;
   let forest, ex;
   try {
     forest = ringsOf(await overpass(forestQ(b)));
@@ -215,20 +215,26 @@ for (const t of tiles) {
     }
     console.log(`[${key}] fetched via Overpass`);
   } catch {
-    const features = await osmApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon);
-    forest = features
-      .filter((f) => isForestTag(f.tags))
-      .flatMap((f) => f.rings)
-      .filter((r) => r.length >= 3)
-      .map((r) => ({ outer: r, inner: [] }));
-    ex = { polys: [], lines: [] };
-    for (const f of features) {
-      if (isLine(f.tags)) ex.lines.push(...f.rings);
-      else if (isExclArea(f.tags)) {
-        for (const r of f.rings) if (r.length >= 3) ex.polys.push({ outer: r, inner: [] });
+    try {
+      const features = await osmApiFeatures(kMinLat, kMinLon, kMinLat + g, kMinLon + g);
+      forest = features
+        .filter((f) => isForestTag(f.tags))
+        .flatMap((f) => f.rings)
+        .filter((r) => r.length >= 3)
+        .map((r) => ({ outer: r, inner: [] }));
+      ex = { polys: [], lines: [] };
+      for (const f of features) {
+        if (isLine(f.tags)) ex.lines.push(...f.rings);
+        else if (isExclArea(f.tags)) {
+          for (const r of f.rings) if (r.length >= 3) ex.polys.push({ outer: r, inner: [] });
+        }
       }
+      console.log(`[${key}] fetched via OSM main API`);
+    } catch (e2) {
+      forest = [];
+      ex = { polys: [], lines: [] };
+      console.error(`[${key}] KUNDE INTE HÄMTA (Overpass + OSM API nere): ${e2.message}`);
     }
-    console.log(`[${key}] fetched via OSM main API`);
   }
   await fs.writeFile(path.join(root, `forest_${key}.json`), JSON.stringify(forest));
   await fs.writeFile(path.join(root, `exclusion_${key}.json`), JSON.stringify(ex));
