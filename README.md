@@ -86,8 +86,10 @@ Dynamic (when it *fruits*), from SMHI metobs (`latest-months`):
 8. **Rain, last 14 days** at the nearest active station, ending at the selected date (date slider).
 9. **Seasonal window** per species, shifted by latitude.
 
-Cell size is zoom-adaptive (~50×50 grid, down to ~30–50 m when zoomed in), so the
-heatmap is not blocky at street level. `static=1` shows layers 1–7 only.
+Cells are scored on a fixed fine grid (span/60, floored at ~3 m so the 2 m höjdmodell is
+the limiting layer, max 60×60 per request) and rendered as a **blurred MapLibre
+heatmap layer** whose radius adapts to zoom — so the heatmap no longer changes shape
+when you zoom; a hot zone stays hot. `static=1` shows layers 1–7 only.
 
 ## How the hotspot score works
 

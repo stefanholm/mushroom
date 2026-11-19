@@ -262,7 +262,8 @@ app.get("/api/hotspots", async (req, res) => {
   const store = await getLayerStore();
   const clearcuts = store.vectors.get("avverkningar");
 
-  const cell = Math.max(Math.max(maxLon - minLon, maxLat - minLat) / 50, 0.0005);
+  const span = Math.max(maxLon - minLon, maxLat - minLat);
+  const cell = Math.max(span / 60, span / 64, 0.00003);
   const features = [];
   for (let lat = minLat; lat < maxLat; lat += cell) {
     for (let lon = minLon; lon < maxLon; lon += cell) {
@@ -277,18 +278,7 @@ app.get("/api/hotspots", async (req, res) => {
       features.push({
         type: "Feature",
         properties: { score },
-        geometry: {
-          type: "Polygon",
-          coordinates: [
-            [
-              [lon, lat],
-              [lon + cell, lat],
-              [lon + cell, lat + cell],
-              [lon, lat + cell],
-              [lon, lat],
-            ],
-          ],
-        },
+        geometry: { type: "Point", coordinates: [clon, clat] },
       });
     }
   }

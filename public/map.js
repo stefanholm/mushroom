@@ -19,8 +19,28 @@ function updateDateLabel() {
 let map = null;
 let refreshTimer = null;
 
-function opacityExpression() {
-  return ["interpolate", ["linear"], ["get", "score"], 0, 0, 100, Number(opacityInput.value) / 100];
+function heatmapPaint() {
+  return {
+    "heatmap-weight": ["interpolate", ["linear"], ["get", "score"], 0, 0, 100, 1],
+    "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 5, 0.6, 9, 1.2, 12, 2.5, 16, 5],
+    "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 5, 10, 9, 22, 12, 40, 16, 80],
+    "heatmap-color": [
+      "interpolate",
+      ["linear"],
+      ["heatmap-density"],
+      0,
+      "rgba(0,0,0,0)",
+      0.2,
+      "#fee08b",
+      0.5,
+      "#fdae61",
+      0.75,
+      "#f46d43",
+      1,
+      "#d73027",
+    ],
+    "heatmap-opacity": Number(opacityInput.value) / 100,
+  };
 }
 
 async function refreshHotspots() {
@@ -94,26 +114,9 @@ function initMap(maplibregl) {
     });
     map.addLayer({
       id: "hotspots",
-      type: "fill",
+      type: "heatmap",
       source: "hotspots",
-      paint: {
-        "fill-color": [
-          "interpolate",
-          ["linear"],
-          ["get", "score"],
-          0,
-          "rgba(0,0,0,0)",
-          30,
-          "#fee08b",
-          60,
-          "#fdae61",
-          85,
-          "#f46d43",
-          100,
-          "#d73027",
-        ],
-        "fill-opacity": opacityExpression(),
-      },
+      paint: heatmapPaint(),
     });
     refreshHotspots();
     geolocate.trigger();
@@ -135,7 +138,7 @@ function initMap(maplibregl) {
   });
   opacityInput.addEventListener("input", () => {
     if (map.getLayer("hotspots")) {
-      map.setPaintProperty("hotspots", "fill-opacity", opacityExpression());
+      map.setPaintProperty("hotspots", "heatmap-opacity", Number(opacityInput.value) / 100);
     }
   });
 }
