@@ -103,7 +103,7 @@ function initMap(maplibregl) {
   });
 }
 
-import("maplibre-gl")
+import("/vendor/maplibre/maplibre-gl.mjs")
   .then((mod) => initMap(mod.default))
   .catch((err) => {
     console.error(err);
