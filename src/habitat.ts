@@ -71,7 +71,7 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     label: "Svart trumpetsvamp",
     seasonStart: 8,
     seasonEnd: 10,
-    hosts: { ek: 1, bok: 1, bjork: 0.3 },
+    hosts: { ek: 1, hassel: 0.8, bok: 0.4, bjork: 0.3 },
     minHostVolume: 15,
     minTreeHeight: 12,
     vetoMoisture: [1, 2],
@@ -143,6 +143,10 @@ export function staticHabitatScore(
     if (dbg) dbg.elev = elev;
     if (elev === null || elev < 0.5) return 0;
     covered = true;
+  }
+  if (store.mask && store.mask.has(easting, northing) && !store.mask.allows(easting, northing)) {
+    if (dbg) dbg.maskVeto = true;
+    return 0;
   }
   let hostVol = 0;
   let anyHost = false;

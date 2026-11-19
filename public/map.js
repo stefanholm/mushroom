@@ -11,7 +11,7 @@ const basemapButtons = Array.from(document.querySelectorAll(".bm"));
 const metaEl = document.getElementById("meta");
 
 let map = null;
-const TILE_V = "r13";
+const TILE_V = "r14";
 
 function selectedDate() {
   const days = Number(dateSlider.value);
@@ -41,6 +41,7 @@ function rebuildHabitat() {
     type: "raster",
     tiles: [habitatTileUrl()],
     tileSize: 256,
+    maxzoom: 16,
   });
   map.addLayer({
     id: "habitat",

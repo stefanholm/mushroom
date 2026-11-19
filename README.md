@@ -137,9 +137,14 @@ gradient and a zoom-adaptive radius.
 
 OSM masks (forest + exclusions) are read **disk-first** from `data/osm/{forest,exclusion}_<tile>.json`
 (git-ignored) — pre-bake them once per area with `npm run osm-cache -- <minLon> <minLat> <maxLon> <maxLat>`
-(e.g. `npm run osm-cache -- 17.7 59.1 18.5 59.7` for the demo/Botkyrka area). If no disk
-cache exists, the server falls back to Overpass (5 hosts) then the main OSM API, cached
-24 h per 0.4° tile. Habitat tiles are rendered as **circles, not blur**: each hot cell
+(e.g. `npm run osm-cache -- 17.7 59.1 18.5 59.7` for the demo/Botkyrka area). The server merges all
+0.4° tile files covering the query bbox (keys are `toFixed(6)`-formatted — always re-bake with
+`rm -rf data/osm` after pulling, old float-artifact keys won't match). Masking is **fail-closed**:
+if no mask is available for an area, nothing renders there (`forestKnown` in `/api/meta`).
+If no disk cache exists, the server falls back to Overpass (5 hosts, GET) then the main OSM API,
+cached 24 h per tile. An optional **NMD 10 m mask** (`nmd_10m.tif` + `mask` entry in
+`manifest.json`, forest classes 111–128, 30 m dilation) acts as an additional hard gate.
+Exclusion polygons get a 30 m buffer; paved roads hard-zero within 20 m; forest paths stay open. Habitat tiles are rendered as **circles, not blur**: each hot cell
 splats a soft-edged circle whose radius grows with its cluster step; overlapping
 circles soft-blend (weighted-average colour, max alpha) into one smooth blob —
 no box blur, so hotspots stay pinpoint without visible circle outlines.

@@ -11,8 +11,8 @@ if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) {
 }
 const g = 0.4;
 const tiles = [];
-for (let lon = Math.floor(minLon / g) * g; lon < maxLon; lon += g) {
-  for (let lat = Math.floor(minLat / g) * g; lat < maxLat; lat += g) {
+for (let lon = Math.floor(minLon / g) * g; lon < maxLon + 1e-9; lon += g) {
+  for (let lat = Math.floor(minLat / g) * g; lat < maxLat + 1e-9; lat += g) {
     tiles.push({ lon, lat });
   }
 }
@@ -21,6 +21,8 @@ if (tiles.length > 25) {
   process.exit(1);
 }
 console.log(`Baking ${tiles.length} tile(s)...`);
+let totalForest = 0;
+let totalExcl = 0;
 let key = "";
 let b = "";
 
@@ -94,14 +96,15 @@ async function osmApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon) {
 
 const isForestTag = (t) => t.landuse === "forest" || t.natural === "wood" || t.natural === "scrub";
 const EXCL_LU = /^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$/;
-const EXCL_LE = new Set(["pitch", "golf_course", "recreation_ground"]);
+const EXCL_LE = new Set(["pitch", "golf_course", "recreation_ground", "park", "garden", "playground", "dog_park"]);
+const PAVED = /^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|service|living_street|bus_guideway|raceway|road)$/;
 const EXCL_MM = new Set(["wastewater_plant", "storage_tank"]);
 const isExclArea = (t) =>
   t.natural === "water" || t.waterway !== undefined || t.building !== undefined ||
   (t.landuse !== undefined && EXCL_LU.test(t.landuse)) ||
   (t.leisure !== undefined && EXCL_LE.has(t.leisure)) || t.amenity === "parking" ||
   t.natural === "grass" || t.shop !== undefined || (t.man_made !== undefined && EXCL_MM.has(t.man_made));
-const isLine = (t) => t.highway !== undefined || t.railway !== undefined || t.aeroway !== undefined;
+const isLine = (t) => (t.highway !== undefined && PAVED.test(t.highway)) || t.railway !== undefined || t.aeroway !== undefined;
 
 function assembleRings(geoms) {
   const EPS = 1e-7;
@@ -147,20 +150,42 @@ function assembleRings(geoms) {
   return rings;
 }
 
-function ringsOf(body) {
-  const geoms = [];
+function pointInRing(ring, lon, lat) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function polysOf(body) {
+  const polys = [];
   for (const e of body.elements ?? []) {
-    if (e.geometry) geoms.push(e.geometry.map((p) => [p.lon, p.lat]));
+    const outers = [];
+    const inners = [];
+    if (e.geometry) outers.push(e.geometry.map((p) => [p.lon, p.lat]));
     for (const m of e.members ?? []) {
-      if (m.geometry) geoms.push(m.geometry.map((p) => [p.lon, p.lat]));
+      if (!m.geometry) continue;
+      const ring = m.geometry.map((p) => [p.lon, p.lat]);
+      if (m.role === "inner") inners.push(ring);
+      else outers.push(ring);
+    }
+    for (const o of assembleRings(outers).filter((r) => r.length >= 3)) {
+      polys.push({ outer: o, inner: assembleRings(inners).filter((r) => r.length >= 3 && pointInRing(o, r[0][0], r[0][1])) });
     }
   }
-  return assembleRings(geoms).filter((r) => r.length >= 3);
+  return polys;
+}
+
+function ringsOf(body) {
+  return polysOf(body);
 }
 
 const forestQ = (b) => `[out:json][timeout:60];(way["landuse"="forest"](${b});way["natural"="wood"](${b});way["natural"="scrub"](${b});relation["landuse"="forest"](${b});relation["natural"="wood"](${b}););out geom;`;
-const areaQ = (b) => `way["natural"="water"](${b});way["waterway"](${b});way["building"](${b});way["landuse"~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$"](${b});way["leisure"~"^(pitch|golf_course|recreation_ground)$"](${b});way["amenity"="parking"](${b});way["natural"="grass"](${b});way["shop"](${b});way["man_made"~"^(wastewater_plant|storage_tank)$"](${b});relation["natural"="water"](${b});relation["building"](${b});relation["landuse"~"^(industrial|commercial|residential|urban|landfill|military|retail)$"](${b});`;
-const linesQ = (b) => `way["highway"](${b});way["railway"](${b});way["aeroway"](${b});`;
+const areaQ = (b) => `way["natural"="water"](${b});way["waterway"](${b});way["building"](${b});way["landuse"~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$"](${b});way["leisure"~"^(pitch|golf_course|recreation_ground|park|garden|playground|dog_park)$"](${b});way["amenity"="parking"](${b});way["natural"="grass"](${b});way["shop"](${b});way["man_made"~"^(wastewater_plant|storage_tank)$"](${b});relation["natural"="water"](${b});relation["building"](${b});relation["landuse"~"^(industrial|commercial|residential|urban|landfill|military|retail)$"](${b});`;
+const linesQ = (b) => `way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|service|living_street|bus_guideway|raceway|road)$"](${b});way["railway"](${b});way["aeroway"](${b});`;
 const exclQ = (b) => `[out:json][timeout:60];(${areaQ(b)}${linesQ(b)});out geom;`;
 
 await fs.mkdir(root, { recursive: true });
@@ -168,9 +193,7 @@ await fs.mkdir(root, { recursive: true });
 for (const t of tiles) {
   const kMinLon = t.lon;
   const kMinLat = t.lat;
-  const kMaxLon = t.lon + g;
-  const kMaxLat = t.lat + g;
-  const key = `${kMinLon},${kMinLat},${kMaxLon},${kMaxLat}`;
+  const key = `${kMinLon.toFixed(6)},${kMinLat.toFixed(6)},${(kMinLon + g).toFixed(6)},${(kMinLat + g).toFixed(6)}`;
   const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
   let forest, ex;
   try {
@@ -180,28 +203,42 @@ for (const t of tiles) {
     for (const e of exclBody.elements ?? []) {
       const tg = e.tags ?? {};
       const line = Boolean(tg.highway || tg.railway || tg.aeroway);
-      const geoms = [e.geometry, ...(e.members ?? []).map((m) => m.geometry)]
-        .filter(Array.isArray)
-        .map((gg) => gg.map((p) => [p.lon, p.lat]));
       if (line) {
-        for (const ring of geoms) if (ring.length >= 2) ex.lines.push(ring);
+        for (const gg of [e.geometry, ...(e.members ?? []).map((m) => m.geometry)]) {
+          if (!Array.isArray(gg)) continue;
+          const ring = gg.map((p) => [p.lon, p.lat]);
+          if (ring.length >= 2) ex.lines.push(ring);
+        }
       } else {
-        for (const ring of assembleRings(geoms)) if (ring.length >= 3) ex.polys.push(ring);
+        ex.polys.push(...polysOf({ elements: [e] }));
       }
     }
     console.log(`[${key}] fetched via Overpass`);
   } catch {
     const features = await osmApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon);
-    forest = features.filter((f) => isForestTag(f.tags)).flatMap((f) => f.rings).filter((r) => r.length >= 3);
+    forest = features
+      .filter((f) => isForestTag(f.tags))
+      .flatMap((f) => f.rings)
+      .filter((r) => r.length >= 3)
+      .map((r) => ({ outer: r, inner: [] }));
     ex = { polys: [], lines: [] };
     for (const f of features) {
       if (isLine(f.tags)) ex.lines.push(...f.rings);
-      else if (isExclArea(f.tags)) ex.polys.push(...f.rings);
+      else if (isExclArea(f.tags)) {
+        for (const r of f.rings) if (r.length >= 3) ex.polys.push({ outer: r, inner: [] });
+      }
     }
     console.log(`[${key}] fetched via OSM main API`);
   }
   await fs.writeFile(path.join(root, `forest_${key}.json`), JSON.stringify(forest));
   await fs.writeFile(path.join(root, `exclusion_${key}.json`), JSON.stringify(ex));
-  console.log(`  forest_${key}.json: ${forest.length} rings, exclusion: ${ex.polys.length} polys / ${ex.lines.length} lines`);
+  console.log(`  forest_${key}.json: ${forest.length} polys, exclusion: ${ex.polys.length} polys / ${ex.lines.length} lines`);
+  totalForest += forest.length;
+  totalExcl += ex.polys.length + ex.lines.length;
+}
+console.log(`Totalt: ${totalForest} skog-polygoner, ${totalExcl} exkl-polygoner/linjer i ${tiles.length} tiles.`);
+if (totalForest === 0 || totalExcl === 0) {
+  console.error("FEL: Overpass/OSM returnerade tomma resultat — kontrollera nätverk/rate-limit. Radera data/osm och försök igen.");
+  process.exit(1);
 }
 console.log("Server reads these from data/osm/ before calling live APIs.");

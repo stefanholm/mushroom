@@ -19,11 +19,19 @@ D       = seasonalFactor × rainFactor × frost                        (0–1, d
 ### G_hard — global hard veto (0 or 1), returns score 0 immediately if any:
 
 - outside the OSM forest mask (`data/osm/forest_*.json`, baked via Overpass/OSM API).
-  **Fail-closed:** if the mask was fetched successfully and contains no forest there,
-  the cell is *not* forest (score 0). Only a failed fetch (network error) falls back to
-  "unknown" (= treated as forest, flagged via `forestKnown: false` in `/api/meta`).
-- inside an OSM exclusion polygon: water, urban/residential, buildings, roads,
-  military, landfill, … (`data/osm/exclusion_*.json`)
+  **Strictly fail-closed:** if the mask is unknown (fetch failed / outside baked tiles),
+  `inForest = false` → score 0 — the map never shows hotspots where the mask is missing
+  (`forestKnown` in `/api/meta` tells you). If the optional **NMD mask** raster
+  (`nmd_10m.tif`, Naturvårdsverket 10 m marktäckedata, classes 111–128 = productive
+  forest, 3 px ≈ 30 m dilation of non-forest baked at load) is present, it is an
+  additional hard gate: non-forest class → 0.
+- inside an OSM exclusion polygon **or within 30 m of one** (yard/building buffer):
+  water, waterway, buildings, urban/residential/industrial/…, parks, pitches, shops…
+  (`data/osm/exclusion_*.json`). Multipolygon `role="inner"` rings are subtracted from
+  their outer ring, so village enclaves inside forests are not masked as forest.
+- within 20 m of a **paved** road/rail/aeroway line (motorway…service; forest
+  `path`/`footway`/`track` are deliberately kept open — chanterelles like trails);
+  20–35 m → ×0.5
 - inside `avverkningar_senaste_5ar.geojson` (recent clear-cuts — dead mycorrhiza)
 - DEM (`hojdmodell_2m.tif`) nodata **or** elevation < 0.5 m (sea/lake surface)
 
@@ -95,7 +103,11 @@ frost          = 0 if species.frostSensitive and min(temp last 48 h) ≤ −3 °
 | Kantarell | björk 1, ek 1, bok 1, gran 0.8, tall 0.6 | 15 | 10 | 5 (blöt) | 2–3 | 15–28 | acidic 1 | +1 | 0.3 | 1 | yes | Jul–Oct |
 | Trattkantarell | gran 1, tall 0.5, björk 0.2 | 30 | 14 | 1 (torr) | 3–4 | 25–40 | acidic 1 | −1 | 1 | 0.2 | no | Sep–Nov |
 | Karljohan | gran 1, ek 0.9, bok 0.9, björk 0.8, tall 0.5 | 20 | 12 | 5 | 2–3 | 18–30 | acidic 0.9 | +0.5 | 0.2 | 0.5 | no | Aug–Sep |
-| Svart trumpetsvamp | ek 1, bok 1, björk 0.3 | 15 | 12 | 1, 2 | 4 | 22–35 | calcareous 1, acidic 0.2 | −1 | 1 | 0.3 | no | Aug–Oct |
+| Svart trumpetsvamp | ek 1, hassel 0.8, bok 0.4, björk 0.3 | 15 | 12 | 1, 2 | 4 | 22–35 | calcareous 1; **veto acidic** | −1 | 1 | 0.3 | no | Aug–Oct |
+
+(Svart trumpetsvamp around Stockholm/Mälardalen is oak + hazel in rich mossy mixed forest —
+beech `bok` is weighted low on purpose; drop a `skog_hassel_10m.tif` into `data/layers/` and
+it is picked up automatically.)
 
 ## 3. Heat → colour/alpha (tile renderer, `src/server.ts`)
 
@@ -119,14 +131,21 @@ At street-level zooms (cell ≤ 150 m), each cell counts **hot neighbours** (hea
 heat_final = min(1, heat + stepBonus)
 ```
 
-### Rendering
+### Rendering (continuous Windy-style field)
 
 Cells sit on a global snapped ladder grid (0.0001° ≈ 6 m, doubled until ≤ 110 cells per tile
-span, origin snapped to multiples of the cell size — so hotspots are zoom-stable). Each hot
-cell splats a soft-edged circle (radius ∝ cluster step × heat, falloff 1−(d/r)²) into a
-padded grid; overlapping circles blend with max alpha and alpha-weighted average colour, so
-connected circles merge into one smooth blob without visible circle outlines. Result is
-bilinearly sampled to a 256×256 PNG, disk-cached under `data/tiles/<version>/`.
+span, origin snapped to multiples of the cell size — zoom-stable). Each tile is scored with a
+**≥150 m geographic padding gutter** (so tile edges never lose neighbours/clusters at high
+zoom). The per-cell heat (with cluster boost) is bilinearly/nearest upscaled ×2, then smoothed
+with a separable box blur (2 passes, radius 2 — Gaussian approximation) applied premultiplied
+by the hard mask. Final step: **post-blur sharp mask clip** — pixel alpha is zeroed wherever
+the cell failed `G_hard` — so the smooth thermal gradient stops razor-clean at shorelines,
+streets and yards. Colour ramp (heat → RGB): 0.25 teal `#00b2be` → 0.42 emerald `#10b981` →
+0.58 amber `#f5b301` → 0.74 orange `#ff7a00` → 0.88 crimson `#e31a1c` → 0.97 `#ff2a00` →
+1.0 `#ffffb2`; alpha = `heat² × 0.95`. Result bilinearly sampled to a 256×256 PNG,
+disk-cached under `data/tiles/<tileVersion>/`. Clients should set `maxzoom: 16` on the raster
+source (MapLibre then GPU-overzooms instead of requesting z17+) and append `&v=<tileVersion>`
+(from `/api/meta`) to bust caches.
 
 ## 4. Data lineage
 
@@ -148,5 +167,13 @@ All rasters/vectors must be EPSG:3006 (SWEREF 99 TM); `manifest.json` declares n
 - Layer reading round-trip checked against known demo features: lake nodata → 0, suburb
   zero-rect → 0, clear-cut polygons → 0, nyckelbiotop → ×1.3 bonus, forest cell → plausible
   values (see git history / PR #1).
-- Score distribution on the demo area (static, kantarell): ≥70 → 34%, ≥80 → 16%, ≥90 → 7%,
-  ≥95 (red) → 2.2% of cells.
+- Fail-closed masking verified with a synthetic `data/osm/` cache: lake exclusion polygon →
+  excluded → 0; multipolygon inner hole → not excluded; point on paved road → roadFactor 0 →
+  0; point outside all baked tiles → `forestKnown=false`, score 0. Rendered tiles: lake
+  window fully transparent even at sens=−10; hot-pixel coverage stable across z12–z16.
+- OSM disk-cache key format unified with `toFixed(6)` on both server and bake script
+  (float artifacts like `18.400000000000002` vs `18.400000000000006` previously made the
+  cache never match for multi-tile bboxes — the cause of `skog: 0 · exkl: 0`).
+- Score distribution on the demo area (static, kantarell): ≥70 → ~18–34%, ≥95 (red) → ~1.6%.
+- Ecology: top-score cells per species match their hosts/soil/moisture (trattkantarell →
+  spruce + fukt 3–4; svart trumpetsvamp → ek/hassel on calcareous, fukt 4).

@@ -191,8 +191,10 @@ const OVERPASS_HOSTS = [
 type OverpassElement = {
   tags?: Record<string, string>;
   geometry?: { lat: number; lon: number }[];
-  members?: { geometry?: { lat: number; lon: number }[] }[];
+  members?: { role?: string; geometry?: { lat: number; lon: number }[] }[];
 };
+
+export type Poly = { outer: [number, number][]; inner: [number, number][][] };
 
 async function overpassQuery(q: string): Promise<{ elements?: OverpassElement[] }> {
   const attempts = OVERPASS_HOSTS.map((host) =>
@@ -260,15 +262,29 @@ function assembleRings(geoms: [number, number][][]): [number, number][][] {
   return rings;
 }
 
-function ringsFromOverpass(body: { elements?: OverpassElement[] }): [number, number][][] {
-  const geoms: [number, number][][] = [];
+function polysFromOverpass(body: { elements?: OverpassElement[] }): Poly[] {
+  const polys: Poly[] = [];
   for (const e of body.elements ?? []) {
-    if (e.geometry) geoms.push(e.geometry.map((p) => [p.lon, p.lat] as [number, number]));
+    const outerGeoms: [number, number][][] = [];
+    const innerGeoms: [number, number][][] = [];
+    if (e.geometry) outerGeoms.push(e.geometry.map((p) => [p.lon, p.lat] as [number, number]));
     for (const m of e.members ?? []) {
-      if (m.geometry) geoms.push(m.geometry.map((p) => [p.lon, p.lat] as [number, number]));
+      if (!m.geometry) continue;
+      const ring = m.geometry.map((p) => [p.lon, p.lat] as [number, number]);
+      if (m.role === "inner") innerGeoms.push(ring);
+      else outerGeoms.push(ring);
+    }
+    const outers = assembleRings(outerGeoms).filter((r) => r.length >= 3);
+    const inners = assembleRings(innerGeoms).filter((r) => r.length >= 3);
+    for (const o of outers) {
+      polys.push({ outer: o, inner: inners.filter((i) => pointInRing(o, i[0][0], i[0][1])) });
     }
   }
-  return assembleRings(geoms).filter((r) => r.length >= 3);
+  return polys;
+}
+
+function ringsFromOverpass(body: { elements?: OverpassElement[] }): [number, number][][] {
+  return polysFromOverpass(body).map((p) => p.outer);
 }
 
 type OsmFeature = { tags: Record<string, string>; rings: [number, number][][] };
@@ -278,7 +294,7 @@ const isForestTag = (t: Record<string, string>): boolean =>
 
 const EXCLUDE_LANDUSE_RE =
   /^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$/;
-const EXCLUDE_LEISURE = new Set(["pitch", "golf_course", "recreation_ground"]);
+const EXCLUDE_LEISURE = new Set(["pitch", "golf_course", "recreation_ground", "park", "garden", "playground", "dog_park"]);
 const EXCLUDE_MAN_MADE = new Set(["wastewater_plant", "storage_tank"]);
 
 const isExcludedAreaTag = (t: Record<string, string>): boolean =>
@@ -292,8 +308,13 @@ const isExcludedAreaTag = (t: Record<string, string>): boolean =>
   t.shop !== undefined ||
   (t.man_made !== undefined && EXCLUDE_MAN_MADE.has(t.man_made));
 
+const PAVED_HIGHWAY_RE =
+  /^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|service|living_street|bus_guideway|raceway|road)$/;
+
 const isLineTag = (t: Record<string, string>): boolean =>
-  t.highway !== undefined || t.railway !== undefined || t.aeroway !== undefined;
+  (t.highway !== undefined && PAVED_HIGHWAY_RE.test(t.highway)) ||
+  t.railway !== undefined ||
+  t.aeroway !== undefined;
 
 async function osmMainApiFeatures(
   minLat: number,
@@ -354,7 +375,7 @@ function gridKey(minLon: number, minLat: number, maxLon: number, maxLat: number)
   return [kMinLon, kMinLat, kMaxLon, kMaxLat, `${kMinLon},${kMinLat},${kMaxLon},${kMaxLat}`];
 }
 
-const forestCache = new Map<string, { at: number; polys: [number, number][][]; ok: boolean }>();
+const forestCache = new Map<string, { at: number; polys: Poly[]; ok: boolean }>();
 
 function cacheFresh(entry: { at: number; ok: boolean } | undefined): boolean {
   if (!entry) return false;
@@ -362,30 +383,81 @@ function cacheFresh(entry: { at: number; ok: boolean } | undefined): boolean {
   return Date.now() - entry.at < ttl;
 }
 
+async function diskForestTiles(
+  minLon: number,
+  minLat: number,
+  maxLon: number,
+  maxLat: number,
+): Promise<Poly[] | null> {
+  const g = 0.4;
+  const polys: Poly[] = [];
+  for (let i = Math.floor(minLon / g); i * g < maxLon + 1e-9; i++) {
+    for (let j = Math.floor(minLat / g); j * g < maxLat + 1e-9; j++) {
+      const key = `${(i * g).toFixed(6)},${(j * g).toFixed(6)},${((i + 1) * g).toFixed(6)},${((j + 1) * g).toFixed(6)}`;
+      let raw: unknown;
+      try {
+        raw = JSON.parse(
+          await fsp.readFile(path.join(here, "..", "data", "osm", `forest_${key}.json`), "utf8"),
+        );
+      } catch {
+        return null;
+      }
+      for (const p of Array.isArray(raw) ? raw : []) {
+        polys.push(Array.isArray(p) ? { outer: p as [number, number][], inner: [] as [number, number][][] } : (p as Poly));
+      }
+    }
+  }
+  return polys;
+}
+
+async function diskExclusionTiles(
+  minLon: number,
+  minLat: number,
+  maxLon: number,
+  maxLat: number,
+): Promise<Exclusions | null> {
+  const g = 0.4;
+  const ex: Exclusions = { polys: [], lines: [] };
+  for (let i = Math.floor(minLon / g); i * g < maxLon + 1e-9; i++) {
+    for (let j = Math.floor(minLat / g); j * g < maxLat + 1e-9; j++) {
+      const key = `${(i * g).toFixed(6)},${(j * g).toFixed(6)},${((i + 1) * g).toFixed(6)},${((j + 1) * g).toFixed(6)}`;
+      let raw: { polys?: unknown; lines?: unknown };
+      try {
+        raw = JSON.parse(
+          await fsp.readFile(path.join(here, "..", "data", "osm", `exclusion_${key}.json`), "utf8"),
+        );
+      } catch {
+        return null;
+      }
+      for (const p of Array.isArray(raw?.polys) ? raw.polys : []) {
+        ex.polys.push(Array.isArray(p) ? { outer: p as [number, number][], inner: [] as [number, number][][] } : (p as Poly));
+      }
+      for (const l of Array.isArray(raw?.lines) ? raw.lines : []) ex.lines.push(l as [number, number][]);
+    }
+  }
+  return ex;
+}
+
 async function forestPolygonsForBox(
   minLon: number,
   minLat: number,
   maxLon: number,
   maxLat: number,
-): Promise<[number, number][][] | null> {
+): Promise<Poly[] | null> {
   const [kMinLon, kMinLat, kMaxLon, kMaxLat, key] = gridKey(minLon, minLat, maxLon, maxLat);
   const cached = forestCache.get(key);
   if (cacheFresh(cached)) return cached!.ok ? cached!.polys : null;
-  try {
-    const disk = JSON.parse(
-      await fsp.readFile(path.join(here, "..", "data", "osm", `forest_${key}.json`), "utf8"),
-    );
-    if (Array.isArray(disk)) {
-      forestCache.set(key, { at: Date.now(), polys: disk, ok: true });
-      return disk;
-    }
-  } catch { /* no disk cache */ }
+  const disk = await diskForestTiles(minLon, minLat, maxLon, maxLat);
+  if (disk) {
+    forestCache.set(key, { at: Date.now(), polys: disk, ok: true });
+    return disk;
+  }
   const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
   const q = `[out:json][timeout:60];(way["landuse"="forest"](${b});way["natural"="wood"](${b});way["natural"="scrub"](${b});relation["landuse"="forest"](${b});relation["natural"="wood"](${b}););out geom;`;
-  let polys: [number, number][][] = [];
+  let polys: Poly[] = [];
   let ok = true;
   try {
-    polys = ringsFromOverpass(await overpassQuery(q)).filter((ring) => ring.length >= 3);
+    polys = polysFromOverpass(await overpassQuery(q));
   } catch {
     ok = false;
   }
@@ -395,7 +467,8 @@ async function forestPolygonsForBox(
       polys = features
         .filter((f) => isForestTag(f.tags))
         .flatMap((f) => f.rings)
-        .filter((ring) => ring.length >= 3);
+        .filter((ring) => ring.length >= 3)
+        .map((ring) => ({ outer: ring, inner: [] as [number, number][][] }));
     } catch {
       ok = false;
     }
@@ -404,7 +477,7 @@ async function forestPolygonsForBox(
   return ok ? polys : null;
 }
 
-type Exclusions = { polys: [number, number][][]; lines: [number, number][][] };
+type Exclusions = { polys: Poly[]; lines: [number, number][][] };
 const exclusionCache = new Map<string, { at: number; ex: Exclusions; ok: boolean }>();
 
 async function exclusionsForBox(
@@ -412,54 +485,55 @@ async function exclusionsForBox(
   minLat: number,
   maxLon: number,
   maxLat: number,
-): Promise<Exclusions> {
+): Promise<Exclusions | null> {
   const [kMinLon, kMinLat, kMaxLon, kMaxLat, key] = gridKey(minLon, minLat, maxLon, maxLat);
   const cached = exclusionCache.get(key);
-  if (cacheFresh(cached)) return cached!.ex;
-  try {
-    const disk = JSON.parse(
-      await fsp.readFile(path.join(here, "..", "data", "osm", `exclusion_${key}.json`), "utf8"),
-    );
-    if (disk && Array.isArray(disk.polys) && Array.isArray(disk.lines)) {
-      exclusionCache.set(key, { at: Date.now(), ex: disk, ok: true });
-      return disk;
-    }
-  } catch { /* no disk cache */ }
+  if (cacheFresh(cached)) return cached!.ok ? cached!.ex : null;
+  const disk = await diskExclusionTiles(minLon, minLat, maxLon, maxLat);
+  if (disk) {
+    exclusionCache.set(key, { at: Date.now(), ex: disk, ok: true });
+    return disk;
+  }
   const b = `${kMinLat},${kMinLon},${kMaxLat},${kMaxLon}`;
-  const area = `way["natural"="water"](${b});way["waterway"](${b});way["building"](${b});way["landuse"~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$"](${b});way["leisure"~"^(pitch|golf_course|recreation_ground)$"](${b});way["amenity"="parking"](${b});way["natural"="grass"](${b});way["shop"](${b});way["man_made"~"^(wastewater_plant|storage_tank)$"](${b});relation["natural"="water"](${b});relation["building"](${b});relation["landuse"~"^(industrial|commercial|residential|urban|landfill|military|retail)$"](${b});`;
-  const lines = `way["highway"](${b});way["railway"](${b});way["aeroway"](${b});`;
+  const area = `way["natural"="water"](${b});way["waterway"](${b});way["building"](${b});way["landuse"~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$"](${b});way["leisure"~"^(pitch|golf_course|recreation_ground|park|garden|playground|dog_park)$"](${b});way["amenity"="parking"](${b});way["natural"="grass"](${b});way["shop"](${b});way["man_made"~"^(wastewater_plant|storage_tank)$"](${b});relation["natural"="water"](${b});relation["building"](${b});relation["landuse"~"^(industrial|commercial|residential|urban|landfill|military|retail)$"](${b});`;
+  const lines = `way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|service|living_street|bus_guideway|raceway|road)"](${b});way["railway"](${b});way["aeroway"](${b});`;
   const q = `[out:json][timeout:60];(${area}${lines});out geom;`;
   const ex: Exclusions = { polys: [], lines: [] };
+  let ok = true;
   try {
     const body = await overpassQuery(q);
     if ((body.elements ?? []).length === 0) throw new Error("empty overpass result");
-    const pushElement = (e: OverpassElement) => {
+    for (const e of body.elements ?? []) {
       const t = e.tags ?? {};
       const line = Boolean(t.highway || t.railway || t.aeroway);
-      const geoms = [e.geometry, ...(e.members ?? []).map((m) => m.geometry)]
-        .filter((g): g is { lat: number; lon: number }[] => Array.isArray(g))
-        .map((g) => g.map((p) => [p.lon, p.lat] as [number, number]));
       if (line) {
-        for (const ring of geoms) if (ring.length >= 2) ex.lines.push(ring);
+        for (const g of [e.geometry, ...(e.members ?? []).map((m) => m.geometry)]) {
+          if (!Array.isArray(g)) continue;
+          const ring = g.map((p) => [p.lon, p.lat] as [number, number]);
+          if (ring.length >= 2) ex.lines.push(ring);
+        }
       } else {
-        for (const ring of assembleRings(geoms)) if (ring.length >= 3) ex.polys.push(ring);
+        ex.polys.push(...polysFromOverpass({ elements: [e] }));
       }
-    };
-    for (const e of body.elements ?? []) pushElement(e);
+    }
   } catch {
+    ok = false;
+  }
+  if (ok && ex.polys.length === 0 && ex.lines.length === 0) {
     try {
       const features = await osmMainApiFeatures(kMinLat, kMinLon, kMaxLat, kMaxLon);
       for (const f of features) {
         if (isLineTag(f.tags)) ex.lines.push(...f.rings);
-        else if (isExcludedAreaTag(f.tags)) ex.polys.push(...f.rings);
+        else if (isExcludedAreaTag(f.tags)) {
+          for (const ring of f.rings) if (ring.length >= 3) ex.polys.push({ outer: ring, inner: [] as [number, number][][] });
+        }
       }
     } catch {
-      exclusionCache.set(key, { at: Date.now(), ex, ok: false });
-      return ex;
+      ok = false;
     }
   }
-  exclusionCache.set(key, { at: Date.now(), ex, ok: true });
-  return ex;
+  exclusionCache.set(key, { at: Date.now(), ex, ok });
+  return ok ? ex : null;
 }
 
 function distToLinesMeters(lines: [number, number][][], lon: number, lat: number): number {
@@ -487,30 +561,44 @@ function distToLinesMeters(lines: [number, number][][], lon: number, lat: number
   return best;
 }
 
-function pointInPolygon(polys: [number, number][][], lon: number, lat: number): boolean {
-  for (const ring of polys) {
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (const [x, y] of ring) {
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
+function pointInRing(ring: [number, number][], lon: number, lat: number): boolean {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of ring) {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  if (lon < minX || lon > maxX || lat < minY || lat > maxY) return false;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+      inside = !inside;
     }
-    if (lon < minX || lon > maxX || lat < minY || lat > maxY) continue;
-    let inside = false;
-    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      const [xi, yi] = ring[i];
-      const [xj, yj] = ring[j];
-      if (yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
-        inside = !inside;
-      }
-    }
-    if (inside) return true;
+  }
+  return inside;
+}
+
+function pointInPolys(polys: Poly[], lon: number, lat: number): boolean {
+  for (const p of polys) {
+    if (pointInRing(p.outer, lon, lat) && !p.inner.some((r) => pointInRing(r, lon, lat))) return true;
   }
   return false;
+}
+
+function distToPolysMeters(polys: Poly[], lon: number, lat: number): number {
+  let best = Infinity;
+  for (const p of polys) {
+    const closed = [...p.outer, p.outer[0]];
+    const d = distToLinesMeters([closed], lon, lat);
+    if (d < best) best = d;
+  }
+  return best;
 }
 
 const LAYERS_DIR = path.join(here, "..", "data", "layers");
@@ -575,8 +663,8 @@ async function computeCells(
   }
 
   const span = Math.max(maxLon - minLon, maxLat - minLat);
-  let forestPolys: [number, number][][] | null = null;
-  let exclusions: Exclusions = { polys: [], lines: [] };
+  let forestPolys: Poly[] | null = null;
+  let exclusions: Exclusions | null = null;
   if (span <= 2) {
     const [f, x] = await Promise.allSettled([
       forestPolygonsForBox(minLon, minLat, maxLon, maxLat),
@@ -587,6 +675,7 @@ async function computeCells(
     if (x.status === "fulfilled") exclusions = x.value;
     else console.error("Exclusion layer fetch failed:", x.reason);
   }
+  const ex: Exclusions = exclusions ?? { polys: [], lines: [] };
 
   const store = await getLayerStore();
   const clearcuts = store.vectors.get("avverkningar");
@@ -598,20 +687,21 @@ async function computeCells(
     for (let lon = startLon; lon < maxLon; lon += cell) {
       const clat = lat + cell / 2;
       const clon = lon + cell / 2;
-      const inForest = forestPolys === null ? true : pointInPolygon(forestPolys, clon, clat);
+      const inForest = forestPolys !== null && pointInPolys(forestPolys, clon, clat);
       const excluded =
-        exclusions.polys.length > 0 && pointInPolygon(exclusions.polys, clon, clat);
+        ex.polys.length > 0 &&
+        (pointInPolys(ex.polys, clon, clat) || distToPolysMeters(ex.polys, clon, clat) < 30);
       const roadDist =
-        exclusions.lines.length > 0 ? distToLinesMeters(exclusions.lines, clon, clat) : Infinity;
-      const roadFactor = roadDist < 15 ? 0 : roadDist < 30 ? 0.5 : 1;
+        ex.lines.length > 0 ? distToLinesMeters(ex.lines, clon, clat) : Infinity;
+      const roadFactor = roadDist < 20 ? 0 : roadDist < 35 ? 0.5 : 1;
       const forestEdge =
         inForest &&
         forestPolys !== null &&
         forestPolys.length > 0 &&
-        (!pointInPolygon(forestPolys, clon + 0.001, clat) ||
-          !pointInPolygon(forestPolys, clon - 0.001, clat) ||
-          !pointInPolygon(forestPolys, clon, clat + 0.001) ||
-          !pointInPolygon(forestPolys, clon, clat - 0.001));
+        (!pointInPolys(forestPolys, clon + 0.001, clat) ||
+          !pointInPolys(forestPolys, clon - 0.001, clat) ||
+          !pointInPolys(forestPolys, clon, clat + 0.001) ||
+          !pointInPolys(forestPolys, clon, clat - 0.001));
       const [e, n] = toSWEREF(clon, clat);
       const inClearcut = clearcuts ? clearcuts.contains(e, n) : false;
       const habitat = staticHabitatScore(store, key, clon, clat, {
@@ -664,7 +754,7 @@ async function computeCells(
       asOf: asOf.toISOString().slice(0, 10),
       forestAreas: forestPolys?.length ?? 0,
       forestKnown: forestPolys !== null,
-      excludedAreas: exclusions.polys.length,
+      excludedAreas: ex.polys.length,
       layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
     },
   };
@@ -790,7 +880,7 @@ app.get("/api/hillshade", async (req, res) => {
   res.send(PNG.sync.write(png));
 });
 
-const TILE_VERSION = "r13";
+const TILE_VERSION = "r14";
 const TILES_DIR = path.join(here, "..", "data", "tiles", TILE_VERSION);
 
 const HEAT_BASE = 70;
@@ -805,11 +895,12 @@ function tileBBox(z: number, x: number, y: number) {
 }
 
 const HEAT_RAMP: [number, [number, number, number]][] = [
-  [0.35, [217, 95, 2]],
-  [0.55, [255, 140, 0]],
-  [0.72, [242, 60, 20]],
-  [0.85, [227, 26, 28]],
-  [0.95, [255, 42, 0]],
+  [0.25, [0, 178, 190]],
+  [0.42, [16, 185, 129]],
+  [0.58, [245, 179, 1]],
+  [0.74, [255, 122, 0]],
+  [0.88, [227, 26, 28]],
+  [0.97, [255, 42, 0]],
   [1, [255, 255, 178]],
 ];
 
@@ -909,7 +1000,9 @@ app.get("/api/meta", async (req, res) => {
     tileVersion: path.basename(TILES_DIR),
     forestAreas: f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
     forestKnown: f.status === "fulfilled" && f.value !== null,
-    excludedAreas: x.status === "fulfilled" ? x.value.polys.length : 0,
+    excludedAreas: x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
+    forestCount: f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
+    exclCount: x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
   });
 });
 
@@ -938,7 +1031,9 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
   }
   const span = Math.max(bbox.maxLon - bbox.minLon, bbox.maxLat - bbox.minLat);
   const cell = cellForSpan(span);
-  const M = 12;
+  const centerLat = (bbox.minLat + bbox.maxLat) / 2;
+  const mPerCell = cell * 111000 * Math.max(0.4, Math.cos((centerLat * Math.PI) / 180));
+  const M = Math.max(2, Math.min(24, Math.ceil(150 / Math.max(1, mPerCell))));
   const eMinLon = bbox.minLon - M * cell;
   const eMaxLon = bbox.maxLon + M * cell;
   const eMinLat = bbox.minLat - M * cell;
@@ -954,63 +1049,79 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
     const j = Math.floor((c.lat - eStartLat) / cell);
     if (j >= 0 && j < rows && i >= 0 && i < cols) grid[j][i] = c;
   }
-  const clusterRadius = clusterRadiusCells(cell, (bbox.minLat + bbox.maxLat) / 2);
+  const clusterRadius = clusterRadiusCells(cell, centerLat);
   const R = 2;
   const W = cols * R;
   const H = rows * R;
-  const accA = new Float32Array(W * H);
-  const accW = new Float32Array(W * H);
-  const accR = new Float32Array(W * H);
-  const accG = new Float32Array(W * H);
-  const accB = new Float32Array(W * H);
+  const heatF = new Float32Array(W * H);
+  const maskF = new Float32Array(W * H);
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
       const c = grid[j][i];
-      if (!c) continue;
-      const n =
-        clusterRadius > 0 ? countHotNeighbors(grid, rows, cols, j, i, clusterRadius, sens) : 0;
-      const step = clusterStep(n);
-      const base = heatOf(c.score, sens);
-      if (base <= 0) continue;
-      const heat = Math.min(1, base + clusterHeatStep(step));
-      const [r, g, b, a] = heatColor(heat);
-      const radius = R * (0.75 + 0.45 * step) * (0.75 + 0.45 * heat);
-      const cx = i * R + R / 2;
-      const cy = j * R + R / 2;
-      const x0 = Math.max(0, Math.floor(cx - radius));
-      const x1 = Math.min(W - 1, Math.ceil(cx + radius));
-      const y0 = Math.max(0, Math.floor(cy - radius));
-      const y1 = Math.min(H - 1, Math.ceil(cy + radius));
-      const alpha = a / 255;
-      for (let py = y0; py <= y1; py++) {
-        for (let px = x0; px <= x1; px++) {
-          const d = Math.hypot(px + 0.5 - cx, py + 0.5 - cy);
-          if (d > radius) continue;
-          const add = alpha * (1 - (d / radius) * (d / radius));
-          const idx = py * W + px;
-          if (add > accA[idx]) accA[idx] = add;
-          accW[idx] += add;
-          accR[idx] += add * (r / 255);
-          accG[idx] += add * (g / 255);
-          accB[idx] += add * (b / 255);
+      const allowed = !!c && c.score > 0;
+      let heat = 0;
+      if (allowed) {
+        const n =
+          clusterRadius > 0 ? countHotNeighbors(grid, rows, cols, j, i, clusterRadius, sens) : 0;
+        heat = heatWithCluster(c!.score, n, sens);
+      }
+      for (let dy = 0; dy < R; dy++) {
+        for (let dx = 0; dx < R; dx++) {
+          const idx = (j * R + dy) * W + (i * R + dx);
+          heatF[idx] = heat;
+          maskF[idx] = allowed ? 1 : 0;
         }
       }
     }
   }
+  const blurPass = (src: Float32Array, w: number, h: number, radius: number, out: Float32Array) => {
+    const tmp = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let s = 0;
+        let cnt = 0;
+        for (let dx = -radius; dx <= radius; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= w) continue;
+          s += src[y * w + xx];
+          cnt++;
+        }
+        tmp[y * w + x] = s / cnt;
+      }
+    }
+    for (let x = 0; x < w; x++) {
+      for (let y = 0; y < h; y++) {
+        let s = 0;
+        let cnt = 0;
+        for (let dy = -radius; dy <= radius; dy++) {
+          const yy = y + dy;
+          if (yy < 0 || yy >= h) continue;
+          s += tmp[yy * w + x];
+          cnt++;
+        }
+        out[y * w + x] = s / cnt;
+      }
+    }
+  };
+  const hm = new Float32Array(W * H);
+  for (let k = 0; k < W * H; k++) hm[k] = heatF[k] * maskF[k];
+  const hmB = new Float32Array(W * H);
+  const maskB = new Float32Array(W * H);
+  blurPass(hm, W, H, 2, hmB);
+  blurPass(maskF, W, H, 2, maskB);
+  blurPass(hmB, W, H, 2, hm);
+  blurPass(maskB, W, H, 2, maskB);
+  const heatB = new Float32Array(W * H);
+  for (let k = 0; k < W * H; k++) heatB[k] = maskB[k] > 0.02 ? hm[k] / maskB[k] : 0;
   const img = new Uint8Array(W * H * 4);
   for (let k = 0; k < W * H; k++) {
     const idx = k * 4;
-    const px = k % W;
-    const py = (k / W) | 0;
-    const cell = grid[Math.min(rows - 1, Math.floor(py / R))]?.[Math.min(cols - 1, Math.floor(px / R))];
-    if (!cell || heatOf(cell.score, sens) <= 0) continue;
-    img[idx + 3] = Math.round(Math.min(1, accA[k]) * 255);
-    const w = accW[k];
-    if (w > 0) {
-      img[idx] = Math.round(Math.min(1, accR[k] / w) * 255);
-      img[idx + 1] = Math.round(Math.min(1, accG[k] / w) * 255);
-      img[idx + 2] = Math.round(Math.min(1, accB[k] / w) * 255);
-    }
+    if (maskF[k] <= 0) continue;
+    const [r, g, b, a] = heatColor(Math.min(1, heatB[k]));
+    img[idx] = r;
+    img[idx + 1] = g;
+    img[idx + 2] = b;
+    img[idx + 3] = a;
   }
   const size = 256;
   const png = new PNG({ width: size, height: size });
@@ -1063,19 +1174,20 @@ app.get("/api/debug/cell", async (req, res) => {
     forestPolygonsForBox(lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2),
     exclusionsForBox(lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2),
   ]);
-  const inForest = forestPolys === null ? true : pointInPolygon(forestPolys, lon, lat);
-  const excluded = exclusions.polys.length > 0 && pointInPolygon(exclusions.polys, lon, lat);
-  const roadDist =
-    exclusions.lines.length > 0 ? distToLinesMeters(exclusions.lines, lon, lat) : Infinity;
-  const roadFactor = roadDist < 15 ? 0 : roadDist < 30 ? 0.5 : 1;
+  const inForest = forestPolys !== null && pointInPolys(forestPolys, lon, lat);
+  const ex = exclusions ?? { polys: [] as Poly[], lines: [] as [number, number][][] };
+  const excluded =
+    ex.polys.length > 0 && (pointInPolys(ex.polys, lon, lat) || distToPolysMeters(ex.polys, lon, lat) < 30);
+  const roadDist = ex.lines.length > 0 ? distToLinesMeters(ex.lines, lon, lat) : Infinity;
+  const roadFactor = roadDist < 20 ? 0 : roadDist < 35 ? 0.5 : 1;
   const forestEdge =
     inForest &&
     forestPolys !== null &&
     forestPolys.length > 0 &&
-    (!pointInPolygon(forestPolys, lon + 0.001, lat) ||
-      !pointInPolygon(forestPolys, lon - 0.001, lat) ||
-      !pointInPolygon(forestPolys, lon, lat + 0.001) ||
-      !pointInPolygon(forestPolys, lon, lat - 0.001));
+    (!pointInPolys(forestPolys, lon + 0.001, lat) ||
+      !pointInPolys(forestPolys, lon - 0.001, lat) ||
+      !pointInPolys(forestPolys, lon, lat + 0.001) ||
+      !pointInPolys(forestPolys, lon, lat - 0.001));
   const [e, n] = toSWEREF(lon, lat);
   const store = await getLayerStore();
   const clearcuts = store.vectors.get("avverkningar");
@@ -1211,6 +1323,33 @@ app.get("/api/tiles/hillshade/:z/:x/:y.png", async (req, res) => {
 const port = Number(process.env.PORT ?? 3000);
 app.listen(port, () => {
   console.log(`Chat app running at http://localhost:${port}`);
+  (async () => {
+    try {
+      const dir = path.join(here, "..", "data", "osm");
+      const files = await fsp.readdir(dir);
+      const forest = files.filter((f) => f.startsWith("forest_")).length;
+      const excl = files.filter((f) => f.startsWith("exclusion_")).length;
+      let forestRings = 0;
+      let exclPolys = 0;
+      for (const f of files.filter((f) => f.startsWith("forest_"))) {
+        const j = JSON.parse(await fsp.readFile(path.join(dir, f), "utf8"));
+        forestRings += Array.isArray(j) ? j.length : 0;
+      }
+      for (const f of files.filter((f) => f.startsWith("exclusion_"))) {
+        const j = JSON.parse(await fsp.readFile(path.join(dir, f), "utf8"));
+        exclPolys += Array.isArray(j?.polys) ? j.polys.length : 0;
+      }
+      if (forest === 0 || excl === 0 || forestRings === 0 || exclPolys === 0) {
+        console.error(
+          `VARNING: OSM-mask saknas/tom (skog-filer: ${forest} med ${forestRings} polygoner, exkl-filer: ${excl} med ${exclPolys} polygoner) — karta blir tom tills du kör: npm run osm-cache -- <minLon> <minLat> <maxLon> <maxLat>`,
+        );
+      } else {
+        console.log(`OSM-mask: ${forest} skog-tiles (${forestRings} polygoner), ${excl} exkl-tiles (${exclPolys} polygoner)`);
+      }
+    } catch {
+      console.error("VARNING: ingen data/osm-mapp — kör: npm run osm-cache -- <minLon> <minLat> <maxLon> <maxLat>");
+    }
+  })();
 });
 
 const PREWARM_POINTS: [number, number][] = [];

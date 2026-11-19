@@ -27,7 +27,104 @@ export type Manifest = {
   crs?: string;
   rasters?: RasterEntry[];
   vectors?: VectorEntry[];
+  mask?: { file: string; forestClasses: number[]; dilatePx?: number };
 };
+
+export class MaskLayer {
+  private allowed: Uint8Array | null = null;
+  constructor(
+    private image: GeoTIFFImage,
+    readonly originX: number,
+    readonly originY: number,
+    readonly pixelX: number,
+    readonly pixelY: number,
+    private forestClasses: Set<number>,
+    private dilatePx: number,
+  ) {}
+
+  static async load(
+    file: string,
+    forestClasses: number[],
+    dilatePx = 3,
+  ): Promise<MaskLayer> {
+    const tiff = await fromFile(file);
+    const image = await tiff.getImage();
+    const origin = image.getOrigin();
+    const resolution = image.getResolution();
+    if (!origin || !resolution) throw new Error(`${file}: saknar geotransform`);
+    return new MaskLayer(
+      image,
+      origin[0],
+      origin[1],
+      resolution[0],
+      resolution[1],
+      new Set(forestClasses),
+      dilatePx,
+    );
+  }
+
+  get width(): number {
+    return this.image.getWidth();
+  }
+  get height(): number {
+    return this.image.getHeight();
+  }
+
+  async build(): Promise<void> {
+    if (this.allowed) return;
+    const w = this.width;
+    const h = this.height;
+    if (w * h > 128_000_000) return;
+    const data = (await this.image.readRasters({ interleave: true })) as ArrayLike<number>;
+    const forest = new Uint8Array(w * h);
+    for (let k = 0; k < w * h; k++) {
+      const v = data[k];
+      if (typeof v === "number" && this.forestClasses.has(Math.round(v))) forest[k] = 1;
+    }
+    let blocked = new Uint8Array(w * h);
+    for (let k = 0; k < w * h; k++) blocked[k] = forest[k] ? 0 : 1;
+    const r = Math.max(1, this.dilatePx);
+    const tmp = new Uint8Array(w * h);
+    for (let pass = 0; pass < 2; pass++) {
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          let m = 0;
+          for (let dx = -r; dx <= r && !m; dx++) {
+            const xx = x + dx;
+            if (xx >= 0 && xx < w && blocked[y * w + xx]) m = 1;
+          }
+          tmp[y * w + x] = m;
+        }
+      }
+      for (let x = 0; x < w; x++) {
+        for (let y = 0; y < h; y++) {
+          let m = 0;
+          for (let dy = -r; dy <= r && !m; dy++) {
+            const yy = y + dy;
+            if (yy >= 0 && yy < h && tmp[yy * w + x]) m = 1;
+          }
+          blocked[y * w + x] = m;
+        }
+      }
+    }
+    this.allowed = new Uint8Array(w * h);
+    for (let k = 0; k < w * h; k++) this.allowed[k] = forest[k] && !blocked[k] ? 1 : 0;
+  }
+
+  has(easting: number, northing: number): boolean {
+    const px = Math.floor((easting - this.originX) / this.pixelX);
+    const py = Math.floor((northing - this.originY) / this.pixelY);
+    return px >= 0 && py >= 0 && px < this.width && py < this.height;
+  }
+
+  allows(easting: number, northing: number): boolean {
+    if (!this.allowed) return true;
+    const px = Math.floor((easting - this.originX) / this.pixelX);
+    const py = Math.floor((northing - this.originY) / this.pixelY);
+    if (px < 0 || py < 0 || px >= this.width || py >= this.height) return false;
+    return this.allowed[py * this.width + px] === 1;
+  }
+}
 
 export class RasterLayer {
   private constructor(
@@ -231,6 +328,7 @@ export class VectorLayer {
 export class LayerStore {
   rasters = new Map<string, RasterLayer>();
   vectors = new Map<string, VectorLayer>();
+  mask: MaskLayer | null = null;
   missing: string[] = [];
   private lastEmptyAttempt = 0;
 
@@ -260,6 +358,14 @@ export class LayerStore {
         store.vectors.set(v.id, await VectorLayer.load(path.join(dir, v.file), v.id, v.crs ?? "EPSG:3006"));
       } catch {
         store.missing.push(v.file);
+      }
+    }
+    if (manifest.mask) {
+      try {
+        store.mask = await MaskLayer.load(path.join(dir, manifest.mask.file), manifest.mask.forestClasses, manifest.mask.dilatePx ?? 3);
+        await store.mask.build();
+      } catch {
+        store.missing.push(manifest.mask.file);
       }
     }
     return store;

@@ -63,6 +63,7 @@ const tall = new Float32Array(n);
 const bjork = new Float32Array(n);
 const ek = new Float32Array(n);
 const bok = new Float32Array(n);
+const hassel = new Float32Array(n);
 const markfuktighet = new Uint8Array(n);
 const jordart = new Uint8Array(n);
 const hojd = new Float32Array(n);
@@ -77,7 +78,7 @@ for (let j = 0; j < height; j++) {
     const mix = rand();
     if (mix < 0.45) { gran[k] = volym[k] * 0.8; tall[k] = volym[k] * 0.1; bjork[k] = volym[k] * 0.1; }
     else if (mix < 0.75) { bjork[k] = volym[k] * 0.6; gran[k] = volym[k] * 0.25; ek[k] = volym[k] * 0.15; }
-    else { ek[k] = volym[k] * 0.5; bok[k] = volym[k] * 0.4; bjork[k] = volym[k] * 0.1; }
+    else { ek[k] = volym[k] * 0.5; bok[k] = volym[k] * 0.3; hassel[k] = volym[k] * 0.1; bjork[k] = volym[k] * 0.1; }
     const m = rand();
     markfuktighet[k] = m < 0.1 ? 1 : m < 0.5 ? 2 : m < 0.75 ? 3 : m < 0.95 ? 4 : 5;
     jordart[k] = r < 0.75 ? 1 : 2;
@@ -87,7 +88,7 @@ for (let j = 0; j < height; j++) {
     if (i >= 250 && i < 340 && j >= 80 && j < 200) {
       tradhojd[k] = 0;
       volym[k] = 0;
-      gran[k] = 0; tall[k] = 0; bjork[k] = 0; ek[k] = 0; bok[k] = 0;
+      gran[k] = 0; tall[k] = 0; bjork[k] = 0; ek[k] = 0; bok[k] = 0; hassel[k] = 0;
       grundyta[k] = 0;
     }
   }
@@ -101,6 +102,7 @@ await writeRaster("skog_tall_10m.tif", tall, 32, 3);
 await writeRaster("skog_bjork_10m.tif", bjork, 32, 3);
 await writeRaster("skog_ek_10m.tif", ek, 32, 3);
 await writeRaster("skog_bok_10m.tif", bok, 32, 3);
+await writeRaster("skog_hassel_10m.tif", hassel, 32, 3);
 await writeRaster("markfuktighet_10m.tif", markfuktighet, 8, 1);
 await writeRaster("jordart_10m.tif", jordart, 8, 1);
 await writeRaster("hojdmodell_2m.tif", hojd, 32, 3);
@@ -164,6 +166,7 @@ const manifest = {
     { id: "bjork", file: "skog_bjork_10m.tif", nodata: -9999, band: 1 },
     { id: "ek", file: "skog_ek_10m.tif", nodata: -9999, band: 1 },
     { id: "bok", file: "skog_bok_10m.tif", nodata: -9999, band: 1 },
+    { id: "hassel", file: "skog_hassel_10m.tif", nodata: -9999, band: 1 },
     { id: "markfuktighet", file: "markfuktighet_10m.tif", nodata: 255, band: 1 },
     {
       id: "jordart",
@@ -178,6 +181,11 @@ const manifest = {
     { id: "avverkningar", file: "avverkningar_senaste_5ar.geojson", crs: "EPSG:3006" },
     { id: "nyckelbiotoper", file: "nyckelbiotoper.geojson", crs: "EPSG:3006" },
   ],
+  mask: {
+    file: "nmd_10m.tif",
+    forestClasses: [111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128],
+    dilatePx: 3,
+  },
 };
 await fs.writeFile(path.join(root, "manifest.json"), JSON.stringify(manifest, null, 2));
 console.log("wrote manifest.json");
