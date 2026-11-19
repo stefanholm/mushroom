@@ -115,9 +115,9 @@ Dynamic (when it *fruits*), from SMHI metobs (`latest-months`):
 8. **Rain, last 14 days** at the nearest active station, ending at the selected date (date slider).
 9. **Seasonal window** per species, shifted by latitude.
 
-Karta-tab extras: **hillshade** (`/api/hillshade?...` renders a 512×512 PNG from
-`hojdmodell_2m.tif`, shown under the heatmap; toggle "Terräng"), a **sensitivitet slider**
-(shifts the hotspot threshold ±10 around score 60), and a safety disclaimer
+Karta-tab extras: a **basemap switcher** (Terräng/OSM/Satellit) with an optional
+**Stigar** (hiking trails) overlay, a **sensitivitet slider**
+(shifts the hotspot threshold ±10 around score 70), and a safety disclaimer
 (Giftinformationscentralen / lookalikes).
 
 Cells are scored on a **globally snapped ladder grid**: cell size is 0.0001° (~6 m)
@@ -132,10 +132,12 @@ OSM masks (forest + exclusions) are read **disk-first** from `data/osm/{forest,e
 (e.g. `npm run osm-cache -- 17.7 59.1 18.5 59.7` for the demo/Botkyrka area). If no disk
 cache exists, the server falls back to Overpass (5 hosts) then the main OSM API, cached
 24 h per 0.4° tile. Habitat tiles are rendered on a 128×128 grid, bilinearly upscaled to
-256×256 and box-blurred, so the heatmap is a smooth gradient, not squares. Each cell also gets
-a `heat` value: 0 below score 60, ramping linearly to 1 at score 100 — the heatmap is
-weighted above that threshold, so only
-real hotspots glow (pinpoint mode). `static=1` shows layers 1–7 only.
+256×256 and box-blurred, so the heatmap is a smooth gradient, not squares. Each cell gets
+a `heat` value: 0 below score 70, ramping to 1 at score 100 with a steep alpha curve
+(`heat^1.6`), so only real hotspots glow — red starts around heat 0.85. **Cluster boost:**
+at street-level zooms, each cell also counts hot neighbours within ~50 m; 1 hot neighbour
+adds +0.06 heat, 2 add +0.12, 3+ add +0.2, so connected clusters of hotspots climb one
+colour step each and only the biggest clusters reach red. `static=1` shows layers 1–7 only.
 
 ## How the hotspot score works
 

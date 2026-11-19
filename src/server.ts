@@ -109,9 +109,9 @@ function nearestStation(stations: SmhiStation[], lat: number, lon: number): Smhi
   return best;
 }
 
-const rainCache = new Map<string, { at: number; rain14: number }>();
+const rainCache = new Map<string, { at: number; rain14: number | null }>();
 
-async function rainLast14Days(lat: number, lon: number, asOf: Date): Promise<number> {
+async function rainLast14Days(lat: number, lon: number, asOf: Date): Promise<number | null> {
   const key = `${lat.toFixed(1)},${lon.toFixed(1)},${asOf.toISOString().slice(0, 10)}`;
   const cached = rainCache.get(key);
   if (cached && Date.now() - cached.at < 6 * 3600 * 1000) return cached.rain14;
@@ -131,9 +131,9 @@ async function rainLast14Days(lat: number, lon: number, asOf: Date): Promise<num
     .sort((a, b) => a.to - b.to);
   const end = asOf.getTime();
   const cutoff = end - 14 * 86400_000;
-  const rain14 = values
-    .filter((v) => v.to >= cutoff && v.to <= end)
-    .reduce((sum, v) => sum + Number(v.value), 0);
+  const inWindow = values.filter((v) => v.to >= cutoff && v.to <= end);
+  const rain14 =
+    inWindow.length === 0 ? null : inWindow.reduce((sum, v) => sum + Number(v.value), 0);
   rainCache.set(key, { at: Date.now(), rain14 });
   return rain14;
 }
@@ -581,9 +581,31 @@ async function computeCells(
       });
       const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * rainFactor * frost;
       const score = Math.min(100, Math.round(100 * habitat * dynamic));
-      const heat = heatOf(score, 0);
-      cells.push({ lon: clon, lat: clat, score, heat: Number(heat.toFixed(3)) });
+      cells.push({ lon: clon, lat: clat, score, heat: 0 });
     }
+  }
+  const radius = clusterRadiusCells(cell, centerLat);
+  if (radius > 0) {
+    const cols = Math.max(1, Math.ceil((maxLon - startLon) / cell));
+    const rows = Math.max(1, Math.ceil((maxLat - startLat) / cell));
+    const grid: (CellScore | null)[][] = Array.from({ length: rows }, () => Array(cols).fill(null));
+    for (const c of cells) {
+      const i = Math.round((c.lon - cell / 2 - startLon) / cell);
+      const j = Math.round((c.lat - cell / 2 - startLat) / cell);
+      if (j >= 0 && j < rows && i >= 0 && i < cols) grid[j][i] = c;
+    }
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        const c = grid[j][i];
+        if (c) {
+          c.heat = Number(
+            heatWithCluster(c.score, countHotNeighbors(grid, rows, cols, j, i, radius, 0), 0).toFixed(3),
+          );
+        }
+      }
+    }
+  } else {
+    for (const c of cells) c.heat = Number(heatOf(c.score, 0).toFixed(3));
   }
   return {
     cells,
@@ -725,10 +747,10 @@ app.get("/api/hillshade", async (req, res) => {
   res.send(PNG.sync.write(png));
 });
 
-const TILES_DIR = path.join(here, "..", "data", "tiles", "r4");
+const TILES_DIR = path.join(here, "..", "data", "tiles", "r5");
 
-const HEAT_BASE = 55;
-const HEAT_RANGE = 45;
+const HEAT_BASE = 70;
+const HEAT_RANGE = 30;
 
 function tileBBox(z: number, x: number, y: number) {
   const n = 2 ** z;
@@ -739,10 +761,11 @@ function tileBBox(z: number, x: number, y: number) {
 }
 
 const HEAT_RAMP: [number, [number, number, number]][] = [
-  [0.2, [217, 95, 2]],
-  [0.45, [255, 140, 0]],
-  [0.7, [227, 26, 28]],
-  [0.9, [255, 42, 0]],
+  [0.35, [217, 95, 2]],
+  [0.55, [255, 140, 0]],
+  [0.72, [242, 60, 20]],
+  [0.85, [227, 26, 28]],
+  [0.95, [255, 42, 0]],
   [1, [255, 255, 178]],
 ];
 
@@ -750,15 +773,52 @@ function heatOf(score: number, sens: number): number {
   return Math.min(1, Math.max(0, (score - (HEAT_BASE + sens)) / HEAT_RANGE));
 }
 
+function clusterRadiusCells(cellDeg: number, centerLatDeg: number): number {
+  const mPerCell = cellDeg * 111000 * Math.max(0.4, Math.cos((centerLatDeg * Math.PI) / 180));
+  if (mPerCell > 150) return 0;
+  return Math.max(1, Math.min(5, Math.round(50 / mPerCell)));
+}
+
+function heatWithCluster(score: number, hotNeighbors: number, sens: number): number {
+  const base = heatOf(score, sens);
+  if (base <= 0) return 0;
+  const step =
+    hotNeighbors >= 3 ? 0.2 : hotNeighbors === 2 ? 0.12 : hotNeighbors === 1 ? 0.06 : 0;
+  return Math.min(1, base + step);
+}
+
+function countHotNeighbors(
+  grid: (CellScore | null)[][],
+  rows: number,
+  cols: number,
+  j: number,
+  i: number,
+  radius: number,
+  sens: number,
+): number {
+  let n = 0;
+  for (let dy = -radius; dy <= radius; dy++) {
+    if (j + dy < 0 || j + dy >= rows) continue;
+    const row = grid[j + dy];
+    for (let dx = -radius; dx <= radius; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      if (i + dx < 0 || i + dx >= cols) continue;
+      const c = row[i + dx];
+      if (c && heatOf(c.score, sens) >= 0.5) n++;
+    }
+  }
+  return n;
+}
+
 function heatColor(heat: number): [number, number, number, number] {
   if (heat <= 0) return [0, 0, 0, 0];
-  const pos = Math.pow(heat, 0.8);
+  const pos = heat;
   let i = 0;
   while (i < HEAT_RAMP.length - 2 && HEAT_RAMP[i + 1][0] < pos) i++;
   const [h0, c0] = HEAT_RAMP[i];
   const [h1, c1] = HEAT_RAMP[i + 1];
   const t = h1 === h0 ? 1 : Math.min(1, Math.max(0, (pos - h0) / (h1 - h0)));
-  const alpha = heat < 0.08 ? 0 : Math.round(Math.pow(heat, 0.45) * 0.9 * 255);
+  const alpha = heat < 0.08 ? 0 : Math.round(Math.pow(heat, 1.6) * 0.95 * 255);
   return [
     Math.round(c0[0] + (c1[0] - c0[0]) * t),
     Math.round(c0[1] + (c1[1] - c0[1]) * t),
@@ -842,11 +902,19 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
     const j = Math.floor((c.lat - eStartLat) / cell);
     if (j >= 0 && j < rows && i >= 0 && i < cols) grid[j][i] = c;
   }
+  const clusterRadius = clusterRadiusCells(cell, (bbox.minLat + bbox.maxLat) / 2);
   const cellRGBA = new Uint8Array(cols * rows * 4);
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
       const c = grid[j][i];
-      const [r, g, b, a] = heatColor(c ? heatOf(c.score, sens) : 0);
+      const heat = c
+        ? heatWithCluster(
+            c.score,
+            clusterRadius > 0 ? countHotNeighbors(grid, rows, cols, j, i, clusterRadius, sens) : 0,
+            sens,
+          )
+        : 0;
+      const [r, g, b, a] = heatColor(heat);
       const idx = (j * cols + i) * 4;
       cellRGBA[idx] = r;
       cellRGBA[idx + 1] = g;

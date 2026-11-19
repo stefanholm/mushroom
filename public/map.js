@@ -196,7 +196,7 @@ function initMap(maplibregl) {
     scheduleRebuild();
   });
   sensInput.addEventListener("input", () => {
-    sensLabel.textContent = String(55 + Number(sensInput.value));
+    sensLabel.textContent = String(70 + Number(sensInput.value));
     scheduleRebuild();
   });
   opacityInput.addEventListener("input", () => {
