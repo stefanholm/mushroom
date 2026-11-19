@@ -185,22 +185,19 @@ type OverpassElement = {
 };
 
 async function overpassQuery(q: string): Promise<{ elements?: OverpassElement[] }> {
-  let lastErr: unknown = new Error("no host");
-  for (const host of OVERPASS_HOSTS) {
-    try {
+  const attempts = OVERPASS_HOSTS.map((host) =>
+    (async () => {
       const r = await fetch(host, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: "data=" + encodeURIComponent(q),
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(8_000),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return (await r.json()) as { elements?: OverpassElement[] };
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr;
+    })(),
+  );
+  return Promise.any(attempts);
 }
 
 function ringsFromOverpass(body: { elements?: OverpassElement[] }): [number, number][][] {
@@ -252,7 +249,7 @@ async function osmMainApiFeatures(
 ): Promise<OsmFeature[]> {
   const r = await fetch(
     `https://api.openstreetmap.org/api/0.6/map?bbox=${minLon},${minLat},${maxLon},${maxLat}`,
-    { signal: AbortSignal.timeout(15_000) },
+    { signal: AbortSignal.timeout(10_000) },
   );
   if (!r.ok) throw new Error(`OSM API: HTTP ${r.status}`);
   const xml = await r.text();
@@ -560,7 +557,7 @@ async function computeCells(
           !pointInPolygon(forestPolys, clon, clat - 0.001));
       const [e, n] = toSWEREF(clon, clat);
       const inClearcut = clearcuts ? clearcuts.contains(e, n) : false;
-      const habitat = await staticHabitatScore(store, key, clon, clat, {
+      const habitat = staticHabitatScore(store, key, clon, clat, {
         forestOk: inForest,
         inClearcut,
         excluded,

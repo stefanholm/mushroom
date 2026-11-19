@@ -104,17 +104,15 @@ export type HabitatContext = {
   forestEdge: boolean;
 };
 
-async function aspectDegrees(dem: RasterLayer, easting: number, northing: number): Promise<number | null> {
-  const grid = await dem.sampleGrid(easting, northing, 50);
-  if (!grid) return null;
+function aspectFromGrid(grid: number[][], spacingM: number): number {
   const w = grid.length;
   const c = (w - 1) / 2;
   const dzdx =
     (grid[0][w - 1] + 2 * grid[c][w - 1] + grid[w - 1][w - 1] - grid[0][0] - 2 * grid[c][0] - grid[w - 1][0]) /
-    (8 * 50);
+    (8 * spacingM);
   const dzdy =
     (grid[w - 1][0] + 2 * grid[w - 1][c] + grid[w - 1][w - 1] - grid[0][0] - 2 * grid[0][c] - grid[0][w - 1]) /
-    (8 * 50);
+    (8 * spacingM);
   return (((Math.atan2(dzdy, -dzdx) * 180) / Math.PI) + 360) % 360;
 }
 
@@ -122,13 +120,13 @@ export function hostFallback(store: LayerStore): boolean {
   return !store.rasters.has("gran") && !store.rasters.has("bjork");
 }
 
-export async function staticHabitatScore(
+export function staticHabitatScore(
   store: LayerStore,
   speciesKey: string,
   lon: number,
   lat: number,
   ctx: HabitatContext,
-): Promise<number> {
+): number {
   const species = SPECIES[speciesKey];
   if (ctx.inClearcut || ctx.excluded) return 0;
   if (!ctx.forestOk) return 0;
@@ -136,7 +134,7 @@ export async function staticHabitatScore(
 
   const dem = store.rasters.get("hojd");
   if (dem && dem.has(easting, northing)) {
-    const elev = await dem.sample(easting, northing);
+    const elev = dem.sampleSync(easting, northing);
     if (elev === null || elev < 0.5) return 0;
   }
 
@@ -145,7 +143,7 @@ export async function staticHabitatScore(
   for (const [tree, w] of Object.entries(species.hosts)) {
     const layer = store.rasters.get(tree);
     if (!layer) continue;
-    const v = await layer.sample(easting, northing);
+    const v = layer.sampleSync(easting, northing);
     if (v !== null) {
       anyHost = true;
       hostVol += v * w;
@@ -157,7 +155,7 @@ export async function staticHabitatScore(
     hostGate = 0.2 + 0.8 * clamp01(hostVol / (2 * species.minHostVolume));
   } else {
     const vol = store.rasters.get("volym");
-    const v = vol ? await vol.sample(easting, northing) : null;
+    const v = vol ? vol.sampleSync(easting, northing) : null;
     if (v === null) return species.hosts ? 0 : 1;
     if (v < species.minHostVolume) return 0;
     hostGate = 0.2 + 0.8 * clamp01(v / (2 * species.minHostVolume));
@@ -166,7 +164,7 @@ export async function staticHabitatScore(
   const height = store.rasters.get("tradhojd");
   let fMaturity = 1;
   if (height) {
-    const v = await height.sample(easting, northing);
+    const v = height.sampleSync(easting, northing);
     if (v !== null) {
       if (v < species.minTreeHeight) return 0;
       fMaturity = clamp01((v - species.minTreeHeight) / 10 + 0.5);
@@ -176,7 +174,7 @@ export async function staticHabitatScore(
   const moisture = store.rasters.get("markfuktighet");
   let fMoisture = 1;
   if (moisture) {
-    const v = await moisture.sample(easting, northing);
+    const v = moisture.sampleSync(easting, northing);
     if (v !== null) {
       const cls = Math.round(v);
       if (species.vetoMoisture.includes(cls)) return 0;
@@ -189,7 +187,7 @@ export async function staticHabitatScore(
   const canopy = store.rasters.get("grundyta");
   let fCanopy = 1;
   if (canopy) {
-    const v = await canopy.sample(easting, northing);
+    const v = canopy.sampleSync(easting, northing);
     if (v !== null) {
       const [lo, hi] = species.canopyIdeal;
       const dist = v < lo ? lo - v : v > hi ? v - hi : 0;
@@ -200,7 +198,7 @@ export async function staticHabitatScore(
   const soil = store.rasters.get("jordart");
   let fSoil = 0.7;
   if (soil) {
-    const v = await soil.sample(easting, northing);
+    const v = soil.sampleSync(easting, northing);
     if (v !== null) {
       const group = soil.recode?.[String(Math.round(v))] ?? "neutral";
       fSoil = species.soil[group] ?? 0.7;
@@ -209,26 +207,24 @@ export async function staticHabitatScore(
 
   let fTerrain = 0.5;
   if (dem) {
-    const aspect = await aspectDegrees(dem, easting, northing);
-    if (aspect !== null) {
+    const grid = dem.sampleGridSync(easting, northing, 250);
+    if (grid) {
+      const aspect = aspectFromGrid(grid, 250);
       const sunExposure = Math.cos(((aspect - 180) * Math.PI) / 180);
       let terrain = 0.5 + 0.3 * species.sun * sunExposure;
-      const grid = await dem.sampleGrid(easting, northing, 250);
-      if (grid) {
-        const w = grid.length;
-        const c = (w - 1) / 2;
-        let ringSum = 0;
-        let ringN = 0;
-        for (let j = 0; j < w; j++) {
-          for (let i = 0; i < w; i++) {
-            if (i === c && j === c) continue;
-            ringSum += grid[j][i];
-            ringN++;
-          }
+      const w = grid.length;
+      const c = (w - 1) / 2;
+      let ringSum = 0;
+      let ringN = 0;
+      for (let j = 0; j < w; j++) {
+        for (let i = 0; i < w; i++) {
+          if (i === c && j === c) continue;
+          ringSum += grid[j][i];
+          ringN++;
         }
-        const depth = ringSum / ringN - grid[c][c];
-        terrain += 0.2 * species.depression * clamp01(depth / 5);
       }
+      const depth = ringSum / ringN - grid[c][c];
+      terrain += 0.2 * species.depression * clamp01(depth / 5);
       fTerrain = clamp01(terrain);
     }
   }

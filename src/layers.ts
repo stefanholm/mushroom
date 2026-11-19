@@ -73,12 +73,50 @@ export class RasterLayer {
     return this.image.getSamplesPerPixel();
   }
 
-  private async ensureData(): Promise<void> {
+  async ensureData(): Promise<void> {
     if (this.data) return;
-    if (this.width * this.height * this.bands() <= 64_000_000) {
+    if (this.width * this.height * this.bands() <= 128_000_000) {
       const rasters = await this.image.readRasters({ interleave: true });
       this.data = rasters as ArrayLike<number>;
     }
+  }
+
+  get cached(): boolean {
+    return this.data !== null;
+  }
+
+  sampleSync(easting: number, northing: number): number | null {
+    if (!this.data) return null;
+    const px = Math.floor((easting - this.originX) / this.pixelX);
+    const py = Math.floor((northing - this.originY) / this.pixelY);
+    if (px < 0 || py < 0 || px >= this.width || py >= this.height) return null;
+    const v = this.data[(py * this.width + px) * this.bands() + (this.band - 1)];
+    if (typeof v !== "number" || (this.nodata !== undefined && v === this.nodata)) return null;
+    return v;
+  }
+
+  sampleGridSync(easting: number, northing: number, spacingM = 250): number[][] | null {
+    if (!this.data) return null;
+    const px = Math.floor((easting - this.originX) / this.pixelX);
+    const py = Math.floor((northing - this.originY) / this.pixelY);
+    const r = Math.max(1, Math.round(spacingM / Math.abs(this.pixelX)));
+    const x0 = px - r;
+    const y0 = py - r;
+    if (x0 < 0 || y0 < 0 || x0 + 2 * r >= this.width || y0 + 2 * r >= this.height) return null;
+    const w = 2 * r + 1;
+    const step = Math.max(1, Math.floor(w / 9));
+    const bands = this.bands();
+    const grid: number[][] = [];
+    for (let j = 0; j < w; j += step) {
+      const row: number[] = [];
+      for (let i = 0; i < w; i += step) {
+        const v = this.data[((y0 + j) * this.width + (x0 + i)) * bands + (this.band - 1)];
+        if (typeof v !== "number" || (this.nodata !== undefined && v === this.nodata)) return null;
+        row.push(v);
+      }
+      grid.push(row);
+    }
+    return grid;
   }
 
   async readWindow(x0: number, y0: number, x1: number, y1: number): Promise<ArrayLike<number>> {
@@ -210,10 +248,9 @@ export class LayerStore {
     }
     for (const r of manifest.rasters ?? []) {
       try {
-        store.rasters.set(
-          r.id,
-          await RasterLayer.load(path.join(dir, r.file), r.id, r.nodata, r.band ?? 1, r.recode),
-        );
+        const layer = await RasterLayer.load(path.join(dir, r.file), r.id, r.nodata, r.band ?? 1, r.recode);
+        await layer.ensureData();
+        store.rasters.set(r.id, layer);
       } catch {
         store.missing.push(r.file);
       }
