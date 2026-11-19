@@ -21,7 +21,7 @@ let refreshTimer = null;
 
 function heatmapPaint() {
   return {
-    "heatmap-weight": ["interpolate", ["linear"], ["get", "score"], 0, 0, 100, 1],
+    "heatmap-weight": ["interpolate", ["linear"], ["get", "heat"], 0, 0, 1, 1],
     "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 5, 0.6, 9, 1.2, 12, 2.5, 16, 5],
     "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 5, 10, 9, 22, 12, 40, 16, 80],
     "heatmap-color": [

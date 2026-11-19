@@ -89,7 +89,9 @@ Dynamic (when it *fruits*), from SMHI metobs (`latest-months`):
 Cells are scored on a fixed fine grid (span/60, floored at ~3 m so the 2 m höjdmodell is
 the limiting layer, max 60×60 per request) and rendered as a **blurred MapLibre
 heatmap layer** whose radius adapts to zoom — so the heatmap no longer changes shape
-when you zoom; a hot zone stays hot. `static=1` shows layers 1–7 only.
+when you zoom; a hot zone stays hot. Each cell also gets a `heat` value: 0 below score
+60, ramping linearly to 1 at score 100 — the heatmap is weighted by `heat`, so only
+real hotspots glow (pinpoint mode). `static=1` shows layers 1–7 only.
 
 ## How the hotspot score works
 

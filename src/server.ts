@@ -275,9 +275,10 @@ app.get("/api/hotspots", async (req, res) => {
       const habitat = await staticHabitatScore(store, key, clon, clat, inForest, inClearcut);
       const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * rainFactor;
       const score = Math.round(100 * habitat * dynamic);
+      const heat = Math.min(1, Math.max(0, (score - 60) / 40));
       features.push({
         type: "Feature",
-        properties: { score },
+        properties: { score, heat: Number(heat.toFixed(3)) },
         geometry: { type: "Point", coordinates: [clon, clat] },
       });
     }
