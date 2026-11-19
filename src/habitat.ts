@@ -154,7 +154,7 @@ export function staticHabitatScore(
   let hostGate = 1;
   if (anyHost) {
     if (hostVol < species.minHostVolume) return 0;
-    hostGate = 0.2 + 0.8 * clamp01(hostVol / (2 * species.minHostVolume));
+    hostGate = 0.1 + 0.9 * clamp01(hostVol / (3 * species.minHostVolume));
   } else {
     const vol = store.rasters.get("volym");
     if (vol) {
@@ -162,7 +162,7 @@ export function staticHabitatScore(
       if (v !== null) {
         covered = true;
         if (v < species.minHostVolume) return 0;
-        hostGate = 0.2 + 0.8 * clamp01(v / (2 * species.minHostVolume));
+        hostGate = 0.1 + 0.9 * clamp01(v / (3 * species.minHostVolume));
       }
     }
   }
@@ -174,7 +174,7 @@ export function staticHabitatScore(
     if (v !== null) {
       covered = true;
       if (v < species.minTreeHeight) return 0;
-      fMaturity = clamp01((v - species.minTreeHeight) / 10 + 0.5);
+      fMaturity = clamp01((v - species.minTreeHeight) / 16 + 0.35);
     }
   }
 
@@ -188,7 +188,7 @@ export function staticHabitatScore(
       if (species.vetoMoisture.includes(cls)) return 0;
       const [lo, hi] = species.moistureIdeal;
       const dist = cls < lo ? lo - cls : cls > hi ? cls - hi : 0;
-      fMoisture = clamp01(1 - dist / 2);
+      fMoisture = clamp01(1 - dist / 1.5);
     }
   }
 
@@ -200,7 +200,7 @@ export function staticHabitatScore(
       covered = true;
       const [lo, hi] = species.canopyIdeal;
       const dist = v < lo ? lo - v : v > hi ? v - hi : 0;
-      fCanopy = clamp01(1 - dist / 10);
+      fCanopy = clamp01(1 - dist / 6);
     }
   }
 

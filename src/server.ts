@@ -747,7 +747,8 @@ app.get("/api/hillshade", async (req, res) => {
   res.send(PNG.sync.write(png));
 });
 
-const TILES_DIR = path.join(here, "..", "data", "tiles", "r10");
+const TILE_VERSION = "r11";
+const TILES_DIR = path.join(here, "..", "data", "tiles", TILE_VERSION);
 
 const HEAT_BASE = 70;
 const HEAT_RANGE = 30;

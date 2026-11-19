@@ -152,6 +152,9 @@ layers 1–7 only.
 
 ## How the hotspot score works
 
+Full equations, species rule matrix, heat/cluster rendering and data lineage:
+[**docs/SCORING.md**](docs/SCORING.md).
+
 Gated biological equation per cell:
 `score = G_hard × G_host × S_env × M_bonus × D_weather` (0–100):
 
