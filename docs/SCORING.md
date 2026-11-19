@@ -24,7 +24,7 @@ D       = seasonalFactor × rainFactor × frost                        (0–1, d
   (`forestKnown` in `/api/meta` tells you). If the optional **NMD mask** raster
   (`nmd_10m.tif`, Naturvårdsverket NMD 10 m) is present it **replaces** the OSM forest gate:
   `forestClasses` = 111–117 + 121–127 pass (NMD 118/128 = clear-cuts, excluded);
-  classes 51/52/53 (buildings/yards/roads+rail) are dilated 3 px ≈ 30 m and subtracted;
+  classes 51/52/53/54 (building/other exploited/road+rail/peat cutting) are dilated 3 px ≈ 30 m and subtracted;
   water (61/62) and all other classes are hard 0 without eroding forest edges.
 - inside an OSM exclusion polygon **or within 30 m of one** (yard/building buffer):
   water, waterway, buildings, urban/residential/industrial/…, parks, pitches, shops…

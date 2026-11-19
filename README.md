@@ -168,21 +168,31 @@ same size as the 5th arg if you bake smaller tiles. Bake a bbox slightly larger 
 interest — masking is fail-closed, so anything outside the baked tiles scores 0.)
 Exclusion polygons get a 30 m buffer; paved roads hard-zero within 20 m; forest paths stay open.
 
-**NMD 10 m mask (recommended, replaces OSM entirely):** official download page:
-[naturvardsverket.se → Ladda ner Nationella marktäckedata](https://www.naturvardsverket.se/verktyg-och-tjanster/kartor-och-karttjanster/nationella-marktackedata/ladda-ner-nationella-marktackedata/),
-direct files at [geodata.naturvardsverket.se/nedladdning/marktacke/NMD2023/](https://geodata.naturvardsverket.se/nedladdning/marktacke/NMD2023/) (basskikt GeoTIFF, EPSG:3006). Clip your region once instead of loading all of Sweden:
+**NMD 10 m mask (recommended, replaces OSM entirely):** direct download from Naturvårdsverket's
+file server — use the **v2.x** basskikt (the v0.x series has different class codes and will NOT
+match `manifest.json`). The national zip is ~2.5 GB and contains one national uint16 GeoTIFF
+(10 m, SWEREF99 TM / EPSG:3006), e.g. `NMD2023bas_v2_1.tif`:
 
 ```
 brew install gdal
-curl -L -o /tmp/NMD_basskikt.tif "<basskikt .tif från geodata.naturvardsverket.se/nedladdning/marktacke/NMD2023/>"
-gdalwarp -te 620000 6540000 725000 6685000 -co COMPRESS=DEFLATE -co TILED=YES /tmp/NMD_basskikt.tif data/layers/nmd_10m.tif
+curl -L -o /tmp/NMD2023_v2_1.zip "https://geodata.naturvardsverket.se/nedladdning/marktacke/NMD2023/Basskikt_v2_x/NMD2023_basskikt_v2_1.zip"
+unzip -o /tmp/NMD2023_v2_1.zip -d /tmp/nmd && ls /tmp/nmd/*.tif
+gdalwarp -te 644000 6537000 707000 6640000 -tr 10 10 -co COMPRESS=DEFLATE -co TILED=YES /tmp/nmd/NMD2023bas_v2_1.tif data/layers/nmd_10m.tif
 ```
 
-`manifest.json` wires it as the hard gate: `forestClasses` = 111–117 + 121–127 (NMD classes
-**118/128 are clear-cuts — excluded**), `dilateClasses` = [51, 52, 53] (buildings / yards /
-roads+rail) dilated 3 px ≈ 30 m; water (61/62) and all other non-forest classes are hard 0
-without eroding forest edges. When the mask is present, OSM masks are skipped entirely
-(`maskUsed: true` in `/api/meta`).
+(`-te` is SWEREF99 TM meters: this clip covers ca 17.6–18.6°E, 59.0–59.8°N with margin. Keep the
+clip under ~12 800 km² at 10 m — bigger rasters exceed the 128 M-sample build limit and the mask
+turns fail-closed with a startup VARNING. Adjust the `-te` numbers to your own area of interest.)
+Verify: startup prints `NMD-mask hittad` and `curl -s "http://localhost:3000/api/meta"` shows
+`"maskUsed": true, "forestKnown": true`.
+
+`manifest.json` wires it as the hard gate, with NMD2023 v2.x class codes (verified against the
+product's QGIS style `NMD2023bas_v2_1.qml`): `forestClasses` = 111–117 + 121–127 (tall/low forest
+on firm ground and on wetland; **118/128 are "temporärt ej skog" = clear-cuts — excluded**),
+`dilateClasses` = [51, 52, 53, 54] (51 building, 52 other exploited, 53 road/rail, 54 peat
+cutting) dilated 3 px ≈ 30 m; water (61/62), 0 (outside NMD coverage) and all other non-forest
+classes are hard 0 without eroding forest edges. When the mask is present, OSM masks are skipped
+entirely (`maskUsed: true` in `/api/meta`).
 
 Habitat tiles are a continuous blurred scalar field (150 m gutter, premultiplied separable blur)
 with a sharp post-blur `G_hard` clip and a teal→emerald→amber→orange→crimson ramp.

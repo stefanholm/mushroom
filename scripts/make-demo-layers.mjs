@@ -185,7 +185,7 @@ const manifest = {
     file: "nmd_10m.tif",
     forestClasses: [111, 112, 113, 114, 115, 116, 117, 121, 122, 123, 124, 125, 126, 127],
     dilatePx: 3,
-    dilateClasses: [51, 52, 53],
+    dilateClasses: [51, 52, 53, 54],
   },
 };
 await fs.writeFile(path.join(root, "manifest.json"), JSON.stringify(manifest, null, 2));

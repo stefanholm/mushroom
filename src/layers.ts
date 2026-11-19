@@ -47,7 +47,7 @@ export class MaskLayer {
     file: string,
     forestClasses: number[],
     dilatePx = 3,
-    dilateClasses: number[] = [51, 52, 53],
+    dilateClasses: number[] = [51, 52, 53, 54],
   ): Promise<MaskLayer> {
     const tiff = await fromFile(file);
     const image = await tiff.getImage();
@@ -77,7 +77,12 @@ export class MaskLayer {
     if (this.allowed) return;
     const w = this.width;
     const h = this.height;
-    if (w * h > 128_000_000) return;
+    if (w * h > 128_000_000) {
+      console.warn(
+        `VARNING: NMD-mask ${w}x${h} px (${w * h} > 128M) — masken byggs inte och blir fail-closed (tom karta). Klipp ett mindre område, max ~12 800 km² vid 10 m.`,
+      );
+      return;
+    }
     const data = (await this.image.readRasters({ interleave: true })) as ArrayLike<number>;
     const forest = new Uint8Array(w * h);
     for (let k = 0; k < w * h; k++) {
@@ -122,7 +127,7 @@ export class MaskLayer {
   }
 
   allows(easting: number, northing: number): boolean {
-    if (!this.allowed) return true;
+    if (!this.allowed) return false;
     const px = Math.floor((easting - this.originX) / this.pixelX);
     const py = Math.floor((northing - this.originY) / this.pixelY);
     if (px < 0 || py < 0 || px >= this.width || py >= this.height) return false;
@@ -370,7 +375,7 @@ export class LayerStore {
           path.join(dir, manifest.mask.file),
           manifest.mask.forestClasses,
           manifest.mask.dilatePx ?? 3,
-          manifest.mask.dilateClasses ?? [51, 52, 53],
+          manifest.mask.dilateClasses ?? [51, 52, 53, 54],
         );
         await store.mask.build();
       } catch {
