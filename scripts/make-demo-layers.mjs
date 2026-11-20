@@ -12,6 +12,21 @@ proj4.defs(
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data", "layers");
 await fs.mkdir(root, { recursive: true });
 
+// Never clobber real downloaded data: skip existing files unless --force.
+const FORCE = process.argv.includes("--force");
+async function writeIfAbsent(file, buf, label) {
+  const p = path.join(root, file);
+  try {
+    await fs.access(p);
+    if (!FORCE) {
+      console.log(`hoppar över ${file} (finns redan; använd --force för att skriva över)`);
+      return;
+    }
+  } catch {}
+  await fs.writeFile(p, buf);
+  console.log(`wrote ${file}${label ? " " + label : ""}`);
+}
+
 const to3006 = ([lon, lat]) => proj4("EPSG:4326", "EPSG:3006", [lon, lat]);
 
 const bbox = { minLon: 17.7, minLat: 59.1, maxLon: 18.5, maxLat: 59.7 };
@@ -49,8 +64,7 @@ async function writeRaster(file, values, bits, sampleFormat) {
     GTModelTypeGeoKey: 1,
     GTRasterTypeGeoKey: 1,
   };
-  await fs.writeFile(path.join(root, file), Buffer.from(writeArrayBuffer(values, metadata)));
-  console.log("wrote", file, `${width}x${height}`);
+  await writeIfAbsent(file, Buffer.from(writeArrayBuffer(values, metadata)), `${width}x${height}`);
 }
 
 const n = width * height;
@@ -151,8 +165,7 @@ const avverkningar = {
     },
   ],
 };
-await fs.writeFile(path.join(root, "avverkningar_senaste_5ar.geojson"), JSON.stringify(avverkningar, null, 2));
-console.log("wrote avverkningar_senaste_5ar.geojson");
+await writeIfAbsent("avverkningar_senaste_5ar.geojson", JSON.stringify(avverkningar, null, 2));
 
 const nyckelbiotoper = {
   type: "FeatureCollection",
@@ -166,8 +179,7 @@ const nyckelbiotoper = {
     },
   ],
 };
-await fs.writeFile(path.join(root, "nyckelbiotoper.geojson"), JSON.stringify(nyckelbiotoper, null, 2));
-console.log("wrote nyckelbiotoper.geojson");
+await writeIfAbsent("nyckelbiotoper.geojson", JSON.stringify(nyckelbiotoper, null, 2));
 
 const sumpskogar = {
   type: "FeatureCollection",
@@ -181,8 +193,7 @@ const sumpskogar = {
     },
   ],
 };
-await fs.writeFile(path.join(root, "sumpskogar.geojson"), JSON.stringify(sumpskogar, null, 2));
-console.log("wrote sumpskogar.geojson");
+await writeIfAbsent("sumpskogar.geojson", JSON.stringify(sumpskogar, null, 2));
 
 const manifest = {
   crs: "EPSG:3006",
@@ -201,7 +212,7 @@ const manifest = {
     { id: "asp", file: "skog_asp_10m.tif", nodata: -9999, band: 1 },
     { id: "sis", file: "skog_sis_10m.tif", nodata: -9999, band: 1 },
     { id: "gdd5", file: "smhi_gdd5.tif", nodata: -9999, band: 1 },
-    { id: "soildepth", file: "sgu_soil_depth_10m.tif", nodata: -9999, band: 1 },
+    { id: "soildepth", file: "sgu_soil_depth_10m.tif", nodata: 255, band: 1 },
     { id: "markfuktighet", file: "markfuktighet_10m.tif", nodata: 255, band: 1 },
     {
       id: "jordart",
@@ -227,6 +238,5 @@ const manifest = {
     waterBufferM: 50,
   },
 };
-await fs.writeFile(path.join(root, "manifest.json"), JSON.stringify(manifest, null, 2));
-console.log("wrote manifest.json");
+await writeIfAbsent("manifest.json", JSON.stringify(manifest, null, 2));
 console.log("Demo-omrade: lon", bbox.minLon, "-", bbox.maxLon, "lat", bbox.minLat, "-", bbox.maxLat);

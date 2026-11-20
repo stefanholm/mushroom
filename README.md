@@ -133,7 +133,7 @@ Sources (verify current URLs before downloading — they change):
 - Skogsstyrelsen Utförda avverkningar & nyckelbiotoper: https://kartor.skogsstyrelsen.se (WFS → GeoJSON)
 - Validering: Artportalen (SLU Artdatabanken), https://artportalen.se
 
-To try the pipeline without downloading anything, run `npm run demo-data` — it generates
+To try the pipeline without downloading anything, run `npm run demo-data` (skips files that already exist — use `npm run demo-data -- --force` to regenerate; it never clobbers real downloaded data) — it generates
 synthetic layers for a test area around Stockholm (17.7–18.5°E, 59.1–59.7°N) into
 `data/layers/`, including two clear-cut polygons. Replace the files with real downloads
 for the same area; restart the server to reload layers.

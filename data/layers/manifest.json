@@ -77,7 +77,7 @@
     {
       "id": "soildepth",
       "file": "sgu_soil_depth_10m.tif",
-      "nodata": -9999,
+      "nodata": 255,
       "band": 1
     },
     {
