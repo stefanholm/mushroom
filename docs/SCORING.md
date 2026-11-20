@@ -256,3 +256,8 @@ All rasters/vectors must be EPSG:3006 (SWEREF 99 TM); `manifest.json` declares n
 - Score distribution on the demo area (static, kantarell): ≥70 → ~18–34%, ≥95 (red) → ~1.6%.
 - Ecology: top-score cells per species match their hosts/soil/moisture (trattkantarell →
   spruce + fukt 3–4; svart trumpetsvamp → ek/hassel on calcareous, fukt 4).
+- AUC validation: `npm run validate` (`scripts/validate-auc.mjs`) scores every Artportalen
+  observation in `data/validation/observations.geojson` plus random background points via
+  `/api/debug/cell?static=1`, computes AUC per species and per GDD band, and writes
+  `data/validation/auc-report.json` (AUC < 0.7 flagged KALIBRERA). Requires the server
+  layers in `data/layers/`; the script starts its own server instance on `VALIDATE_PORT`.

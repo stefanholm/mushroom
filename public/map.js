@@ -7,6 +7,7 @@ const dateLabel = document.getElementById("dateLabel");
 const sensInput = document.getElementById("sens");
 const sensLabel = document.getElementById("sensLabel");
 const trailsInput = document.getElementById("trails");
+const hillshadeInput = document.getElementById("hillshade");
 const basemapButtons = Array.from(document.querySelectorAll(".bm"));
 const metaEl = document.getElementById("meta");
 const speciesInfo = document.getElementById("speciesInfo");
@@ -155,6 +156,34 @@ function updateTrails() {
   }
 }
 
+function updateHillshade() {
+  if (!map) return;
+  if (hillshadeInput.checked) {
+    if (!map.getSource("hillshade")) {
+      map.addSource("hillshade", {
+        type: "raster",
+        tiles: [`/api/tiles/hillshade/{z}/{x}/{y}.png?v=${TILE_V}`],
+        tileSize: 256,
+        maxzoom: 17,
+      });
+    }
+    if (!map.getLayer("hillshade")) {
+      map.addLayer({
+        id: "hillshade",
+        type: "raster",
+        source: "hillshade",
+        minzoom: 12,
+        paint: { "raster-opacity": 0.35, "raster-resampling": "linear" },
+      });
+    }
+    map.setLayoutProperty("hillshade", "visibility", "visible");
+    const firstHabitat = (map.getStyle().layers ?? []).find((l) => l.id.startsWith("habitat-"));
+    if (firstHabitat) map.moveLayer("hillshade", firstHabitat.id);
+  } else if (map.getLayer("hillshade")) {
+    map.setLayoutProperty("hillshade", "visibility", "none");
+  }
+}
+
 async function refreshMeta() {
   const q = new URLSearchParams({ species: selectedSpecies()[0] });
   const d = selectedDate();
@@ -236,6 +265,7 @@ function initMap(maplibregl) {
 
   map.on("load", () => {
     setBasemap("topo");
+    updateHillshade();
     rebuildHabitat();
     updateTrails();
     refreshMeta();
@@ -282,6 +312,7 @@ function initMap(maplibregl) {
     }
   });
   trailsInput.addEventListener("change", updateTrails);
+  hillshadeInput.addEventListener("change", updateHillshade);
   for (const btn of basemapButtons) {
     btn.addEventListener("click", () => setBasemap(btn.dataset.basemap));
   }

@@ -11,12 +11,43 @@ import { SPECIES, effectiveGdd5, hostFallback, seasonalFactor, staticHabitatScor
 
 const MODEL = "mistral-small-latest";
 const SYSTEM_PROMPT =
-  "Du är en hjälpsam assistent för svampplockning i Sverige. Svara alltid på svenska. " +
-  "Rekommendera bara matsvampar som är lätta att känna igen och saknar dödligt giftiga dubbelgångare " +
-  "(t.ex. kantarell, karljohan, trattkantarell, svart trumpetsvamp, rödgul trumpetsvamp, blek taggsvamp, " +
-  "stolt fjällskivling, vårskivling, brunsopp). Rekommendera aldrig murklor, små fjällskivlingar (Lepiota) " +
-  "eller spindelskivlingar. Påminn alltid om att äta aldrig svamp man inte är 100 % säker på, att jättemusseron " +
-  "är fridlyst i Sverige (plocka inte), och att vid misstanke om förgiftning kontakta Giftinformationscentralen (112 vid akuta symtom).";
+  "Du är en kritisk och säkerhetsfokuserad assistent för svampplockning i Sverige. Svara alltid på svenska. " +
+  "KRITISK GRANSKNING (gäller alltid): utgå aldrig från att användarens fråga eller beskrivning är korrekt eller komplett — " +
+  "påpeka alltid vad som kan vara fel, vilseledande eller saknas för en bedömning, och ange tydligt när du är osäker. " +
+  "Bekräfta aldrig att en svamp är ätlig utifrån en text- eller bildbeskrivning; kräv alltid kontroll mot en oberoende fälthandbok. " +
+  "När du nämner en art, nämn alltid dess dödligt giftiga dubbelgångare i Sverige och vad som skiljer dem åt " +
+  "(kantarell/trattkantarell har grenade trubbiga åsar, inte tunna skivor — toppig giftspindling har skivor och är dödligt giftig; " +
+  "karljohan har vitt ådernät och rör under hatten, gallsopp har mörkt nät och är besk; " +
+  "alla orange mjölksaftblödande riskor är ätliga). " +
+  "Rekommendera bara lättidentifierade matsvampar utan dödligt giftiga dubbelgångare (t.ex. kantarell, karljohan, " +
+  "trattkantarell, svart trumpetsvamp, rödgul trumpetsvamp, blek/rödgul taggsvamp, stolt fjällskivling, vårskivling, brunsopp). " +
+  "Rekommendera aldrig murklor/Gyromitra, champinjoner (vit flugsvamp), små fjällskivlingar (Lepiota), " +
+  "vårmusseron (bolmörtsskivling) eller spindelskivlingar (Cortinarius). " +
+  "Goliatmusseron är FRIDLYST och rödlistad VU — rekommendera aldrig att plocka den. " +
+  "Påminn alltid om att äta aldrig svamp man inte är 100 % säker på, och att vid misstanke om förgiftning kontakta " +
+  "Giftinformationscentralen (112 vid akuta symtom).";
+
+const VERDICT_REQUEST =
+  /(ätlig|ätbar|äta (den|svampen)|plocka (den|svampen)|giftig|ofarlig|säker på|safe to eat|edible|poisonous|toxic)/iu;
+
+const SAFETY_CHECKLIST_REPLY =
+  "Jag kan inte bekräfta att någon svamp är ätlig eller giftig utifrån en beskrivning — det kan vara livsfarligt fel. " +
+  "Gör alltid så här:\n" +
+  "1. Identifiera arten med en oberoende fälthandbok och kontrollera ALLA kännetecken: hatt, undersida (skivor/åsar/rör/taggar), fot, kött, mjölksaft, lukt och växtplats.\n" +
+  "2. Jämför alltid med dödligt giftiga dubbelgångare: vit flugsvamp och toppig giftspindling (har skivor), murklor (gyromitrin), små Lepiota, bolmörtsskivling, spindelskivlingar (Cortinarius).\n" +
+  "3. Är du inte 100 % säker — ät den inte.\n" +
+  "4. Goliatmusseron är fridlyst (rödlistad VU) — plocka aldrig den.\n" +
+  "5. Vid minsta misstanke om förgiftning: kontakta Giftinformationscentralen, tel 112 vid akuta symtom.\n" +
+  "Beskriv gärna fyndet igen så går vi igenom kännetecknen kritiskt tillsammans — men slutbedömningen måste du göra mot fälthandboken, inte mot mig.";
+
+const RISKY_AFFIRM =
+  /(är|blir|var)\s+(ätlig|ätbar|ofarlig|säker)|100\s?%\s*säker|säker på att (äta|plocka)|inga (farliga|giftiga) förväxlingar|safe to eat|not poisonous|non-toxic/iu;
+
+const CRITICAL_APPENDIX =
+  "\n\n⚠️ Kritisk kontroll: en beskrivning räcker aldrig för att bekräfta att en svamp är ätlig. " +
+  "Kontrollera alltid alla kännetecken mot en fälthandbok och tänk på dödligt giftiga dubbelgångare " +
+  "(vit flugsvamp, toppig giftspindling). Ät aldrig svamp du inte är 100 % säker på. " +
+  "Vid misstanke om förgiftning: Giftinformationscentralen, 112 vid akuta symtom.";
 
 if (!process.env.MISTRAL_API_KEY) {
   console.error("MISTRAL_API_KEY is not set. Copy .env.example to .env and add your key.");
@@ -54,18 +85,24 @@ app.post("/api/chat", async (req, res) => {
       .json({ error: "Expected a non-empty messages array ending with a user message." });
   }
 
+  const lastUser = messages[messages.length - 1].content;
+  if (VERDICT_REQUEST.test(lastUser)) {
+    return res.json({ reply: SAFETY_CHECKLIST_REPLY });
+  }
+
   try {
     const response = await client.chat.complete({
       model: MODEL,
       messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
     });
     const content = response.choices?.[0]?.message?.content;
-    const reply =
+    let reply =
       typeof content === "string"
         ? content
         : (content ?? [])
             .map((chunk) => ("text" in chunk ? chunk.text : ""))
             .join("");
+    if (RISKY_AFFIRM.test(reply)) reply += CRITICAL_APPENDIX;
     res.json({ reply });
   } catch (err) {
     console.error("Mistral API error:", err);
@@ -1632,11 +1669,11 @@ app.get("/api/tiles/hillshade/:z/:x/:y.png", async (req, res) => {
         255 *
         (Math.cos(zenith) * Math.cos(slope) +
           Math.sin(zenith) * Math.sin(slope) * Math.cos(azimuth - aspect));
-      const v = Math.max(0, Math.min(255, Math.round(shade)));
+      const v = Math.max(0, Math.min(255, Math.round(128 + (shade - 128) * 1.7)));
       png.data[idx] = v;
       png.data[idx + 1] = v;
       png.data[idx + 2] = v;
-      png.data[idx + 3] = 170;
+      png.data[idx + 3] = 190;
     }
   }
   const buf = PNG.sync.write(png);

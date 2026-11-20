@@ -61,8 +61,10 @@ npm run typecheck
   till `data/validation/observations.geojson`.
 
 Båda mapparna är git-ignorerade. Skyddsklassade arter (t.ex. jättemusseron) är koordinat-diffade
-i öppna data. Använd fynden för att köra AUC mot modellens score (skicka koordinaterna till
-`/api/debug/cell`). Artfakta-API:t kräver prenumerationsnyckel; `speciesdata/assessments` och
+i öppna data. Kör sedan `npm run validate` — den scorar alla fynd plus slumpade
+bakgrundspunkter via `/api/debug/cell?static=1` och räknar ut AUC per art och GDD-band
+(rapport i `data/validation/auc-report.json`; AUC < 0,7 flaggas KALIBRERA).
+Artfakta-API:t kräver prenumerationsnyckel; `speciesdata/assessments` och
 `natureconservation` tas ur bruk jan 2027 (använd Taxon List Service API v2 för listor).
 
 ## Data layers (folder structure)
@@ -102,7 +104,7 @@ data/
 - `GET /api/tiles/habitat/{species}/{z}/{x}/{y}.png?static=1&date=YYYY-MM-DD&sens=-10..10` —
   256×256 PNG heatmap tile (alpha by heat, 9-stop ramp). Disk-cached under `data/tile-cache/`
   (git-ignored); `Cache-Control: max-age=21600` for live, `86400` for dated/static tiles.
-- `GET /api/tiles/hillshade/{z}/{x}/{y}.png` — hillshade from `hojdmodell_2m.tif`,
+- `GET /api/tiles/hillshade/{z}/{x}/{y}.png` — kontrastförstärkt hillshade från `hojdmodell_2m.tif` (Terrängskugga),
   `Cache-Control: immutable`.
 - `GET /api/meta?species=&date=` — lightweight status (rain factor, season, loaded layers).
 - `GET /api/hotspots?...` — GeoJSON point grid (kept for API clients/tests).
