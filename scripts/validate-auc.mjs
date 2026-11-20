@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // AUC validation: scores Artportalen observations (data/validation/observations.geojson)
-// against random background points in the same bbox via /api/debug/cell (static=1),
-// per species and per GDD band. Writes data/validation/auc-report.json.
+// against random background cells inside the forest mask (available habitat) via
+// /api/debug/cell (static=1), per species and per GDD band. Writes
+// data/validation/auc-report.json. Skyddsklassade arter (brusade koordinater) flaggas.
 //
 // Usage:
 //   npm run validate
@@ -94,6 +95,9 @@ if (!up) {
 }
 console.log(`server up på port ${port}; ${features.length} observationer, bbox ${minLon.toFixed(2)},${minLat.toFixed(2)}–${maxLon.toFixed(2)},${maxLat.toFixed(2)}`);
 
+const meta = await (await fetch(base + "/api/meta?species=kantarell")).json();
+const protectedIds = new Set((meta.speciesList ?? []).filter((s) => s.protected).map((s) => s.id));
+
 async function scorePoint(lon, lat, species) {
   const url = `${base}/api/debug/cell?lat=${lat}&lon=${lon}&species=${encodeURIComponent(species)}&static=1`;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -101,12 +105,26 @@ async function scorePoint(lon, lat, species) {
       const r = await fetch(url);
       if (!r.ok) throw new Error("HTTP " + r.status);
       const j = await r.json();
-      return { score: Number(j.score ?? 0), gddEff: Number(j.gddEff ?? NaN) };
+      return { score: Number(j.score ?? 0), gddEff: Number(j.gddEff ?? NaN), inForest: !!j.inForest, excluded: !!j.excluded };
     } catch (e) {
-      if (attempt === 1) return { score: 0, gddEff: NaN, error: e.message };
+      if (attempt === 1) return { score: 0, gddEff: NaN, inForest: false, excluded: false, error: e.message };
       await new Promise((r2) => setTimeout(r2, 500));
     }
   }
+}
+
+// Background = random cells INSIDE the forest mask (available habitat), not the raw bbox —
+// otherwise urban/water/road zeros depress AUC and the metric says nothing about habitat.
+async function bgPoint(rnd, species) {
+  for (let tries = 0; tries < 25; tries++) {
+    const lon = minLon + rnd() * (maxLon - minLon);
+    const lat = minLat + rnd() * (maxLat - minLat);
+    const r = await scorePoint(lon, lat, species);
+    if (r.inForest && !r.excluded) return r;
+  }
+  const lon = minLon + rnd() * (maxLon - minLon);
+  const lat = minLat + rnd() * (maxLat - minLat);
+  return scorePoint(lon, lat, species);
 }
 
 async function mapPool(items, fn, concurrency = 8) {
@@ -154,10 +172,6 @@ let done = 0;
 for (const [species, feats] of [...bySpecies.entries()].sort()) {
   const sample = feats.slice(0, limit);
   const rnd = mulberry32(42);
-  const bgPoints = Array.from({ length: bgCount }, () => [
-    minLon + rnd() * (maxLon - minLon),
-    minLat + rnd() * (maxLat - minLat),
-  ]);
 
   const obsRes = await mapPool(sample, async (f) => {
     const [lon, lat] = f.geometry.coordinates;
@@ -166,7 +180,7 @@ for (const [species, feats] of [...bySpecies.entries()].sort()) {
     if (done % 500 === 0) console.log(`  ${done} punkter scorade…`);
     return r;
   });
-  const bgRes = await mapPool(bgPoints, async ([lon, lat]) => scorePoint(lon, lat, species));
+  const bgRes = await mapPool(Array.from({ length: bgCount }), async () => bgPoint(rnd, species));
 
   const obsScores = obsRes.map((r) => r.score);
   const bgScores = bgRes.map((r) => r.score);
@@ -182,6 +196,14 @@ for (const [species, feats] of [...bySpecies.entries()].sort()) {
     if (arr.length >= 30) byBand[b] = { n: arr.length, auc: Number(auc(arr, bgScores).toFixed(3)) };
   }
 
+  const isProtected = protectedIds.has(species);
+  const flag = isProtected
+    ? "skyddad — koordinater brusade i öppna data, AUC ej meningsfull"
+    : overall < 0.7
+      ? "KALIBRERA"
+      : overall < 0.8
+        ? "se över"
+        : "ok";
   report.species[species] = {
     observations: sample.length,
     background: bgScores.length,
@@ -189,17 +211,19 @@ for (const [species, feats] of [...bySpecies.entries()].sort()) {
     meanObs: Number((obsScores.reduce((a, b) => a + b, 0) / Math.max(1, obsScores.length)).toFixed(1)),
     meanBg: Number((bgScores.reduce((a, b) => a + b, 0) / Math.max(1, bgScores.length)).toFixed(1)),
     byGddBand: byBand,
-    flag: overall < 0.7 ? "KALIBRERA" : overall < 0.8 ? "se över" : "ok",
+    protected: isProtected,
+    flag,
   };
   console.log(
     `${species.padEnd(24)} n=${String(sample.length).padStart(5)} AUC=${overall.toFixed(3)} ` +
-    `medel fynd=${report.species[species].meanObs} bg=${report.species[species].meanBg} ${report.species[species].flag}`,
+    `medel fynd=${report.species[species].meanObs} bg=${report.species[species].meanBg} ${flag}`,
   );
 }
 
 const aucs = Object.values(report.species).map((s) => s.auc).filter(Number.isFinite);
 const meanAuc = aucs.reduce((a, b) => a + b, 0) / Math.max(1, aucs.length);
 report.meanAuc = Number(meanAuc.toFixed(3));
+report.background = "random celler innanför skogsmasken (inForest && !excluded)";
 report.speciesFlagged = Object.entries(report.species).filter(([, s]) => s.flag === "KALIBRERA").map(([id]) => id);
 
 await fsp.mkdir(path.dirname(obsFile), { recursive: true });

@@ -62,8 +62,9 @@ npm run typecheck
 
 Båda mapparna är git-ignorerade. Skyddsklassade arter (t.ex. jättemusseron) är koordinat-diffade
 i öppna data. Kör sedan `npm run validate` — den scorar alla fynd plus slumpade
-bakgrundspunkter via `/api/debug/cell?static=1` och räknar ut AUC per art och GDD-band
-(rapport i `data/validation/auc-report.json`; AUC < 0,7 flaggas KALIBRERA).
+bakgrundspunkter *innanför skogsmasken* via `/api/debug/cell?static=1` och räknar ut AUC
+per art och GDD-band (rapport i `data/validation/auc-report.json`; AUC < 0,7 flaggas
+KALIBRERA, skyddsklassade arter med brusade koordinater markeras separat).
 Artfakta-API:t kräver prenumerationsnyckel; `speciesdata/assessments` och
 `natureconservation` tas ur bruk jan 2027 (använd Taxon List Service API v2 för listor).
 
