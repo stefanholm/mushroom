@@ -57,7 +57,7 @@ function updateSpeciesInfo() {
 }
 
 let map = null;
-const TILE_V = "r14";
+const TILE_V = "r15";
 
 function selectedDate() {
   const days = Number(dateSlider.value);

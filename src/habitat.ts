@@ -22,6 +22,7 @@ export type SpeciesProfile = {
   sisIdeal?: [number, number];
   gddEnvelope?: [number, number, number, number];
   depthIdeal?: [number, number];
+  woodHost?: boolean;
   protected?: boolean;
 };
 
@@ -568,6 +569,69 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     ageIdeal: [20, 100],
     sisIdeal: [12, 30],
   },
+  svavelticka: {
+    label: "Svavelticka (Laetiporus sulphureus)",
+    seasonStart: 5,
+    seasonEnd: 8,
+    hosts: { ek: 1, bok: 0.5, bjork: 0.4, asp: 0.4 },
+    minHostVolume: 0,
+    minTreeHeight: 0,
+    vetoMoisture: [5],
+    moistureIdeal: [2, 4],
+    canopyIdeal: [10, 30],
+    soil: { acidic: 0.9, neutral: 0.9, calcareous: 1 },
+    sun: 0.5,
+    depression: 0.2,
+    edge: 0.8,
+    frostSensitive: true,
+    eatScore: 4,
+    note: "Svavelgula hyllor på lövträd — ALDRIG från idegran (giftig). Endast unga, mjuka exemplar.",
+    ageIdeal: [40, 140],
+    sisIdeal: [20, 34],
+    woodHost: true,
+  },
+  ostronmussling: {
+    label: "Ostronmussling (Pleurotus ostreatus)",
+    seasonStart: 10,
+    seasonEnd: 2,
+    hosts: { bok: 1, bjork: 0.75, asp: 0.75, ek: 0.6 },
+    minHostVolume: 0,
+    minTreeHeight: 0,
+    vetoMoisture: [],
+    moistureIdeal: [3, 5],
+    canopyIdeal: [14, 34],
+    soil: { acidic: 0.9, neutral: 0.9, calcareous: 1 },
+    sun: 0,
+    depression: 0.5,
+    edge: 0.5,
+    frostSensitive: false,
+    eatScore: 4,
+    note: "Gråblå hyllor på döda/skadade lövträd, vita nedlöpande skivor. Mild senhöst/vinter.",
+    ageIdeal: [40, 140],
+    sisIdeal: [20, 36],
+    woodHost: true,
+  },
+  judasora: {
+    label: "Judasöra (Auricularia auricula-judae)",
+    seasonStart: 10,
+    seasonEnd: 3,
+    hosts: { bjork: 0.4, ek: 0.3 },
+    minHostVolume: 0,
+    minTreeHeight: 0,
+    vetoMoisture: [],
+    moistureIdeal: [4, 5],
+    canopyIdeal: [12, 32],
+    soil: { calcareous: 1, neutral: 0.9, acidic: 0.8 },
+    sun: 0,
+    depression: 0.5,
+    edge: 0.7,
+    frostSensitive: false,
+    eatScore: 3,
+    note: "Brun öronformad gelésvamp på fläder (ej andra träd) i milda sydsvenska vintrar. Koka alltid.",
+    ageIdeal: [35, 140],
+    sisIdeal: [24, 38],
+    woodHost: true,
+  },
   "zonerad-granblodriska": {
     label: "Zonerad granblodriska (Lactarius fennoscandicus)",
     seasonStart: 7,
@@ -630,6 +694,9 @@ const GDD_ENVELOPE: Record<string, [number, number, number, number]> = {
   tallskrubb: [540, 700, 1280, 1550],
   bjorksopp: [420, 560, 1780, 2050],
   "zonerad-granblodriska": [580, 740, 1280, 1550],
+  svavelticka: [1180, 1320, 1850, 2100],
+  ostronmussling: [1100, 1280, 1880, 2100],
+  judasora: [1400, 1520, 1950, 2200],
 };
 const DEPTH_IDEAL: Record<string, [number, number]> = {
   karljohan: [0.8, 6],
@@ -659,10 +726,31 @@ export function seasonalFactor(species: SpeciesProfile, lat: number, now: Date):
   const shift = Math.min(1, Math.max(-1, (59 - lat) * 0.1));
   const month = now.getUTCMonth() + 1 + now.getUTCDate() / 30 + shift;
   const { seasonStart, seasonEnd } = species;
+  if (seasonEnd < seasonStart) {
+    // winter wrap (e.g. Oct–Mar): valid if month >= start−0.5 (autumn) or month <= end+0.5 (winter)
+    if (month >= seasonStart - 0.5) return month < seasonStart ? (month - (seasonStart - 0.5)) / 0.5 : 1;
+    if (month <= seasonEnd + 0.5) return month > seasonEnd ? 1 - (month - seasonEnd) / 0.5 : 1;
+    return 0;
+  }
   if (month < seasonStart - 0.5 || month > seasonEnd + 0.5) return 0;
   if (month < seasonStart) return (month - (seasonStart - 0.5)) / 0.5;
   if (month > seasonEnd) return 1 - (month - seasonEnd) / 0.5;
   return 1;
+}
+
+// Effective growing degree days (>5 °C) at a point: SMHI GDD5 raster if present,
+// else a latitude fallback; always downscaled by DEM elevation (lapse −0.9 GDD per m).
+export function effectiveGdd5(store: LayerStore, lon: number, lat: number): number | null {
+  const [e, n] = toSWEREF(lon, lat);
+  const dem = store.rasters.get("hojd");
+  const elev = dem && dem.has(e, n) ? dem.sampleSync(e, n) : null;
+  const elevM = elev !== null && elev >= 0 ? elev : 0;
+  const gddL = store.rasters.get("gdd5");
+  if (gddL && gddL.has(e, n)) {
+    const g = gddL.sampleSync(e, n);
+    if (g !== null) return g - elevM * 0.9;
+  }
+  return 2200 - (lat - 55) * 130 - elevM * 0.9;
 }
 
 export type HabitatContext = {
@@ -717,7 +805,11 @@ export function staticHabitatScore(
   }
   let hostVol = 0;
   let anyHost = false;
-  for (const [tree, w] of Object.entries(species.hosts)) {
+  if (species.woodHost) {
+    anyHost = true;
+    covered = true;
+  }
+  for (const [tree, w] of !species.woodHost ? Object.entries(species.hosts) : []) {
     const layer = store.rasters.get(tree);
     if (!layer) continue;
     const v = layer.sampleSync(easting, northing);
@@ -728,7 +820,9 @@ export function staticHabitatScore(
     }
   }
   let hostGate = 1;
-  if (anyHost) {
+  if (species.woodHost) {
+    hostGate = 1;
+  } else if (anyHost) {
     if (hostVol < species.minHostVolume) return 0;
     hostGate = 0.1 + 0.9 * clamp01(hostVol / (3 * species.minHostVolume));
   } else {
@@ -776,29 +870,19 @@ export function staticHabitatScore(
     }
   }
 
-  const gddL = store.rasters.get("gdd5");
   let fClimate = 1;
-  let gddEff: number | null = null;
-  if (gddL) {
-    const g = gddL.sampleSync(easting, northing);
-    if (g !== null) {
-      covered = true;
-      const elevV = dem ? dem.sampleSync(easting, northing) : null;
-      gddEff = g - Math.max(0, elevV ?? 0) * 0.9;
-      const env = species.gddEnvelope;
-      if (env) {
-        const [hMin, iMin, iMax, hMax] = env;
-        fClimate =
-          gddEff <= hMin || gddEff >= hMax
-            ? 0
-            : gddEff >= iMin && gddEff <= iMax
-              ? 1
-              : gddEff < iMin
-                ? clamp01((gddEff - hMin) / Math.max(1e-6, iMin - hMin))
-                : clamp01((hMax - gddEff) / Math.max(1e-6, hMax - iMax));
-        if (fClimate <= 0) return 0;
-      }
-    }
+  const gddEff = effectiveGdd5(store, lon, lat);
+  if (gddEff !== null && species.gddEnvelope) {
+    const [hMin, iMin, iMax, hMax] = species.gddEnvelope;
+    fClimate =
+      gddEff <= hMin || gddEff >= hMax
+        ? 0
+        : gddEff >= iMin && gddEff <= iMax
+          ? 1
+          : gddEff < iMin
+            ? clamp01((gddEff - hMin) / Math.max(1e-6, iMin - hMin))
+            : clamp01((hMax - gddEff) / Math.max(1e-6, hMax - iMax));
+    if (fClimate <= 0) return 0;
   }
 
   const depthL = store.rasters.get("soildepth");

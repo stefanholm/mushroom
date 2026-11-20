@@ -63,6 +63,9 @@ const SPECIES = [
   ["tallskrubb", "Leccinum vulpinum"],
   ["bjorksopp", "Leccinum scabrum"],
   ["zonerad-granblodriska", "Lactarius fennoscandicus"],
+  ["svavelticka", "Laetiporus sulphureus"],
+  ["ostronmussling", "Pleurotus ostreatus"],
+  ["judasora", "Auricularia auricula-judae"],
 ];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

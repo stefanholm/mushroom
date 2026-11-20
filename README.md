@@ -45,8 +45,8 @@ npm run typecheck
 ### Skala till hela Sverige
 
 1. Kör `npm run bake-tiles -- --all-species --bbox <län> --zmin 5 --zmax 12` offline —
-   serverns disk-cache `data/tiles/r14/` fylls med **statiska** habitat-tiles (vädret hålls live).
-2. Servera `data/tiles/` som statiska PNG från CDN (t.ex. Cloudflare R2, noll egress) —
+   serverns disk-cache `data/tile-cache/r15/` fylls med **statiska** habitat-tiles (vädret hålls live).
+2. Servera `data/tile-cache/` som statiska PNG från CDN (t.ex. Cloudflare R2, noll egress) —
    aldrig rendera GIS per användare live.
 3. SMHI väder som ett litet nationellt JSON (5×5 km multiplikatorer) i stället för per-punkt.
 4. App Store: backend över HTTPS, PMTiles per län för offline, attributionssida för
@@ -100,7 +100,7 @@ data/
 ## Tile endpoints (cached XYZ rasters)
 
 - `GET /api/tiles/habitat/{species}/{z}/{x}/{y}.png?static=1&date=YYYY-MM-DD&sens=-10..10` —
-  256×256 PNG heatmap tile (alpha by heat, 9-stop ramp). Disk-cached under `data/tiles/`
+  256×256 PNG heatmap tile (alpha by heat, 9-stop ramp). Disk-cached under `data/tile-cache/`
   (git-ignored); `Cache-Control: max-age=21600` for live, `86400` for dated/static tiles.
 - `GET /api/tiles/hillshade/{z}/{x}/{y}.png` — hillshade from `hojdmodell_2m.tif`,
   `Cache-Control: immutable`.
@@ -242,7 +242,7 @@ alpha curve (`heat^2`), so only real hotspots glow — red starts around heat 0.
 **Cluster boost:** at street-level zooms, each cell also counts hot neighbours within
 ~50 m; 1 hot neighbour adds +0.06 heat, 2 add +0.12, 3+ add +0.2,
 so connected hotspots climb toward red. `static=1` shows layers 1–7 only. Rendered PNGs are
-disk-cached under `data/tiles/<tileVersion>/` and served from disk on repeat views.
+disk-cached under `data/tile-cache/<tileVersion>/` and served from disk on repeat views.
 
 ## How the hotspot score works
 

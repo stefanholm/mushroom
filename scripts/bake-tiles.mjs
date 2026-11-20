@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Offline tile pre-bake: starts the server on a temp port, then requests every
-// habitat tile in a bbox/zoom range so the server's disk cache (data/tiles/<v>/)
+// habitat tile in a bbox/zoom range so the server's disk cache (data/tile-cache/<v>/)
 // is filled. Bake with static=1 (default) for the static habitat pyramid that
 // scales to all of Sweden; the dynamic weather multiplier stays live.
 //
@@ -87,7 +87,7 @@ for (const sp of speciesList) {
     const [, y1] = tileXY(z, minLon, maxLat);
     for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) {
       for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) {
-        const url = `${base}/api/tiles/habitat/${sp}/${z}/${x}/${y}.png?${staticOnly ? "static=1&" : ""}v=r14`;
+        const url = `${base}/api/tiles/habitat/${sp}/${z}/${x}/${y}.png?${staticOnly ? "static=1&" : ""}v=r15`;
         try {
           const r = await fetch(url);
           if (!r.ok) throw new Error("HTTP " + r.status);
@@ -105,6 +105,6 @@ for (const sp of speciesList) {
     }
   }
 }
-console.log(`KLART: ${done} tiles bakade, ${failed} fel, ${((Date.now() - t0) / 1000).toFixed(0)}s. Cache: data/tiles/r14/`);
+console.log(`KLART: ${done} tiles bakade, ${failed} fel, ${((Date.now() - t0) / 1000).toFixed(0)}s. Cache: data/tile-cache/r15/`);
 child.kill();
 process.exit(failed > 0 ? 1 : 0);

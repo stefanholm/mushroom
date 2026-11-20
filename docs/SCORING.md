@@ -213,7 +213,7 @@ the cell failed `G_hard` — so the smooth thermal gradient stops razor-clean at
 streets and yards. Colour ramp (heat → RGB): 0.25 teal `#00b2be` → 0.42 emerald `#10b981` →
 0.58 amber `#f5b301` → 0.74 orange `#ff7a00` → 0.88 crimson `#e31a1c` → 0.97 `#ff2a00` →
 1.0 `#ffffb2`; alpha = `heat² × 0.95`. Result bilinearly sampled to a 256×256 PNG,
-disk-cached under `data/tiles/<tileVersion>/`. Clients should set `maxzoom: 16` on the raster
+disk-cached under `data/tile-cache/<tileVersion>/`. Clients should set `maxzoom: 16` on the raster
 source (MapLibre then GPU-overzooms instead of requesting z17+) and append `&v=<tileVersion>`
 (from `/api/meta`) to bust caches.
 

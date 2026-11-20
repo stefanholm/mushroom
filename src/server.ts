@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
 import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
-import { SPECIES, hostFallback, seasonalFactor, staticHabitatScore } from "./habitat.js";
+import { SPECIES, effectiveGdd5, hostFallback, seasonalFactor, staticHabitatScore } from "./habitat.js";
 
 const MODEL = "mistral-small-latest";
 const SYSTEM_PROMPT =
@@ -879,13 +879,19 @@ async function computeCells(
 }
 
 app.get("/api/hotspots", async (req, res) => {
-  const key = String(req.query.species ?? "");
-  const species = SPECIES[key];
-  const box = ["minLon", "minLat", "maxLon", "maxLat"].map((k) => Number(req.query[k]));
-  if (!species || box.some((n) => !Number.isFinite(n))) {
+  const keys = String(req.query.species ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((k) => SPECIES[k]);
+  const species = SPECIES[keys[0] ?? ""];
+  const bboxParam = String(req.query.bbox ?? "");
+  const box = bboxParam
+    ? bboxParam.split(",").map(Number)
+    : ["minLon", "minLat", "maxLon", "maxLat"].map((k) => Number(req.query[k]));
+  if (!species || box.length !== 4 || box.some((n) => !Number.isFinite(n))) {
     return res
       .status(400)
-      .json({ error: "Expected query params: species, minLon, minLat, maxLon, maxLat." });
+      .json({ error: "Expected query params: species, minLon, minLat, maxLon, maxLat (or bbox=minLon,minLat,maxLon,maxLat)." });
   }
   let [minLon, minLat, maxLon, maxLat] = box;
   if (minLon > maxLon) [minLon, maxLon] = [maxLon, minLon];
@@ -895,9 +901,65 @@ app.get("/api/hotspots", async (req, res) => {
   }
   const staticOnly = req.query.static === "1";
   const asOf = parseAsOf(String(req.query.date ?? ""));
+  const minScore = Math.max(0, Math.min(100, Number(req.query.minScore ?? 80) || 80));
 
   const span = Math.max(maxLon - minLon, maxLat - minLat);
   const cell = cellForSpan(span);
+
+  if (bboxParam) {
+    // Peak-pocket mode for the iOS symbol/icon layer: local maxima >= minScore,
+    // thinned to ~120 m spacing, capped at 120 per viewport, across all checked species.
+    const perSpecies = await Promise.all(
+      keys.map((k) => computeCells(k, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly)),
+    );
+    const all: { lon: number; lat: number; score: number; species: string }[] = [];
+    for (let si = 0; si < perSpecies.length; si++) {
+      const { cells } = perSpecies[si];
+      const grid = new Map<string, CellScore>();
+      for (const c of cells) grid.set(`${c.lon.toFixed(6)},${c.lat.toFixed(6)}`, c);
+      for (const c of cells) {
+        if (c.score < minScore) continue;
+        let isPeak = true;
+        for (let dj = -1; dj <= 1 && isPeak; dj++) {
+          for (let di = -1; di <= 1; di++) {
+            if (!di && !dj) continue;
+            const nb = grid.get(`${(c.lon + di * cell).toFixed(6)},${(c.lat + dj * cell).toFixed(6)}`);
+            if (nb && nb.score > c.score) {
+              isPeak = false;
+              break;
+            }
+          }
+        }
+        if (isPeak) all.push({ lon: c.lon, lat: c.lat, score: c.score, species: keys[si] });
+      }
+    }
+    all.sort((a, b) => b.score - a.score);
+    const centerLat = (minLat + maxLat) / 2;
+    const mPerDegLat = 111000;
+    const mPerDegLon = 111000 * Math.cos((centerLat * Math.PI) / 180);
+    const spacingDeg = 120 / Math.max(mPerDegLat, mPerDegLon);
+    const picked: typeof all = [];
+    for (const p of all) {
+      if (picked.length >= 120) break;
+      const tooClose = picked.some(
+        (q) => Math.abs(q.lat - p.lat) < spacingDeg && Math.abs(q.lon - p.lon) < spacingDeg,
+      );
+      if (!tooClose) picked.push(p);
+    }
+    return res.json({
+      hotspots: picked.map((p) => ({
+        lat: p.lat,
+        lon: p.lon,
+        species: p.species,
+        label: SPECIES[p.species]?.label ?? p.species,
+        eatScore: SPECIES[p.species]?.eatScore ?? null,
+        score: p.score,
+      })),
+      meta: { count: picked.length, minScore, species: keys, asOf: asOf.toISOString().slice(0, 10), staticOnly },
+    });
+  }
+
+  const key = keys[0];
   const { cells, meta } = await computeCells(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
   const features = cells.map((c) => ({
     type: "Feature",
@@ -1048,8 +1110,8 @@ app.get("/api/hillshade", async (req, res) => {
   res.send(PNG.sync.write(png));
 });
 
-const TILE_VERSION = "r14";
-const TILES_DIR = path.join(here, "..", "data", "tiles", TILE_VERSION);
+const TILE_VERSION = "r15";
+const TILES_DIR = path.join(here, "..", "data", "tile-cache", TILE_VERSION);
 
 const HEAT_BASE = 70;
 const HEAT_RANGE = 30;
@@ -1141,9 +1203,11 @@ app.get("/api/meta", async (req, res) => {
   const species = SPECIES[key];
   if (!species) return res.status(400).json({ error: "Okänd art." });
   const asOf = parseAsOf(String(req.query.date ?? ""));
+  const mLat = Number.isFinite(Number(req.query.lat)) ? Number(req.query.lat) : 62.5;
+  const mLon = Number.isFinite(Number(req.query.lon)) ? Number(req.query.lon) : 15.5;
   let rain14: number | null = null;
   try {
-    rain14 = await rainLast14Days(62.5, 15.5, asOf);
+    rain14 = await rainLast14Days(mLat, mLon, asOf);
   } catch (err) {
     console.error("SMHI fetch failed:", err);
   }
@@ -1152,10 +1216,11 @@ app.get("/api/meta", async (req, res) => {
     forestPolygonsForBox(17.6, 59.0, 18.4, 59.6),
     exclusionsForBox(17.6, 59.0, 18.4, 59.6),
   ]);
-  const minTemp = await minTempLast48h(62.5, 15.5);
+  const minTemp = await minTempLast48h(mLat, mLon);
   const frost = species.frostSensitive && minTemp !== null && minTemp <= -3 ? 0 : 1;
-  const coolNights = await coolNightsLast7d(62.5, 15.5, asOf);
+  const coolNights = await coolNightsLast7d(mLat, mLon, asOf);
   const flush = flushFactor(coolNights);
+  const gdd5 = effectiveGdd5(store, mLon, mLat);
   res.json({
     species: key,
     label: species.label,
@@ -1173,7 +1238,10 @@ app.get("/api/meta", async (req, res) => {
     })),
     rain14,
     rainFactor: rain14 === null ? 0.5 : Number(Math.min(1, rain14 / 60).toFixed(3)),
-    seasonFactor: Number(seasonalFactor(species, 62.5, asOf).toFixed(2)),
+    seasonFactor: Number(seasonalFactor(species, mLat, asOf).toFixed(2)),
+    lat: mLat,
+    lon: mLon,
+    gdd5: gdd5 === null ? null : Math.round(gdd5),
     minTemp48h: minTemp,
     frost,
     coolNights7d: coolNights,
@@ -1191,28 +1259,24 @@ app.get("/api/meta", async (req, res) => {
   });
 });
 
-app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
-  const key = req.params.species;
-  if (!SPECIES[key]) return res.status(404).json({ error: "Okänd art." });
-  const z = Number(req.params.z);
-  const x = Number(req.params.x);
-  const y = Number(req.params.y);
-  if (![z, x, y].every(Number.isInteger) || z < 3 || z > 17) {
-    return res.status(400).json({ error: "Ogiltig tile." });
-  }
-  const sens = Math.max(-10, Math.min(10, Math.round(Number(req.query.sens ?? 0) || 0)));
-  const dateParam = String(req.query.date ?? "");
-  const asOf = parseAsOf(dateParam);
-  const staticOnly = req.query.static === "1";
+async function renderHabitatTile(
+  keys: string[],
+  z: number,
+  x: number,
+  y: number,
+  sens: number,
+  asOf: Date,
+  staticOnly: boolean,
+  dateParam: string,
+  cacheSub: string,
+): Promise<{ buf: Buffer; cacheControl: string }> {
   const bbox = tileBBox(z, x, y);
   const cacheFile = path.join(
-    TILES_DIR, "habitat", key, staticOnly ? "static" : "live", dateParam || "now", String(sens), String(z), `${x}_${y}.png`,
+    TILES_DIR, cacheSub, staticOnly ? "static" : "live", dateParam || "now", String(sens), String(z), `${x}_${y}.png`,
   );
   const cacheControl = dateParam || staticOnly ? "public, max-age=86400" : "public, max-age=21600";
   if (fs.existsSync(cacheFile)) {
-    res.setHeader("Content-Type", "image/png");
-    res.setHeader("Cache-Control", cacheControl);
-    return res.send(await fsp.readFile(cacheFile));
+    return { buf: await fsp.readFile(cacheFile), cacheControl };
   }
   const span = Math.max(bbox.maxLon - bbox.minLon, bbox.maxLat - bbox.minLat);
   const cell = cellForSpan(span);
@@ -1223,7 +1287,23 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
   const eMaxLon = bbox.maxLon + M * cell;
   const eMinLat = bbox.minLat - M * cell;
   const eMaxLat = bbox.maxLat + M * cell;
-  const { cells } = await computeCells(key, eMinLon, eMinLat, eMaxLon, eMaxLat, cell, asOf, staticOnly);
+  let cells: CellScore[];
+  if (keys.length === 1) {
+    cells = (await computeCells(keys[0], eMinLon, eMinLat, eMaxLon, eMaxLat, cell, asOf, staticOnly)).cells;
+  } else {
+    const parts = await Promise.all(
+      keys.map((k) => computeCells(k, eMinLon, eMinLat, eMaxLon, eMaxLat, cell, asOf, staticOnly)),
+    );
+    const merged = new Map<string, CellScore>();
+    for (const p of parts) {
+      for (const c of p.cells) {
+        const ck = `${c.lon.toFixed(6)},${c.lat.toFixed(6)}`;
+        const prev = merged.get(ck);
+        if (!prev || c.score > prev.score) merged.set(ck, c);
+      }
+    }
+    cells = [...merged.values()];
+  }
   const eStartLon = Math.floor(eMinLon / cell) * cell;
   const eStartLat = Math.floor(eMinLat / cell) * cell;
   const cols = Math.max(1, Math.ceil((eMaxLon - eStartLon) / cell));
@@ -1340,6 +1420,49 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
   const buf = PNG.sync.write(png);
   await fsp.mkdir(path.dirname(cacheFile), { recursive: true });
   await fsp.writeFile(cacheFile, buf);
+  return { buf, cacheControl };
+}
+
+app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
+  const key = req.params.species;
+  if (!SPECIES[key]) return res.status(404).json({ error: "Okänd art." });
+  const z = Number(req.params.z);
+  const x = Number(req.params.x);
+  const y = Number(req.params.y);
+  if (![z, x, y].every(Number.isInteger) || z < 3 || z > 17) {
+    return res.status(400).json({ error: "Ogiltig tile." });
+  }
+  const sens = Math.max(-10, Math.min(10, Math.round(Number(req.query.sens ?? 0) || 0)));
+  const dateParam = String(req.query.date ?? "");
+  const asOf = parseAsOf(dateParam);
+  const staticOnly = req.query.static === "1";
+  const { buf, cacheControl } = await renderHabitatTile([key], z, x, y, sens, asOf, staticOnly, dateParam, path.join("habitat", key));
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", cacheControl);
+  res.send(buf);
+});
+
+// Multi-species composite tile: per-pixel MAX score across the checked species.
+app.get("/api/tiles/multi/:z/:x/:y.png", async (req, res) => {
+  const keys = String(req.query.species ?? "kantarell")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((k) => SPECIES[k])
+    .slice(0, 6);
+  if (keys.length === 0) return res.status(400).json({ error: "Okända arter i species=." });
+  const z = Number(req.params.z);
+  const x = Number(req.params.x);
+  const y = Number(req.params.y);
+  if (![z, x, y].every(Number.isInteger) || z < 3 || z > 17) {
+    return res.status(400).json({ error: "Ogiltig tile." });
+  }
+  const sens = Math.max(-10, Math.min(10, Math.round(Number(req.query.sens ?? 0) || 0)));
+  const dateParam = String(req.query.date ?? "");
+  const asOf = parseAsOf(dateParam);
+  const staticOnly = req.query.static === "1";
+  const { buf, cacheControl } = await renderHabitatTile(
+    keys, z, x, y, sens, asOf, staticOnly, dateParam, path.join("habitat-multi", keys.join("+")),
+  );
   res.setHeader("Content-Type", "image/png");
   res.setHeader("Cache-Control", cacheControl);
   res.send(buf);
