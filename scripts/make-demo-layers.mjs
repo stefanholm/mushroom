@@ -66,6 +66,8 @@ const bok = new Float32Array(n);
 const hassel = new Float32Array(n);
 const asp = new Float32Array(n);
 const sis = new Float32Array(n);
+const gdd5 = new Float32Array(n);
+const soildepth = new Float32Array(n);
 const markfuktighet = new Uint8Array(n);
 const jordart = new Uint8Array(n);
 const hojd = new Float32Array(n);
@@ -84,6 +86,8 @@ for (let j = 0; j < height; j++) {
     else { ek[k] = volym[k] * 0.5; bok[k] = volym[k] * 0.3; hassel[k] = volym[k] * 0.1; bjork[k] = volym[k] * 0.1; }
     asp[k] = volym[k] * (mix < 0.45 ? 0.05 : mix < 0.75 ? 0.2 : 0.05);
     sis[k] = 10 + 18 * rand();
+    gdd5[k] = 1560 - ((maxN - minN - (j + 0.5) * res) / 1000) * 1.1 + 20 * rand();
+    soildepth[k] = 0.4 + 4 * rand();
     const m = rand();
     markfuktighet[k] = m < 0.1 ? 1 : m < 0.5 ? 2 : m < 0.75 ? 3 : m < 0.95 ? 4 : 5;
     jordart[k] = r < 0.75 ? 1 : 2;
@@ -112,6 +116,8 @@ await writeRaster("skog_bok_10m.tif", bok, 32, 3);
 await writeRaster("skog_hassel_10m.tif", hassel, 32, 3);
 await writeRaster("skog_asp_10m.tif", asp, 32, 3);
 await writeRaster("skog_sis_10m.tif", sis, 32, 3);
+await writeRaster("smhi_gdd5.tif", gdd5, 32, 3);
+await writeRaster("sgu_soil_depth_10m.tif", soildepth, 32, 3);
 await writeRaster("markfuktighet_10m.tif", markfuktighet, 8, 1);
 await writeRaster("jordart_10m.tif", jordart, 8, 1);
 await writeRaster("hojdmodell_2m.tif", hojd, 32, 3);
@@ -194,6 +200,8 @@ const manifest = {
     { id: "hassel", file: "skog_hassel_10m.tif", nodata: -9999, band: 1 },
     { id: "asp", file: "skog_asp_10m.tif", nodata: -9999, band: 1 },
     { id: "sis", file: "skog_sis_10m.tif", nodata: -9999, band: 1 },
+    { id: "gdd5", file: "smhi_gdd5.tif", nodata: -9999, band: 1 },
+    { id: "soildepth", file: "sgu_soil_depth_10m.tif", nodata: -9999, band: 1 },
     { id: "markfuktighet", file: "markfuktighet_10m.tif", nodata: 255, band: 1 },
     {
       id: "jordart",

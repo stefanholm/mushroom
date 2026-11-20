@@ -53,6 +53,16 @@ const SPECIES = [
   ["frostvaxing", "Hygrophorus hypothejus"],
   ["aspsopp", "Leccinum leucopodium"],
   ["tegelsopp", "Leccinum versipelle"],
+  ["blek-kantarell", "Cantharellus pallens"],
+  ["kruskantarell", "Craterellus undulatus"],
+  ["mandelriska", "Lactifluus volemus"],
+  ["tallblodriska", "Lactarius deliciosus"],
+  ["granblodriska", "Lactarius deterrimus"],
+  ["grynsopp", "Suillus granulatus"],
+  ["rodbrun-stensopp", "Boletus pinophilus"],
+  ["tallskrubb", "Leccinum vulpinum"],
+  ["bjorksopp", "Leccinum scabrum"],
+  ["zonerad-granblodriska", "Lactarius fennoscandicus"],
 ];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

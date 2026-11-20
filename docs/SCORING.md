@@ -62,18 +62,25 @@ else (fallback, flagged as hostFallback in /api/meta):
 ### S_env — environmental suitability (0–100)
 
 ```
-S_env = 100 × g(fMoisture)^0.30 × g(fAge)^0.22 × g(fCanopy)^0.16 × g(fSoil)^0.12 × g(fSIS)^0.10 × g(fTerrain)^0.10
+S_env = 100 × g(fMoisture)^0.26 × g(fAge)^0.18 × g(fCanopy)^0.12 × g(fSoil)^0.10 × g(fSIS)^0.08
+            × g(fClimate)^0.08 × g(fDepth)^0.08 × g(fTerrain)^0.10
         where g(x) = max(0.05, x)
         (weighted GEOMETRIC mean — a single weak factor drags the whole cell down
          instead of being averaged away; true hard vetoes below return score 0 directly)
 
 tradhojd < minTreeHeight → score 0                       (hard gate; maturity now via age, not height)
-fAge      = triangular over species.ageIdeal [lo, hi] years (skog_alder_10m.tif, SLU "Beståndsmedelålder"):
-            age < lo → max(0.2, age/lo);  lo ≤ age ≤ hi → 1;  age > hi → max(0.5, 1 − (age−hi)/80)
-fSIS      = triangular over species.sisIdeal [lo, hi] H100 (skog_sis_10m.tif, Skogliga grunddata SIS):
-            sis < lo → max(0.2, sis/lo);  lo ≤ sis ≤ hi → 1;  sis > hi → max(0.5, 1 − (sis−hi)/10)
-            (low SIS = nutrient-poor pine heath → sandsopp/goliatmusseron; high SIS = fertile → karljohan)
-            (missing raster → factor 1, neutral)
+fAge      = triangular over species.ageIdeal [lo, hi] years (skog_alder_10m.tif, SLU "Beståndsmedelålder")
+fSIS      = triangular over species.sisIdeal [lo, hi] H100 (skog_sis_10m.tif)
+fClimate  = trapezoid over species.gddEnvelope [hMin,iMin,iMax,hMax] on the DEM-adjusted heat sum:
+            gddEff = smhi_gdd5.tif − max(0, elevationM) × 0.9   (SMHI PTHBV 1991–2020 GDD>5 °C,
+            lapse rate −0.9 GDD/100 m ≈ −0.65 °C/100 m; raster treated as sea-level reference).
+            Outside [hMin, hMax] → HARD 0 (regional bioclimatic gate: Limes Norrlandicus ≈ 1250 GDD,
+            subalpine belt 500–800 GDD). Missing raster → factor 1.
+fDepth    = triangular over species.depthIdeal [lo, hi] metres to bedrock (sgu_soil_depth_10m.tif,
+            SGU Jorddjupsmodell 10 m). Thin rock (<0.8 m) suppresses karljohan/svart trumpetsvamp;
+            jättemusseron accepts both deep sand and thin hällmark (depthIdeal [0,100]).
+            Missing raster → factor 1.
+fTerrain  = clamp01( 0.5 + 0.3·sun·cos(aspect−180°) + 0.2·depression·clamp01(ringDepth/5) )  (7×7 DEM window)
 fMoisture = clamp01( 1 − dist(markfuktighetsklass, moistureIdeal) / 1.5 )
             ; klass ∈ vetoMoisture → score 0                         (klass 1..5: torr..blöt)
 fCanopy   = clamp01( 1 − dist(grundyta, canopyIdeal) / 6 )          (m²/ha)
@@ -99,6 +106,11 @@ roadFactor = 0 if within 50 m of a paved road/rail/aeroway line (hard zero, poll
 ```
 
 ### D — dynamic fruiting multiplier (SMHI metobs, `latest-months`)
+
+Season windows are calibrated empirically from Artportalen observations (GBIF mirror of Artportalen,
+Sweden, pulled 2026-11 — see `SEASON_FROM_OBS` in `src/habitat.ts`, e.g. kantarell observed p5–p95 =
+Jun–Nov, frostvaxing Sep–Dec, varskivling May–Jun; jättemusseron lat 57.9–66.5 confirms its
+northern/central range).
 
 ```
 seasonalFactor = 0 outside [seasonStart−0.5, seasonEnd+0.5], linear ramps of 0.5 month,
@@ -140,6 +152,22 @@ no spindelskivlingar). Habitat references: Artdatabanken Artfakta, Svampguiden, 
 | Frostvaxing | 4 | tall 1, gran 0.4 | 25 | 12 | 3, 4, 5 | 1–2 | 8–20 | acidic 1 | +1 | 0 | 0.3 | 30–100 / SIS 8–16 | no | Oct–Dec |
 | Aspsopp | 4 | asp 1, björk 0.6, ek 0.4 | 15 | 8 | 4, 5 | 2–3 | 10–25 | neutral 1 | +0.5 | 0.2 | 0.8 | 20–100 / SIS 14–24 | no | Jul–Oct |
 | Tegelsopp | 4 | björk 1, ek 0.5 | 15 | 8 | 4, 5 | 2–3 | 10–25 | neutral 1 | +0.5 | 0.2 | 0.5 | 20–100 / SIS 14–24 | no | Jul–Oct |
+| Blek kantarell | 5 | ek 1, hassel 0.9, bok 0.85 | 18 | 10 | 5 | 3–4 | 15–30 | calcareous 1 | +0.5 | 0.3 | 0.8 | 45–130 / SIS 22–35 | yes | Jun–Sep (syd, lat≤59.7) |
+| Kruskantarell | 4 | ek 1, hassel 0.9, bok 0.6 | 18 | 12 | 1 | 4 | 16–32 | calcareous 1 | −0.5 | 0.8 | 0.5 | 50–140 / SIS 22–34 | no | Aug–Oct |
+| Mandelriska | 5 | ek 0.9, gran 0.8, bok 0.6, hassel 0.5 | 20 | 10 | 5 | 2–4 | 14–28 | calcareous 1 | +0.5 | 0.3 | 0.7 | 45–130 / SIS 20–32 | no | Jul–Oct |
+| Tallblodriska | 5 | tall 1 | 20 | 8 | 4, 5 | 2–3 | 12–28 | calcareous 1 | +1 | 0 | 0.4 | 30–100 / SIS 16–28 | no | Aug–Nov |
+| Granblodriska | 4 | gran 1 | 18 | 10 | 1 | 3–4 | 14–34 | calcareous 1 | −0.5 | 0.8 | 0.3 | 20–100 / SIS 18–32 | no | Aug–Oct |
+| Grynsopp | 4 | tall 1, gran 0.3 | 16 | 8 | 5 | 2–3 | 10–26 | calcareous 1 | +1 | 0.2 | 0.6 | 20–80 / SIS 16–28 | no | Jun–Oct |
+| Rödbrun stensopp | 5 | tall 1, gran 0.25 | 22 | 12 | 4, 5 | 2–3 | 12–28 | acidic 0.9 | +0.5 | 0.2 | 0.5 | 45–130 / SIS 14–25 | no | Jul–Oct (norr t.o.m. ~64.4) |
+| Tallskrubb | 4 | tall 1 | 20 | 10 | 4, 5 | 2–3 | 10–26 | acidic 0.9 | +1 | 0 | 0.3 | 35–110 / SIS 13–24 | no | Jul–Oct (norr) |
+| Björksopp | 4 | bjork 1, asp 0.3 | 14 | 8 | 5 | 2–4 | 8–28 | acidic 1 | +0.5 | 0.3 | 0.8 | 20–100 / SIS 12–30 | no | Jul–Oct (hela landet) |
+| Zonerad granblodriska | 4 | gran 1 | 24 | 14 | 1 | 3–4 | 16–34 | acidic 1 | −0.5 | 1 | 0.2 | 45–130 / SIS 16–28 | no | Jul–Oct (58–64) |
+
+Season windows for the older species were recalibrated from the same Artportalen pull
+(kantarell Jun–Nov, karljohan Jul–Oct, trattkantarell Aug–Dec, blomkålssvamp Aug–Nov,
+rödgul taggsvamp Jul–Nov, frostvaxing Sep–Dec). Wood-decayers (svavelticka, ostronmussling,
+judasöra) are deliberately NOT in the catalog: they need a deadwood layer, not forest floor.
+Goliatmusseron = *Tricholoma colossus* (NOT matsutake), fridlyst + VU → `protected` badge.
 
 (Column order: eat · hosts · minHostVol · minTreeH · veto moisture · moisture ideal · canopy ideal ·
 soil pref · sun · depression · edge · age ideal / SIS ideal · frost sens. · season. Excluded on
@@ -196,6 +224,9 @@ source (MapLibre then GPU-overzooms instead of requesting z17+) and append `&v=<
 | tradhojd, volym, grundyta, gran, tall, bjork, ek, bok, hassel, asp, **alder**, **sis** | `skog_*_10m.tif`, `grundyta_10m.tif` | SLU Skogskarta / Skogliga grunddata (via Skogsstyrelsen) |
 | sumpskogar | `sumpskogar.geojson` | Skogsstyrelsen Sumpskogar (bonus ×1.15) |
 | NMD land-cover mask | `nmd_10m.tif` (NMD2023 v2.x basskikt) | Naturvårdsverket (CC0), replaces OSM forest/exclusion gates when present |
+| gdd5 (bioclimatic heat sum) | `smhi_gdd5.tif` | SMHI PTHBV 1991–2020 gridded normals, computed as Σ max(0, T−5 °C), EPSG:3006 |
+| soildepth | `sgu_soil_depth_10m.tif` | SGU Jorddjupsmodell 10 m (resource.sgu.se/data/oppnadata/jorddjupsmodell/jorddjupsmodell.zip) |
+| Artportalen observations | `data/validation/observations.geojson` (`npm run artfakta`) | SLU Artdatabanken via GBIF mirror / Artfakta API — used to calibrate seasons + AUC |
 | markfuktighet | `markfuktighet_10m.tif` (klass 1–5) | SLU Markfuktighetskarta |
 | jordart | `jordart_10m.tif` (recode 1→acidic, 2→calcareous) | SGU Jordarter |
 | hojd | `hojdmodell_2m.tif` | Lantmäteriet Markhöjdmodell |

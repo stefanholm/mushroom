@@ -69,6 +69,18 @@
       "band": 1
     },
     {
+      "id": "gdd5",
+      "file": "smhi_gdd5.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "soildepth",
+      "file": "sgu_soil_depth_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
       "id": "markfuktighet",
       "file": "markfuktighet_10m.tif",
       "nodata": 255,

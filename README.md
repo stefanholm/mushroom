@@ -87,6 +87,8 @@ data/
     ├── skog_asp_10m.tif                  # SLU Skogskarta – volym asp, GeoTIFF (valfri, aspsopp)
     ├── skog_alder_10m.tif                # SLU Skogskarta – beståndsmedelålder (år), GeoTIFF — fAge i S_env
     ├── skog_sis_10m.tif                  # Skogliga grunddata – ståndortsindex SIS (H100, m), GeoTIFF — fSIS i S_env
+    ├── smhi_gdd5.tif                     # SMHI PTHBV 1991–2020 – GDD>5°C (°C·d), GeoTIFF — fClimate (bioclimatisk zon; −0,9 GDD/100 m höjd via DEM)
+    ├── sgu_soil_depth_10m.tif            # SGU Jorddjupsmodell 10 m – jorddjup till berg (m), GeoTIFF — fDepth
     ├── markfuktighet_10m.tif             # SLU Markfuktighetskarta – klass 1..5 (1=torr … 5=blöt), GeoTIFF
     ├── jordart_10m.tif                   # SGU jordarter – klasskod, GeoTIFF (recode i manifest: 1=acidic, 2=calcareous)
     ├── hojdmodell_2m.tif                 # Lantmäteriet nationell höjdmodell – höjd (m), GeoTIFF (lutning/aspekt beräknas i kod)
