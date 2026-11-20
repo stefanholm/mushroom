@@ -77,6 +77,12 @@
       "file": "hojdmodell_2m.tif",
       "nodata": -9999,
       "band": 1
+    },
+    {
+      "id": "alder",
+      "file": "skog_alder_10m.tif",
+      "nodata": -9999,
+      "band": 1
     }
   ],
   "vectors": [
@@ -115,6 +121,11 @@
       52,
       53,
       54
-    ]
+    ],
+    "waterClasses": [
+      61,
+      62
+    ],
+    "waterBufferM": 50
   }
 }

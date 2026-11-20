@@ -25,14 +25,18 @@ D       = seasonalFactor × rainFactor × frost                        (0–1, d
   (`nmd_10m.tif`, Naturvårdsverket NMD 10 m) is present it **replaces** the OSM forest gate:
   `forestClasses` = 111–117 + 121–127 pass (NMD 118/128 = clear-cuts, excluded);
   classes 51/52/53/54 (building/other exploited/road+rail/peat cutting) are dilated 3 px ≈ 30 m and subtracted;
-  water (61/62) and all other classes are hard 0 without eroding forest edges.
+  water (61/62) is hard 0 **plus a 50 m buffer** (`waterBufferM`, dilated 5 px at 10 m);
+  0 (outside coverage) and all other classes are hard 0 without eroding forest edges.
 - inside an OSM exclusion polygon **or within 30 m of one** (yard/building buffer):
-  water, waterway, buildings, urban/residential/industrial/…, parks, pitches, shops…
-  (`data/osm/exclusion_*.json`). Multipolygon `role="inner"` rings are subtracted from
+  buildings, urban/residential/industrial/…, parks, pitches, shops…
+  (`data/osm/exclusion_*.json`, `polys`). Multipolygon `role="inner"` rings are subtracted from
   their outer ring, so village enclaves inside forests are not masked as forest.
-- within 20 m of a **paved** road/rail/aeroway line (motorway…service; forest
+- inside a **water** polygon or **within 50 m of one** (`natural=water`, `waterway`;
+  stored separately as `water` in `exclusion_*.json`, or NMD 61/62 in the mask) —
+  no mushrooms right at the shoreline/stream
+- within **50 m** of a **paved** road/rail/aeroway line (motorway…service; forest
   `path`/`footway`/`track` are deliberately kept open — chanterelles like trails);
-  20–35 m → ×0.5
+  50–80 m → ×0.5 (pollution falloff)
 - inside `avverkningar_senaste_5ar.geojson` (recent clear-cuts — dead mycorrhiza)
 - DEM (`hojdmodell_2m.tif`) nodata **or** elevation < 0.5 m (sea/lake surface)
 
@@ -58,12 +62,15 @@ else (fallback, flagged as hostFallback in /api/meta):
 ### S_env — environmental suitability (0–100)
 
 ```
-S_env = 100 × g(fMoisture)^0.35 × g(fMaturity)^0.25 × g(fCanopy)^0.20 × g(fSoil)^0.10 × g(fTerrain)^0.10
+S_env = 100 × g(fMoisture)^0.32 × g(fMaturity)^0.22 × g(fCanopy)^0.18 × g(fAge)^0.10 × g(fSoil)^0.09 × g(fTerrain)^0.09
         where g(x) = max(0.05, x)
         (weighted GEOMETRIC mean — a single weak factor drags the whole cell down
          instead of being averaged away; true hard vetoes below return score 0 directly)
 
 fMaturity = clamp01( (tradhojd − minTreeHeight) / 16 + 0.35 )     ; tradhojd < minTreeHeight → score 0
+fAge      = triangular preference over species.ageIdeal [lo, hi] in years (skog_alder_10m.tif, SLU Skogskarta "Ålder"):
+            age < lo → max(0.2, age/lo);  lo ≤ age ≤ hi → 1;  age > hi → max(0.5, 1 − (age−hi)/80)
+            (no alder raster → fAge = 1, neutral)
 fMoisture = clamp01( 1 − dist(markfuktighetsklass, moistureIdeal) / 1.5 )
             ; klass ∈ vetoMoisture → score 0                         (klass 1..5: torr..blöt)
 fCanopy   = clamp01( 1 − dist(grundyta, canopyIdeal) / 6 )          (m²/ha)
@@ -81,8 +88,8 @@ the glow threshold — visible only at low sensitivity).
 ```
 M_bonus = 1.3                                  if inside nyckelbiotoper.geojson
         × (1 + 0.15 × species.edge)           if within ~1 cell of the forest-mask edge
-roadFactor = 0 if within 15 m of an exclusion line (roads/rail — hard zero),
-             0.5 if within 30 m, else 1
+roadFactor = 0 if within 50 m of a paved road/rail/aeroway line (hard zero, pollution),
+             0.5 if within 80 m, else 1
 (OSM relation members are assembled into closed rings before point-in-polygon, so
  building/water relations are masked correctly)
 ```
@@ -99,12 +106,24 @@ frost          = 0 if species.frostSensitive and min(temp last 48 h) ≤ −3 °
 
 ## 2. Species rule matrix (src/habitat.ts, `SPECIES`)
 
-| Species | hosts (weight) | minHostVol | minTreeH | veto moisture | moisture ideal | canopy ideal | soil pref | sun | depression | edge | frost sens. | season |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Kantarell | björk 1, ek 1, bok 1, gran 0.8, tall 0.6 | 15 | 10 | 5 (blöt) | 2–3 | 15–28 | acidic 1 | +1 | 0.3 | 1 | yes | Jul–Oct |
-| Trattkantarell | gran 1, tall 0.5, björk 0.2 | 30 | 14 | 1 (torr) | 3–4 | 25–40 | acidic 1 | −1 | 1 | 0.2 | no | Sep–Nov |
-| Karljohan | gran 1, ek 0.9, bok 0.9, björk 0.8, tall 0.5 | 20 | 12 | 5 | 2–3 | 18–30 | acidic 0.9 | +0.5 | 0.2 | 0.5 | no | Aug–Sep |
-| Svart trumpetsvamp | ek 1, hassel 0.8, bok 0.4, björk 0.3 | 15 | 12 | 1, 2 | 4 | 22–35 | calcareous 1; **veto acidic** | −1 | 1 | 0.3 | no | Aug–Oct |
+Every species also carries `eatScore` (ätvärde 1–5, shown as ★ in the UI and `/api/meta`
+`speciesList`), a Swedish `note` with identification/safety guidance, `ageIdeal`, and
+`protected` (jättemusseron is **fridlyst** in Sweden — shown with a warning, do not pick).
+Only species without deadly lookalikes are listed (no murklor/Gyromitra, no small Lepiota,
+no spindelskivlingar). Habitat references: Artdatabanken Artfakta, Svampguiden, Wikipedia.
+
+| Species | eat | hosts (weight) | minHostVol | minTreeH | veto moisture | moisture ideal | canopy ideal | soil pref | sun | depression | edge | age ideal | frost sens. | season |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Kantarell | 5 | björk 1, ek 1, bok 1, gran 0.8, tall 0.6 | 15 | 10 | 5 (blöt) | 2–3 | 15–28 | acidic 1 | +1 | 0.3 | 1 | 40–130 | yes | Jul–Oct |
+| Trattkantarell | 4 | gran 1, tall 0.5, björk 0.2 | 30 | 14 | 1 (torr) | 3–4 | 25–40 | acidic 1 | −1 | 1 | 0.2 | 30–120 | no | Sep–Nov |
+| Karljohan | 5 | gran 1, ek 0.9, bok 0.9, björk 0.8, tall 0.5 | 20 | 12 | 5 | 2–3 | 18–30 | acidic 0.9 | +0.5 | 0.2 | 0.5 | 30–120 | no | Aug–Sep |
+| Svart trumpetsvamp | 5 | ek 1, hassel 0.8, bok 0.4, björk 0.3 | 15 | 12 | 1, 2 | 4 | 22–35 | calcareous 1; **veto acidic** | −1 | 1 | 0.3 | 40–130 | no | Aug–Oct |
+| Jättemusseron (goliatmusseron) | 5 ⚠fridlyst | tall 1, gran 0.2 | 40 | 18 | 4, 5 | 1–2 | 10–25 | acidic 1 | +1 | 0.2 | 0.2 | 60–160 | no | Aug–mid Oct |
+| Stolt fjällskivling | 4 | björk 0.7, ek 0.6, bok 0.4, hassel 0.4 | 5 | 0 | 4, 5 | 2–3 | 0–18 | neutral 1 | +1 | 0 | 1.5 | 0–80 | yes | Jul–Oct |
+| Rödgul trumpetsvamp | 4 | gran 1, tall 0.4, björk 0.2 | 25 | 12 | 1 | 3–4 | 20–40 | acidic 1 | −1 | 1 | 0.2 | 30–120 | no | Aug–Nov |
+| Blek taggsvamp | 3 | gran 0.8, bok 0.7, ek 0.7, björk 0.6, tall 0.5 | 15 | 8 | 5 | 2–4 | 15–35 | neutral 1 | 0 | 0.5 | 0.5 | 20–120 | no | Aug–mid Oct |
+| Vårskivling | 3 | björk 0.7, ek 0.6, hassel 0.5, bok 0.4 | 5 | 0 | 4, 5 | 2–3 | 0–20 | calcareous 1 | +1 | 0 | 1.2 | 0–60 | yes | mid Apr–Jun |
+| Brunsopp | 3 | tall 1, gran 0.7, björk 0.3 | 20 | 10 | 5 | 2–3 | 15–30 | acidic 1 | +0.5 | 0.3 | 0.5 | 30–120 | no | Aug–Nov |
 
 (Svart trumpetsvamp around Stockholm/Mälardalen is oak + hazel in rich mossy mixed forest —
 beech `bok` is weighted low on purpose; drop a `skog_hassel_10m.tif` into `data/layers/` and
@@ -152,7 +171,8 @@ source (MapLibre then GPU-overzooms instead of requesting z17+) and append `&v=<
 
 | Layer id | File (data/layers/) | Source |
 |---|---|---|
-| tradhojd, volym, grundyta, gran, tall, bjork, ek, bok | `skog_*_10m.tif`, `grundyta_10m.tif` | SLU Skogskarta / Skogliga grunddata (via Skogsstyrelsen) |
+| tradhojd, volym, grundyta, gran, tall, bjork, ek, bok, **alder** | `skog_*_10m.tif`, `grundyta_10m.tif`, `skog_alder_10m.tif` | SLU Skogskarta / Skogliga grunddata (via Skogsstyrelsen) |
+| NMD land-cover mask | `nmd_10m.tif` (NMD2023 v2.x basskikt) | Naturvårdsverket (CC0), replaces OSM forest/exclusion gates when present |
 | markfuktighet | `markfuktighet_10m.tif` (klass 1–5) | SLU Markfuktighetskarta |
 | jordart | `jordart_10m.tif` (recode 1→acidic, 2→calcareous) | SGU Jordarter |
 | hojd | `hojdmodell_2m.tif` | Lantmäteriet Markhöjdmodell |
@@ -172,6 +192,10 @@ All rasters/vectors must be EPSG:3006 (SWEREF 99 TM); `manifest.json` declares n
   excluded → 0; multipolygon inner hole → not excluded; point on paved road → roadFactor 0 →
   0; point outside all baked tiles → `forestKnown=false`, score 0. Rendered tiles: lake
   window fully transparent even at sens=−10; hot-pixel coverage stable across z12–z16.
+- 50 m water buffer verified: lake centre and +30 m → `nearWater=true, excluded=true, score=0`;
+  +60 m → clear. Road falloff verified: 0 m → factor 0, ~56 m → 0.5, ~85 m → 1.
+- `alder` raster loaded and `fAge` present in `/api/debug/cell`; new species return sane
+  static scores on demo forest (vårskivling/stolt fjällskivling ≈ 48–49 at a test cell).
 - OSM disk-cache key format unified with `toFixed(6)` on both server and bake script
   (float artifacts like `18.400000000000002` vs `18.400000000000006` previously made the
   cache never match for multi-tile bboxes — the cause of `skog: 0 · exkl: 0`).

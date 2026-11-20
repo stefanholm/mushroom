@@ -220,9 +220,9 @@ for (const t of tiles) {
   try {
     const f = JSON.parse(await fs.readFile(path.join(root, `forest_${key}.json`), "utf8"));
     const e = JSON.parse(await fs.readFile(path.join(root, `exclusion_${key}.json`), "utf8"));
-    if (Array.isArray(f) && f.length > 0 && ((e.polys?.length ?? 0) > 0 || (e.lines?.length ?? 0) > 0)) {
+    if (Array.isArray(f) && f.length > 0 && ((e.polys?.length ?? 0) > 0 || (e.lines?.length ?? 0) > 0 || (e.water?.length ?? 0) > 0)) {
       totalForest += f.length;
-      totalExcl += (e.polys?.length ?? 0) + (e.lines?.length ?? 0);
+      totalExcl += (e.polys?.length ?? 0) + (e.lines?.length ?? 0) + (e.water?.length ?? 0);
       skipped++;
       console.log(`[${key}] redan bakad, hoppar över`);
       continue;
@@ -233,7 +233,7 @@ for (const t of tiles) {
   try {
     forest = ringsOf(await overpass(forestQ(b)));
     const exclBody = await overpass(exclQ(b));
-    ex = { polys: [], lines: [] };
+    ex = { polys: [], lines: [], water: [] };
     for (const e of exclBody.elements ?? []) {
       const tg = e.tags ?? {};
       const line = Boolean(tg.highway || tg.railway || tg.aeroway);
@@ -244,7 +244,9 @@ for (const t of tiles) {
           if (ring.length >= 2) ex.lines.push(ring);
         }
       } else {
-        ex.polys.push(...polysOf({ elements: [e] }));
+        const ps = polysOf({ elements: [e] });
+        if (tg.natural === "water" || tg.waterway !== undefined) ex.water.push(...ps);
+        else ex.polys.push(...ps);
       }
     }
     console.log(`[${key}] fetched via Overpass`);
@@ -261,11 +263,15 @@ for (const t of tiles) {
         .flatMap((f) => f.rings)
         .filter((r) => r.length >= 3)
         .map((r) => ({ outer: r, inner: [] }));
-      ex = { polys: [], lines: [] };
+      ex = { polys: [], lines: [], water: [] };
       for (const f of features) {
         if (isLine(f.tags)) ex.lines.push(...f.rings);
         else if (isExclArea(f.tags)) {
-          for (const r of f.rings) if (r.length >= 3) ex.polys.push({ outer: r, inner: [] });
+          for (const r of f.rings) {
+            if (r.length < 3) continue;
+            if (f.tags.natural === "water" || f.tags.waterway !== undefined) ex.water.push({ outer: r, inner: [] });
+            else ex.polys.push({ outer: r, inner: [] });
+          }
         }
       }
       console.log(`[${key}] fetched via OSM main API`);
@@ -277,9 +283,9 @@ for (const t of tiles) {
   }
   await fs.writeFile(path.join(root, `forest_${key}.json`), JSON.stringify(forest));
   await fs.writeFile(path.join(root, `exclusion_${key}.json`), JSON.stringify(ex));
-  console.log(`  forest_${key}.json: ${forest.length} polys, exclusion: ${ex.polys.length} polys / ${ex.lines.length} lines`);
+  console.log(`  forest_${key}.json: ${forest.length} polys, exclusion: ${ex.polys.length} polys / ${ex.lines.length} lines / ${ex.water?.length ?? 0} water`);
   totalForest += forest.length;
-  totalExcl += ex.polys.length + ex.lines.length;
+  totalExcl += ex.polys.length + ex.lines.length + (ex.water?.length ?? 0);
 }
 console.log(`Totalt: ${totalForest} skog-polygoner, ${totalExcl} exkl-polygoner/linjer; ${skipped} redan bakade, ${failed} misslyckades.`);
 if (failed > 0 || totalForest === 0 || totalExcl === 0) {

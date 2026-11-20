@@ -67,6 +67,7 @@ const hassel = new Float32Array(n);
 const markfuktighet = new Uint8Array(n);
 const jordart = new Uint8Array(n);
 const hojd = new Float32Array(n);
+const alder = new Float32Array(n);
 
 for (let j = 0; j < height; j++) {
   for (let i = 0; i < width; i++) {
@@ -84,12 +85,14 @@ for (let j = 0; j < height; j++) {
     jordart[k] = r < 0.75 ? 1 : 2;
     hojd[k] =
       10 + 80 * (0.5 + 0.5 * Math.sin(i * 0.05) * Math.cos(j * 0.04)) + 5 * rand();
+    alder[k] = 15 + 130 * rand();
     if (i >= 150 && i < 210 && j >= 300 && j < 390) hojd[k] = -9999;
     if (i >= 250 && i < 340 && j >= 80 && j < 200) {
       tradhojd[k] = 0;
       volym[k] = 0;
       gran[k] = 0; tall[k] = 0; bjork[k] = 0; ek[k] = 0; bok[k] = 0; hassel[k] = 0;
       grundyta[k] = 0;
+      alder[k] = 10;
     }
   }
 }
@@ -106,6 +109,7 @@ await writeRaster("skog_hassel_10m.tif", hassel, 32, 3);
 await writeRaster("markfuktighet_10m.tif", markfuktighet, 8, 1);
 await writeRaster("jordart_10m.tif", jordart, 8, 1);
 await writeRaster("hojdmodell_2m.tif", hojd, 32, 3);
+await writeRaster("skog_alder_10m.tif", alder, 32, 3);
 
 const clearcutSquare = (lon0, lat0, lon1, lat1) => {
   const pts = [
@@ -176,6 +180,7 @@ const manifest = {
       recode: { "1": "acidic", "2": "calcareous" },
     },
     { id: "hojd", file: "hojdmodell_2m.tif", nodata: -9999, band: 1 },
+    { id: "alder", file: "skog_alder_10m.tif", nodata: -9999, band: 1 },
   ],
   vectors: [
     { id: "avverkningar", file: "avverkningar_senaste_5ar.geojson", crs: "EPSG:3006" },
@@ -186,6 +191,8 @@ const manifest = {
     forestClasses: [111, 112, 113, 114, 115, 116, 117, 121, 122, 123, 124, 125, 126, 127],
     dilatePx: 3,
     dilateClasses: [51, 52, 53, 54],
+    waterClasses: [61, 62],
+    waterBufferM: 50,
   },
 };
 await fs.writeFile(path.join(root, "manifest.json"), JSON.stringify(manifest, null, 2));

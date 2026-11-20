@@ -16,6 +16,10 @@ export type SpeciesProfile = {
   depression: number;
   edge: number;
   frostSensitive: boolean;
+  eatScore: number;
+  note: string;
+  ageIdeal?: [number, number];
+  protected?: boolean;
 };
 
 export const SPECIES: Record<string, SpeciesProfile> = {
@@ -34,6 +38,9 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     depression: 0.3,
     edge: 1,
     frostSensitive: true,
+    eatScore: 5,
+    note: "Gul trattformad hatt, ådrade skivor — inga giftiga dubbelgångare i Sverige.",
+    ageIdeal: [40, 130],
   },
   trattkantarell: {
     label: "Trattkantarell",
@@ -50,6 +57,9 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     depression: 1,
     edge: 0.2,
     frostSensitive: false,
+    eatScore: 4,
+    note: "Gulbrun tratt, ihålig fot — inga giftiga dubbelgångare.",
+    ageIdeal: [30, 120],
   },
   karljohan: {
     label: "Karljohan",
@@ -66,6 +76,9 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     depression: 0.2,
     edge: 0.5,
     frostSensitive: false,
+    eatScore: 5,
+    note: "Rödbrun hatt, vita rör. Skilj från gallsopp (bitter, rosa rör vid snitt).",
+    ageIdeal: [30, 120],
   },
   "svart-trumpetsvamp": {
     label: "Svart trumpetsvamp",
@@ -83,6 +96,124 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     depression: 1,
     edge: 0.3,
     frostSensitive: false,
+    eatScore: 5,
+    note: "Svart tratt, ihålig — mycket svår att förväxla. Kräver kalkrik lövskog.",
+    ageIdeal: [40, 130],
+  },
+  jattemusseron: {
+    label: "Jättemusseron (goliatmusseron)",
+    seasonStart: 8,
+    seasonEnd: 10.5,
+    hosts: { tall: 1, gran: 0.2 },
+    minHostVolume: 40,
+    minTreeHeight: 18,
+    vetoMoisture: [4, 5],
+    moistureIdeal: [1, 2],
+    canopyIdeal: [10, 25],
+    soil: { acidic: 1, neutral: 0.7, calcareous: 0.3 },
+    sun: 1,
+    depression: 0.2,
+    edge: 0.2,
+    frostSensitive: false,
+    eatScore: 5,
+    note: "FRIDLYST i Sverige — beundra men plocka inte. Jättestor med ormskinnig fot och vit sporer; växer i gammal tallskog på sandig mark.",
+    ageIdeal: [60, 160],
+    protected: true,
+  },
+  "stolt-fjallskivling": {
+    label: "Stolt fjällskivling",
+    seasonStart: 7,
+    seasonEnd: 10,
+    hosts: { bjork: 0.7, ek: 0.6, bok: 0.4, hassel: 0.4 },
+    minHostVolume: 5,
+    minTreeHeight: 0,
+    vetoMoisture: [4, 5],
+    moistureIdeal: [2, 3],
+    canopyIdeal: [0, 18],
+    soil: { neutral: 1, acidic: 0.8, calcareous: 0.9 },
+    sun: 1,
+    depression: 0,
+    edge: 1.5,
+    frostSensitive: true,
+    eatScore: 4,
+    note: "Vit sporer, ormmönstrad fot, rörlig ring. Små fjällskivlingar (Lepiota) kan vara dödligt giftiga — kontrollera alltid storlek, ormskinn och ring.",
+    ageIdeal: [0, 80],
+  },
+  "rodgul-trumpetsvamp": {
+    label: "Rödgul trumpetsvamp",
+    seasonStart: 8,
+    seasonEnd: 11,
+    hosts: { gran: 1, tall: 0.4, bjork: 0.2 },
+    minHostVolume: 25,
+    minTreeHeight: 12,
+    vetoMoisture: [1],
+    moistureIdeal: [3, 4],
+    canopyIdeal: [20, 40],
+    soil: { acidic: 1, neutral: 0.8, calcareous: 0.5 },
+    sun: -1,
+    depression: 1,
+    edge: 0.2,
+    frostSensitive: false,
+    eatScore: 4,
+    note: "Gul fot, ihålig, veckad undersida — inga giftiga dubbelgångare.",
+    ageIdeal: [30, 120],
+  },
+  "blek-taggsvamp": {
+    label: "Blek taggsvamp",
+    seasonStart: 8,
+    seasonEnd: 10.5,
+    hosts: { gran: 0.8, bok: 0.7, ek: 0.7, bjork: 0.6, tall: 0.5 },
+    minHostVolume: 15,
+    minTreeHeight: 8,
+    vetoMoisture: [5],
+    moistureIdeal: [2, 4],
+    canopyIdeal: [15, 35],
+    soil: { acidic: 0.9, neutral: 1, calcareous: 0.9 },
+    sun: 0,
+    depression: 0.5,
+    edge: 0.5,
+    frostSensitive: false,
+    eatScore: 3,
+    note: "Taggar (ej skivor) under hatten — inga giftiga taggsvampar i Sverige.",
+    ageIdeal: [20, 120],
+  },
+  varskivling: {
+    label: "Vårskivling",
+    seasonStart: 4.5,
+    seasonEnd: 6,
+    hosts: { bjork: 0.7, ek: 0.6, hassel: 0.5, bok: 0.4 },
+    minHostVolume: 5,
+    minTreeHeight: 0,
+    vetoMoisture: [4, 5],
+    moistureIdeal: [2, 3],
+    canopyIdeal: [0, 20],
+    soil: { calcareous: 1, neutral: 0.9, acidic: 0.6 },
+    sun: 1,
+    depression: 0,
+    edge: 1.2,
+    frostSensitive: true,
+    eatScore: 3,
+    note: "Mjöldoft, köttig hatt; växer ofta i häxringar på ängar och skogsbryn — vårens första matsvamp.",
+    ageIdeal: [0, 60],
+  },
+  brunsopp: {
+    label: "Brunsopp",
+    seasonStart: 8,
+    seasonEnd: 11,
+    hosts: { tall: 1, gran: 0.7, bjork: 0.3 },
+    minHostVolume: 20,
+    minTreeHeight: 10,
+    vetoMoisture: [5],
+    moistureIdeal: [2, 3],
+    canopyIdeal: [15, 30],
+    soil: { acidic: 1, neutral: 0.8, calcareous: 0.4 },
+    sun: 0.5,
+    depression: 0.3,
+    edge: 0.5,
+    frostSensitive: false,
+    eatScore: 3,
+    note: "Brun sammetshatt, gula rör som blånar vid snitt — tydligt kännetecken.",
+    ageIdeal: [30, 120],
   },
 };
 
@@ -187,6 +318,17 @@ export function staticHabitatScore(
     }
   }
 
+  const ageL = store.rasters.get("alder");
+  let fAge = 1;
+  if (ageL) {
+    const v = ageL.sampleSync(easting, northing);
+    if (v !== null) {
+      covered = true;
+      const [lo, hi] = species.ageIdeal ?? [0, 250];
+      fAge = v < lo ? Math.max(0.2, lo > 0 ? v / lo : 1) : v > hi ? Math.max(0.5, 1 - (v - hi) / 80) : 1;
+    }
+  }
+
   const moisture = store.rasters.get("markfuktighet");
   let fMoisture = 1;
   if (moisture) {
@@ -252,11 +394,12 @@ export function staticHabitatScore(
   const soft = (x: number) => Math.max(0.05, x);
   const sEnv =
     100 *
-    Math.pow(soft(fMoisture), 0.35) *
-    Math.pow(soft(fMaturity), 0.25) *
-    Math.pow(soft(fCanopy), 0.2) *
-    Math.pow(soft(fSoil), 0.1) *
-    Math.pow(soft(fTerrain), 0.1);
+    Math.pow(soft(fMoisture), 0.32) *
+    Math.pow(soft(fMaturity), 0.22) *
+    Math.pow(soft(fCanopy), 0.18) *
+    Math.pow(soft(fAge), 0.1) *
+    Math.pow(soft(fSoil), 0.09) *
+    Math.pow(soft(fTerrain), 0.09);
   if (dbg) {
     Object.assign(dbg, {
       hostVol,
@@ -264,6 +407,7 @@ export function staticHabitatScore(
       fMoisture,
       fMaturity,
       fCanopy,
+      fAge,
       fSoil,
       fTerrain,
       sEnv: Number(sEnv.toFixed(2)),

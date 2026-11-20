@@ -162,3 +162,20 @@ button:disabled {
   border-color: #2f6f3e;
   color: #fff;
 }
+.species-info {
+  flex-basis: 100%;
+  font-size: 0.8rem;
+  color: #444;
+}
+.species-info.warn {
+  color: #a40000;
+  font-weight: 600;
+}
+#savePng {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 0.4rem;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.85rem;
+}

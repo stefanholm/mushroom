@@ -27,7 +27,14 @@ export type Manifest = {
   crs?: string;
   rasters?: RasterEntry[];
   vectors?: VectorEntry[];
-  mask?: { file: string; forestClasses: number[]; dilatePx?: number; dilateClasses?: number[] };
+  mask?: {
+    file: string;
+    forestClasses: number[];
+    dilatePx?: number;
+    dilateClasses?: number[];
+    waterClasses?: number[];
+    waterBufferM?: number;
+  };
 };
 
 export class MaskLayer {
@@ -41,6 +48,8 @@ export class MaskLayer {
     private forestClasses: Set<number>,
     private dilatePx: number,
     private dilateClasses: Set<number>,
+    private waterClasses: Set<number>,
+    private waterBufferM: number,
   ) {}
 
   static async load(
@@ -48,6 +57,8 @@ export class MaskLayer {
     forestClasses: number[],
     dilatePx = 3,
     dilateClasses: number[] = [51, 52, 53, 54],
+    waterClasses: number[] = [61, 62],
+    waterBufferM = 50,
   ): Promise<MaskLayer> {
     const tiff = await fromFile(file);
     const image = await tiff.getImage();
@@ -63,6 +74,8 @@ export class MaskLayer {
       new Set(forestClasses),
       dilatePx,
       new Set(dilateClasses),
+      new Set(waterClasses),
+      waterBufferM,
     );
   }
 
@@ -84,40 +97,47 @@ export class MaskLayer {
       return;
     }
     const data = (await this.image.readRasters({ interleave: true })) as ArrayLike<number>;
-    const forest = new Uint8Array(w * h);
-    for (let k = 0; k < w * h; k++) {
-      const v = data[k];
-      if (typeof v === "number" && this.forestClasses.has(Math.round(v))) forest[k] = 1;
-    }
-    let blocked = new Uint8Array(w * h);
-    for (let k = 0; k < w * h; k++) {
-      const v = data[k];
-      blocked[k] = typeof v === "number" && this.dilateClasses.has(Math.round(v)) ? 1 : 0;
-    }
-    const r = Math.max(1, this.dilatePx);
-    const tmp = new Uint8Array(w * h);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let m = 0;
-        for (let dx = -r; dx <= r && !m; dx++) {
-          const xx = x + dx;
-          if (xx >= 0 && xx < w && blocked[y * w + xx]) m = 1;
-        }
-        tmp[y * w + x] = m;
-      }
-    }
-    for (let x = 0; x < w; x++) {
+    const dilate = (src: Uint8Array, r: number): Uint8Array => {
+      const out = new Uint8Array(w * h);
+      const tmp = new Uint8Array(w * h);
       for (let y = 0; y < h; y++) {
-        let m = 0;
-        for (let dy = -r; dy <= r && !m; dy++) {
-          const yy = y + dy;
-          if (yy >= 0 && yy < h && tmp[yy * w + x]) m = 1;
+        for (let x = 0; x < w; x++) {
+          let m = 0;
+          for (let dx = -r; dx <= r && !m; dx++) {
+            const xx = x + dx;
+            if (xx >= 0 && xx < w && src[y * w + xx]) m = 1;
+          }
+          tmp[y * w + x] = m;
         }
-        blocked[y * w + x] = m;
       }
+      for (let x = 0; x < w; x++) {
+        for (let y = 0; y < h; y++) {
+          let m = 0;
+          for (let dy = -r; dy <= r && !m; dy++) {
+            const yy = y + dy;
+            if (yy >= 0 && yy < h && tmp[yy * w + x]) m = 1;
+          }
+          out[y * w + x] = m;
+        }
+      }
+      return out;
+    };
+    const forest = new Uint8Array(w * h);
+    const blocked0 = new Uint8Array(w * h);
+    const water0 = new Uint8Array(w * h);
+    for (let k = 0; k < w * h; k++) {
+      const v = data[k];
+      if (typeof v !== "number") continue;
+      const c = Math.round(v);
+      if (this.forestClasses.has(c)) forest[k] = 1;
+      if (this.dilateClasses.has(c)) blocked0[k] = 1;
+      if (this.waterClasses.has(c)) water0[k] = 1;
     }
+    const blocked = dilate(blocked0, Math.max(1, this.dilatePx));
+    const pxM = Math.abs(this.pixelX) || 10;
+    const water = dilate(water0, Math.max(1, Math.round(this.waterBufferM / pxM)));
     this.allowed = new Uint8Array(w * h);
-    for (let k = 0; k < w * h; k++) this.allowed[k] = forest[k] && !blocked[k] ? 1 : 0;
+    for (let k = 0; k < w * h; k++) this.allowed[k] = forest[k] && !blocked[k] && !water[k] ? 1 : 0;
   }
 
   has(easting: number, northing: number): boolean {
@@ -376,6 +396,8 @@ export class LayerStore {
           manifest.mask.forestClasses,
           manifest.mask.dilatePx ?? 3,
           manifest.mask.dilateClasses ?? [51, 52, 53, 54],
+          manifest.mask.waterClasses ?? [61, 62],
+          manifest.mask.waterBufferM ?? 50,
         );
         await store.mask.build();
       } catch {

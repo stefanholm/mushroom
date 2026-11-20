@@ -9,6 +9,34 @@ const sensLabel = document.getElementById("sensLabel");
 const trailsInput = document.getElementById("trails");
 const basemapButtons = Array.from(document.querySelectorAll(".bm"));
 const metaEl = document.getElementById("meta");
+const speciesInfo = document.getElementById("speciesInfo");
+const savePngBtn = document.getElementById("savePng");
+
+const MONTHS = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+const seasonLabel = (s) => `${MONTHS[Math.max(0, Math.ceil(s[0]) - 1)]}–${MONTHS[Math.min(11, Math.ceil(s[1]) - 1)]}`;
+
+let speciesList = null;
+function applySpeciesList(list) {
+  if (!Array.isArray(list) || list.length === 0) return;
+  speciesList = list;
+  const current = speciesSelect.value;
+  speciesSelect.innerHTML = "";
+  for (const s of list) {
+    const opt = document.createElement("option");
+    opt.value = s.id;
+    opt.textContent = `${s.label} ${"★".repeat(s.eatScore)}${"☆".repeat(5 - s.eatScore)} (${seasonLabel(s.season)})`;
+    speciesSelect.appendChild(opt);
+  }
+  if (list.some((s) => s.id === current)) speciesSelect.value = current;
+  updateSpeciesInfo();
+}
+
+function updateSpeciesInfo() {
+  const s = speciesList?.find((x) => x.id === speciesSelect.value);
+  if (!s || !speciesInfo) return;
+  speciesInfo.textContent = `${"★".repeat(s.eatScore)} ätvärde ${s.eatScore}/5 · säsong ${seasonLabel(s.season)} — ${s.note}${s.protected ? " ⚠ FRIDLYST" : ""}`;
+  speciesInfo.classList.toggle("warn", !!s.protected);
+}
 
 let map = null;
 const TILE_V = "r14";
@@ -104,6 +132,7 @@ async function refreshMeta() {
     const r = await fetch("/api/meta?" + q);
     if (!r.ok) return;
     const m = await r.json();
+    if (m.speciesList) applySpeciesList(m.speciesList);
     metaEl.textContent = `Regn 14 d: ${
       m.rain14 === null ? "okänt" : m.rain14.toFixed(1) + " mm"
     } · väder: ${m.rainFactor} · säsong: ${m.seasonFactor} · lager: ${(m.layersLoaded ?? []).length} · skog: ${
@@ -119,6 +148,7 @@ async function refreshMeta() {
 function initMap(maplibregl) {
   map = new maplibregl.Map({
     container: "map",
+    preserveDrawingBuffer: true,
     style: {
       version: 8,
       sources: {
@@ -192,7 +222,21 @@ function initMap(maplibregl) {
       refreshMeta();
     }, 400);
   }
-  speciesSelect.addEventListener("change", scheduleRebuild);
+  speciesSelect.addEventListener("change", () => {
+    updateSpeciesInfo();
+    scheduleRebuild();
+  });
+  savePngBtn.addEventListener("click", () => {
+    if (!map) return;
+    map.getCanvas().toBlob((blob) => {
+      if (!blob) return;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `svampkarta-${speciesSelect.value}-${selectedDate() ?? "nu"}.png`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }, "image/png");
+  });
   staticOnlyInput.addEventListener("change", scheduleRebuild);
   dateSlider.addEventListener("input", () => {
     updateDateLabel();

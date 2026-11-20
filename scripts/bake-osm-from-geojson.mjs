@@ -118,7 +118,7 @@ const exclFeats = await loadFeatures(exclFile, "excl");
 const tiles = new Map();
 const tileFor = (i, j) => {
   const key = keyOf(i, j);
-  if (!tiles.has(key)) tiles.set(key, { forest: [], ex: { polys: [], lines: [] } });
+  if (!tiles.has(key)) tiles.set(key, { forest: [], ex: { polys: [], lines: [], water: [] } });
   return tiles.get(key);
 };
 
@@ -149,12 +149,14 @@ for (const f of exclFeats) {
       }
     }
   } else {
+    const water = t.natural === "water" || t.waterway !== undefined;
     for (const p of polysOf(f.geometry)) {
       nExclPoly++;
       const [minX, minY, maxX, maxY] = bboxOf(p.outer);
       for (let i = Math.max(Math.floor(minLon / g), Math.floor(minX / g)); i * g <= maxX + 1e-9 && i * g < maxLon + 1e-9; i++) {
         for (let j = Math.max(Math.floor(minLat / g), Math.floor(minY / g)); j * g <= maxY + 1e-9 && j * g < maxLat + 1e-9; j++) {
-          tileFor(i, j).ex.polys.push(p);
+          if (water) tileFor(i, j).ex.water.push(p);
+          else tileFor(i, j).ex.polys.push(p);
         }
       }
     }

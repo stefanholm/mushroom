@@ -11,7 +11,12 @@ import { SPECIES, hostFallback, seasonalFactor, staticHabitatScore } from "./hab
 
 const MODEL = "mistral-small-latest";
 const SYSTEM_PROMPT =
-  "Du är en hjälpsam assistent för svampplockning i Sverige. Svara alltid på svenska.";
+  "Du är en hjälpsam assistent för svampplockning i Sverige. Svara alltid på svenska. " +
+  "Rekommendera bara matsvampar som är lätta att känna igen och saknar dödligt giftiga dubbelgångare " +
+  "(t.ex. kantarell, karljohan, trattkantarell, svart trumpetsvamp, rödgul trumpetsvamp, blek taggsvamp, " +
+  "stolt fjällskivling, vårskivling, brunsopp). Rekommendera aldrig murklor, små fjällskivlingar (Lepiota) " +
+  "eller spindelskivlingar. Påminn alltid om att äta aldrig svamp man inte är 100 % säker på, att jättemusseron " +
+  "är fridlyst i Sverige (plocka inte), och att vid misstanke om förgiftning kontakta Giftinformationscentralen (112 vid akuta symtom).";
 
 if (!process.env.MISTRAL_API_KEY) {
   console.error("MISTRAL_API_KEY is not set. Copy .env.example to .env and add your key.");
@@ -312,6 +317,9 @@ const EXCLUDE_LANDUSE_RE =
 const EXCLUDE_LEISURE = new Set(["pitch", "golf_course", "recreation_ground", "park", "garden", "playground", "dog_park"]);
 const EXCLUDE_MAN_MADE = new Set(["wastewater_plant", "storage_tank"]);
 
+const isWaterTag = (t: Record<string, string>): boolean =>
+  t.natural === "water" || t.waterway !== undefined;
+
 const isExcludedAreaTag = (t: Record<string, string>): boolean =>
   t.natural === "water" ||
   t.waterway !== undefined ||
@@ -444,11 +452,14 @@ async function diskExclusionTiles(
         try {
           const raw = JSON.parse(
             await fsp.readFile(path.join(here, "..", "data", "osm", `exclusion_${key}.json`), "utf8"),
-          ) as { polys?: unknown; lines?: unknown };
+          ) as { polys?: unknown; lines?: unknown; water?: unknown };
           for (const p of Array.isArray(raw?.polys) ? raw.polys : []) {
             ex.polys.push(Array.isArray(p) ? { outer: p as [number, number][], inner: [] as [number, number][][] } : (p as Poly));
           }
           for (const l of Array.isArray(raw?.lines) ? raw.lines : []) ex.lines.push(l as [number, number][]);
+          for (const p of Array.isArray(raw?.water) ? raw.water : []) {
+            (ex.water ??= []).push(Array.isArray(p) ? { outer: p as [number, number][], inner: [] as [number, number][][] } : (p as Poly));
+          }
         } catch {
           allPresent = false;
         }
@@ -498,7 +509,12 @@ async function forestPolygonsForBox(
   return ok ? polys : null;
 }
 
-type Exclusions = { polys: Poly[]; lines: [number, number][][] };
+type Exclusions = { polys: Poly[]; lines: [number, number][][]; water?: Poly[] };
+
+const EXCLUSION_BUFFER_M = 30;
+const WATER_BUFFER_M = 50;
+const ROAD_ZERO_M = 50;
+const ROAD_HALF_M = 80;
 const exclusionCache = new Map<string, { at: number; ex: Exclusions; ok: boolean }>();
 
 async function exclusionsForBox(
@@ -519,7 +535,7 @@ async function exclusionsForBox(
   const area = `way["natural"="water"](${b});way["waterway"](${b});way["building"](${b});way["landuse"~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$"](${b});way["leisure"~"^(pitch|golf_course|recreation_ground|park|garden|playground|dog_park)$"](${b});way["amenity"="parking"](${b});way["natural"="grass"](${b});way["shop"](${b});way["man_made"~"^(wastewater_plant|storage_tank)$"](${b});relation["natural"="water"](${b});relation["building"](${b});relation["landuse"~"^(industrial|commercial|residential|urban|landfill|military|retail)$"](${b});`;
   const lines = `way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|service|living_street|bus_guideway|raceway|road)"](${b});way["railway"](${b});way["aeroway"](${b});`;
   const q = `[out:json][timeout:60];(${area}${lines});out geom;`;
-  const ex: Exclusions = { polys: [], lines: [] };
+  const ex: Exclusions = { polys: [], lines: [], water: [] };
   let ok = true;
   try {
     const body = await overpassQuery(q);
@@ -534,7 +550,9 @@ async function exclusionsForBox(
           if (ring.length >= 2) ex.lines.push(ring);
         }
       } else {
-        ex.polys.push(...polysFromOverpass({ elements: [e] }));
+        const ps = polysFromOverpass({ elements: [e] });
+        if (isWaterTag(t)) ex.water!.push(...ps);
+        else ex.polys.push(...ps);
       }
     }
   } catch {
@@ -546,7 +564,11 @@ async function exclusionsForBox(
       for (const f of features) {
         if (isLineTag(f.tags)) ex.lines.push(...f.rings);
         else if (isExcludedAreaTag(f.tags)) {
-          for (const ring of f.rings) if (ring.length >= 3) ex.polys.push({ outer: ring, inner: [] as [number, number][][] });
+          for (const ring of f.rings) {
+            if (ring.length < 3) continue;
+            if (isWaterTag(f.tags)) ex.water!.push({ outer: ring, inner: [] as [number, number][][] });
+            else ex.polys.push({ outer: ring, inner: [] as [number, number][][] });
+          }
         }
       }
     } catch {
@@ -718,12 +740,17 @@ async function computeCells(
       const inForest = useMask
         ? store.mask!.has(e0, n0) && store.mask!.allows(e0, n0)
         : forestPolys !== null && pointInPolys(forestPolys, clon, clat);
+      const waterPolys = ex.water ?? [];
+      const nearWater =
+        waterPolys.length > 0 &&
+        (pointInPolys(waterPolys, clon, clat) || distToPolysMeters(waterPolys, clon, clat) < WATER_BUFFER_M);
       const excluded =
-        ex.polys.length > 0 &&
-        (pointInPolys(ex.polys, clon, clat) || distToPolysMeters(ex.polys, clon, clat) < 30);
+        nearWater ||
+        (ex.polys.length > 0 &&
+          (pointInPolys(ex.polys, clon, clat) || distToPolysMeters(ex.polys, clon, clat) < EXCLUSION_BUFFER_M));
       const roadDist =
         ex.lines.length > 0 ? distToLinesMeters(ex.lines, clon, clat) : Infinity;
-      const roadFactor = roadDist < 20 ? 0 : roadDist < 35 ? 0.5 : 1;
+      const roadFactor = roadDist < ROAD_ZERO_M ? 0 : roadDist < ROAD_HALF_M ? 0.5 : 1;
       const forestEdge =
         inForest &&
         forestPolys !== null &&
@@ -1020,6 +1047,18 @@ app.get("/api/meta", async (req, res) => {
   res.json({
     species: key,
     label: species.label,
+    eatScore: species.eatScore,
+    note: species.note,
+    protected: !!species.protected,
+    season: [species.seasonStart, species.seasonEnd],
+    speciesList: Object.entries(SPECIES).map(([id, s]) => ({
+      id,
+      label: s.label,
+      eatScore: s.eatScore,
+      season: [s.seasonStart, s.seasonEnd],
+      note: s.note,
+      protected: !!s.protected,
+    })),
     rain14,
     rainFactor: rain14 === null ? 0.5 : Number(Math.min(1, rain14 / 60).toFixed(3)),
     seasonFactor: Number(seasonalFactor(species, 62.5, asOf).toFixed(2)),
@@ -1215,10 +1254,14 @@ app.get("/api/debug/cell", async (req, res) => {
     ? store.mask!.has(e0, n0) && store.mask!.allows(e0, n0)
     : forestPolys !== null && pointInPolys(forestPolys, lon, lat);
   const ex = exclusions ?? { polys: [] as Poly[], lines: [] as [number, number][][] };
+  const waterPolys = ex.water ?? [];
+  const nearWater =
+    waterPolys.length > 0 && (pointInPolys(waterPolys, lon, lat) || distToPolysMeters(waterPolys, lon, lat) < WATER_BUFFER_M);
   const excluded =
-    ex.polys.length > 0 && (pointInPolys(ex.polys, lon, lat) || distToPolysMeters(ex.polys, lon, lat) < 30);
+    nearWater ||
+    (ex.polys.length > 0 && (pointInPolys(ex.polys, lon, lat) || distToPolysMeters(ex.polys, lon, lat) < EXCLUSION_BUFFER_M));
   const roadDist = ex.lines.length > 0 ? distToLinesMeters(ex.lines, lon, lat) : Infinity;
-  const roadFactor = roadDist < 20 ? 0 : roadDist < 35 ? 0.5 : 1;
+  const roadFactor = roadDist < ROAD_ZERO_M ? 0 : roadDist < ROAD_HALF_M ? 0.5 : 1;
   const forestEdge =
     inForest &&
     forestPolys !== null &&
@@ -1256,6 +1299,7 @@ app.get("/api/debug/cell", async (req, res) => {
     forestPolys: forestPolys?.length ?? 0,
     inForest,
     excluded,
+    nearWater,
     inClearcut,
     roadFactor,
     forestEdge,
@@ -1376,7 +1420,8 @@ app.listen(port, () => {
       }
       for (const f of files.filter((f) => f.startsWith("exclusion_"))) {
         const j = JSON.parse(await fsp.readFile(path.join(dir, f), "utf8"));
-        exclPolys += Array.isArray(j?.polys) ? j.polys.length : 0;
+        exclPolys +=
+          (Array.isArray(j?.polys) ? j.polys.length : 0) + (Array.isArray(j?.water) ? j.water.length : 0);
       }
       let nmdOk = false;
       try {

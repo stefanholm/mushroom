@@ -28,9 +28,11 @@ npm run typecheck
 
 - **Chatt** — talks to `mistral-small-latest` via the official SDK; the server prepends a
   Swedish system prompt so answers come back in Swedish. The API key never leaves the server.
-- **Karta** — a MapLibre map of Sweden (OpenStreetMap basemap) with a species selector
-  (kantarell, trattkantarell, karljohan, svart trumpetsvamp) and a heatmap overlay from
-  `GET /api/hotspots?species=...&minLon=...&minLat=...&maxLon=...&maxLat=...`.
+- **Karta** — a MapLibre map of Sweden (basemap switch Terräng/OSM/Satellit) with a species
+  selector — 10 säkra matsvampar med ätvärde ★ och säsong i listan (kantarell, karljohan,
+  jättemusseron som är fridlyst och varningsmarkeras, …) — plus a "Spara PNG"-knapp som
+  exporterar kartvyn som PNG, and a heatmap overlay from
+  `GET /api/tiles/habitat/{species}/{z}/{x}/{y}.png` (also `GET /api/hotspots?...` GeoJSON).
 
 ## Data layers (folder structure)
 
@@ -50,6 +52,8 @@ data/
     ├── skog_bjork_10m.tif                # SLU Skogskarta – volym björk, GeoTIFF
     ├── skog_ek_10m.tif                   # SLU Skogskarta – volym ek, GeoTIFF
     ├── skog_bok_10m.tif                  # SLU Skogskarta – volym bok, GeoTIFF
+    ├── skog_hassel_10m.tif               # SLU Skogskarta – volym hassel, GeoTIFF (valfri, svart trumpetsvamp)
+    ├── skog_alder_10m.tif                # SLU Skogskarta – skogsålder (år), GeoTIFF — används i S_env (fAge)
     ├── markfuktighet_10m.tif             # SLU Markfuktighetskarta – klass 1..5 (1=torr … 5=blöt), GeoTIFF
     ├── jordart_10m.tif                   # SGU jordarter – klasskod, GeoTIFF (recode i manifest: 1=acidic, 2=calcareous)
     ├── hojdmodell_2m.tif                 # Lantmäteriet nationell höjdmodell – höjd (m), GeoTIFF (lutning/aspekt beräknas i kod)
@@ -104,7 +108,7 @@ Static (where mycelium *can* live), sampled per map cell:
 
 1. **OSM forest mask** — Overpass (ways **and multipolygon relations**: `landuse=forest`/`natural=wood`/`natural=scrub`), cached 24 h, 5 fallback hosts. Hard filter: non-forest ≈ 0.
    1b. **Forest-edge bonus** — cells within ~100 m of the forest boundary get a species-weighted bonus (kantarell loves edges/paths).
-2. **Negative OSM layers** — Overpass (ways + relations, cached 24 h, fallback hosts). Hard zero inside `natural=water`, `waterway`, `building=*`, `landuse=industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green`, `leisure=pitch|golf_course|recreation_ground`, `amenity=parking`, `natural=grass`, `shop=*`, `man_made=wastewater_plant|storage_tank`; ×0.2 within 30 m of any `highway`/`railway`/`aeroway`. (Safety: military/landfill/pollution excluded.)
+2. **Negative OSM layers** — Overpass (ways + relations, cached 24 h, fallback hosts). Hard zero inside `natural=water`, `waterway`, `building=*`, `landuse=industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green`, `leisure=pitch|golf_course|recreation_ground`, `amenity=parking`, `natural=grass`, `shop=*`, `man_made=wastewater_plant|storage_tank`. **All water (lakes/sea/streams) is hard-zero within 50 m**; other exclusion polygons within 30 m; paved roads/rail/aeroway hard-zero within **50 m** (pollution), ×0.5 up to 80 m; forest paths stay open. (Safety: military/landfill/pollution excluded.)
 3. **DEM water cutoff** — with the höjdmodell loaded, in-coverage cells with nodata or elevation < 0.5 m are sea/water → hard zero (works even if Overpass is unreachable).
 2. **Trädhöjd** (`tradhojd`, SLU Skogskarta/Skogliga grunddata) — stand maturity threshold per species.
 3. **Volym** (`volym`, SLU) — same, volume-based.
@@ -166,7 +170,7 @@ still works if under ~200 MB.)
 them into per-tile cache files — the server probes tile sizes 0.4°/0.2°/0.1° on disk, so pass the
 same size as the 5th arg if you bake smaller tiles. Bake a bbox slightly larger than your area of
 interest — masking is fail-closed, so anything outside the baked tiles scores 0.)
-Exclusion polygons get a 30 m buffer; paved roads hard-zero within 20 m; forest paths stay open.
+Exclusion polygons get a 30 m buffer; **water polygons a 50 m buffer**; paved roads hard-zero within 50 m (×0.5 to 80 m); forest paths stay open.
 
 **NMD 10 m mask (recommended, replaces OSM entirely):** direct download from Naturvårdsverket's
 file server — use the **v2.x** basskikt (the v0.x series has different class codes and will NOT
@@ -190,7 +194,8 @@ Verify: startup prints `NMD-mask hittad` and `curl -s "http://localhost:3000/api
 product's QGIS style `NMD2023bas_v2_1.qml`): `forestClasses` = 111–117 + 121–127 (tall/low forest
 on firm ground and on wetland; **118/128 are "temporärt ej skog" = clear-cuts — excluded**),
 `dilateClasses` = [51, 52, 53, 54] (51 building, 52 other exploited, 53 road/rail, 54 peat
-cutting) dilated 3 px ≈ 30 m; water (61/62), 0 (outside NMD coverage) and all other non-forest
+cutting) dilated 3 px ≈ 30 m; water (61/62) is hard 0 **plus a 50 m buffer** (`waterClasses` +
+`waterBufferM` in `manifest.json`), 0 (outside NMD coverage) and all other non-forest
 classes are hard 0 without eroding forest edges. When the mask is present, OSM masks are skipped
 entirely (`maskUsed: true` in `/api/meta`).
 
