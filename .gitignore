@@ -5,3 +5,5 @@ data/layers/*.tif
 data/layers/*.geojson
 data/tiles/
 data/osm/
+data/species/
+data/validation/

@@ -11,7 +11,8 @@
     "demo-data": "node scripts/make-demo-layers.mjs",
     "osm-cache": "node scripts/fetch-osm-cache.mjs",
     "osm-bake": "node scripts/bake-osm-from-geojson.mjs",
-    "bake-tiles": "node scripts/bake-tiles.mjs"
+    "bake-tiles": "node scripts/bake-tiles.mjs",
+    "artfakta": "node scripts/fetch-artdatabanken.mjs"
   },
   "dependencies": {
     "@mistralai/mistralai": "^3.5.0",

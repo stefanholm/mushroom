@@ -52,6 +52,19 @@ npm run typecheck
 4. App Store: backend över HTTPS, PMTiles per län för offline, attributionssida för
    CC0/CC-BY-källorna (NV NMD, SGU, SLU, Skogsstyrelsen, SMHI, Lantmäteriet/OSM).
 
+## Validering mot riktiga fynd (Artportalen/Artfakta)
+
+`npm run artfakta -- --bbox 17.7,59.1,18.5,59.7 --limit 1000` hämtar:
+- artdata per art (namn, rödlistestatus, biotoper) till `data/species/artfakta.json`, och
+- verkliga Artportalen-fynd (via GBIF:s spegel av Artportalen, eller Artdatabankens eget
+  API om du sätter `ARTDATABANKEN_API_KEY` från [api-portal.artdatabanken.se](https://api-portal.artdatabanken.se/))
+  till `data/validation/observations.geojson`.
+
+Båda mapparna är git-ignorerade. Skyddsklassade arter (t.ex. jättemusseron) är koordinat-diffade
+i öppna data. Använd fynden för att köra AUC mot modellens score (skicka koordinaterna till
+`/api/debug/cell`). Artfakta-API:t kräver prenumerationsnyckel; `speciesdata/assessments` och
+`natureconservation` tas ur bruk jan 2027 (använd Taxon List Service API v2 för listor).
+
 ## Data layers (folder structure)
 
 Raster/vector layers live in `data/layers/` (GeoTIFF/GeoJSON files themselves are
