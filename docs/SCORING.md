@@ -62,15 +62,18 @@ else (fallback, flagged as hostFallback in /api/meta):
 ### S_env — environmental suitability (0–100)
 
 ```
-S_env = 100 × g(fMoisture)^0.32 × g(fMaturity)^0.22 × g(fCanopy)^0.18 × g(fAge)^0.10 × g(fSoil)^0.09 × g(fTerrain)^0.09
+S_env = 100 × g(fMoisture)^0.30 × g(fAge)^0.22 × g(fCanopy)^0.16 × g(fSoil)^0.12 × g(fSIS)^0.10 × g(fTerrain)^0.10
         where g(x) = max(0.05, x)
         (weighted GEOMETRIC mean — a single weak factor drags the whole cell down
          instead of being averaged away; true hard vetoes below return score 0 directly)
 
-fMaturity = clamp01( (tradhojd − minTreeHeight) / 16 + 0.35 )     ; tradhojd < minTreeHeight → score 0
-fAge      = triangular preference over species.ageIdeal [lo, hi] in years (skog_alder_10m.tif, SLU Skogskarta "Ålder"):
+tradhojd < minTreeHeight → score 0                       (hard gate; maturity now via age, not height)
+fAge      = triangular over species.ageIdeal [lo, hi] years (skog_alder_10m.tif, SLU "Beståndsmedelålder"):
             age < lo → max(0.2, age/lo);  lo ≤ age ≤ hi → 1;  age > hi → max(0.5, 1 − (age−hi)/80)
-            (no alder raster → fAge = 1, neutral)
+fSIS      = triangular over species.sisIdeal [lo, hi] H100 (skog_sis_10m.tif, Skogliga grunddata SIS):
+            sis < lo → max(0.2, sis/lo);  lo ≤ sis ≤ hi → 1;  sis > hi → max(0.5, 1 − (sis−hi)/10)
+            (low SIS = nutrient-poor pine heath → sandsopp/goliatmusseron; high SIS = fertile → karljohan)
+            (missing raster → factor 1, neutral)
 fMoisture = clamp01( 1 − dist(markfuktighetsklass, moistureIdeal) / 1.5 )
             ; klass ∈ vetoMoisture → score 0                         (klass 1..5: torr..blöt)
 fCanopy   = clamp01( 1 − dist(grundyta, canopyIdeal) / 6 )          (m²/ha)
@@ -87,6 +90,7 @@ the glow threshold — visible only at low sensitivity).
 
 ```
 M_bonus = 1.3                                  if inside nyckelbiotoper.geojson
+        × 1.15                                 if inside sumpskogar.geojson
         × (1 + 0.15 × species.edge)           if within ~1 cell of the forest-mask edge
 roadFactor = 0 if within 50 m of a paved road/rail/aeroway line (hard zero, pollution),
              0.5 if within 80 m, else 1
@@ -102,6 +106,10 @@ seasonalFactor = 0 outside [seasonStart−0.5, seasonEnd+0.5], linear ramps of 0
 rainFactor     = min(1, rain14 / 60 mm)   ; rain14 = Σ daily precip, 14 days ending at the
                  selected date, nearest active station; no data → 0.5 (neutral)
 frost          = 0 if species.frostSensitive and min(temp last 48 h) ≤ −3 °C, else 1
+flush          = 1 + 0.25 × min(1, coolNights7d / 4)   ; coolNights7d = days with daily min
+                 temp ≤ 10 °C in the 7 days ending at the selected date (no data → 1).
+                 Cool-night flush trigger — matters for jättemusseron, trattkantarell, frostvaxing.
+D = seasonalFactor × rainFactor × frost × flush
 ```
 
 ## 2. Species rule matrix (src/habitat.ts, `SPECIES`)
@@ -123,7 +131,21 @@ no spindelskivlingar). Habitat references: Artdatabanken Artfakta, Svampguiden, 
 | Rödgul trumpetsvamp | 4 | gran 1, tall 0.4, björk 0.2 | 25 | 12 | 1 | 3–4 | 20–40 | acidic 1 | −1 | 1 | 0.2 | 30–120 | no | Aug–Nov |
 | Blek taggsvamp | 3 | gran 0.8, bok 0.7, ek 0.7, björk 0.6, tall 0.5 | 15 | 8 | 5 | 2–4 | 15–35 | neutral 1 | 0 | 0.5 | 0.5 | 20–120 | no | Aug–mid Oct |
 | Vårskivling | 3 | björk 0.7, ek 0.6, hassel 0.5, bok 0.4 | 5 | 0 | 4, 5 | 2–3 | 0–20 | calcareous 1 | +1 | 0 | 1.2 | 0–60 | yes | mid Apr–Jun |
-| Brunsopp | 3 | tall 1, gran 0.7, björk 0.3 | 20 | 10 | 5 | 2–3 | 15–30 | acidic 1 | +0.5 | 0.3 | 0.5 | 30–120 | no | Aug–Nov |
+| Brunsopp | 4 | tall 1, gran 0.7, björk 0.3 | 20 | 10 | 5 | 2–3 | 15–30 | acidic 1 | +0.5 | 0.3 | 0.5 | 30–120 | no | Aug–Nov |
+| Sandsopp | 4 | tall 1 | 20 | 8 | 4, 5 | 1–2 | 8–22 | acidic 1 | +1 | 0 | 0.3 | 20–90 / SIS 8–15 | no | Jul–mid Oct |
+| Smörsopp | 3 | tall 1, gran 0.3 | 20 | 8 | 5 | 1–3 | 10–25 | acidic 1 | +1 | 0.2 | 0.5 | 15–70 / SIS 10–18 | no | Jul–Oct |
+| Blomkålssvamp | 4 | tall 1 | 30 | 15 | 4, 5 | 2–3 | 10–25 | acidic 1 | +1 | 0 | 0.2 | 70–160 / SIS 8–16 | no | Aug–Oct |
+| Fårticka | 4 | gran 1, tall 0.5, björk 0.4 | 25 | 12 | 4, 5 | 2–3 | 20–35 | neutral 1 | 0 | 0.5 | 0.5 | 40–130 / SIS 14–22 | no | Aug–Oct |
+| Rödgul taggsvamp | 4 | gran 1, tall 0.6, björk 0.5 | 15 | 8 | 1 | 3–4 | 15–35 | acidic 1 | −0.5 | 1 | 0.3 | 20–120 / SIS 12–22 | no | Aug–Nov |
+| Frostvaxing | 4 | tall 1, gran 0.4 | 25 | 12 | 3, 4, 5 | 1–2 | 8–20 | acidic 1 | +1 | 0 | 0.3 | 30–100 / SIS 8–16 | no | Oct–Dec |
+| Aspsopp | 4 | asp 1, björk 0.6, ek 0.4 | 15 | 8 | 4, 5 | 2–3 | 10–25 | neutral 1 | +0.5 | 0.2 | 0.8 | 20–100 / SIS 14–24 | no | Jul–Oct |
+| Tegelsopp | 4 | björk 1, ek 0.5 | 15 | 8 | 4, 5 | 2–3 | 10–25 | neutral 1 | +0.5 | 0.2 | 0.5 | 20–100 / SIS 14–24 | no | Jul–Oct |
+
+(Column order: eat · hosts · minHostVol · minTreeH · veto moisture · moisture ideal · canopy ideal ·
+soil pref · sun · depression · edge · age ideal / SIS ideal · frost sens. · season. Excluded on
+purpose: murklor (Gyromitra), champinjoner/vit flugsvamp, små Lepiota, vårmusseron (bolmörtsskivling),
+spindelskivlingar — deadly lookalike risk. Goliatmusseron = *Tricholoma colossus* (NOT matsutake),
+fridlyst + rödlistad VU in Sweden → `protected` badge, never recommend picking.)
 
 (Svart trumpetsvamp around Stockholm/Mälardalen is oak + hazel in rich mossy mixed forest —
 beech `bok` is weighted low on purpose; drop a `skog_hassel_10m.tif` into `data/layers/` and
@@ -171,7 +193,8 @@ source (MapLibre then GPU-overzooms instead of requesting z17+) and append `&v=<
 
 | Layer id | File (data/layers/) | Source |
 |---|---|---|
-| tradhojd, volym, grundyta, gran, tall, bjork, ek, bok, **alder** | `skog_*_10m.tif`, `grundyta_10m.tif`, `skog_alder_10m.tif` | SLU Skogskarta / Skogliga grunddata (via Skogsstyrelsen) |
+| tradhojd, volym, grundyta, gran, tall, bjork, ek, bok, hassel, asp, **alder**, **sis** | `skog_*_10m.tif`, `grundyta_10m.tif` | SLU Skogskarta / Skogliga grunddata (via Skogsstyrelsen) |
+| sumpskogar | `sumpskogar.geojson` | Skogsstyrelsen Sumpskogar (bonus ×1.15) |
 | NMD land-cover mask | `nmd_10m.tif` (NMD2023 v2.x basskikt) | Naturvårdsverket (CC0), replaces OSM forest/exclusion gates when present |
 | markfuktighet | `markfuktighet_10m.tif` (klass 1–5) | SLU Markfuktighetskarta |
 | jordart | `jordart_10m.tif` (recode 1→acidic, 2→calcareous) | SGU Jordarter |

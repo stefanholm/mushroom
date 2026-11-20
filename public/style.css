@@ -179,3 +179,25 @@ button:disabled {
   cursor: pointer;
   font-size: 0.85rem;
 }
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  flex-basis: 100%;
+}
+.pill {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid #ccc;
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.pill.on {
+  background: #2f6f3e;
+  border-color: #2f6f3e;
+  color: #fff;
+}
+.species-info {
+  white-space: pre-line;
+}

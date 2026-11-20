@@ -19,6 +19,7 @@ export type SpeciesProfile = {
   eatScore: number;
   note: string;
   ageIdeal?: [number, number];
+  sisIdeal?: [number, number];
   protected?: boolean;
 };
 
@@ -39,8 +40,9 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     edge: 1,
     frostSensitive: true,
     eatScore: 5,
-    note: "Gul trattformad hatt, ådrade skivor — inga giftiga dubbelgångare i Sverige.",
+    note: "Gul trattformad hatt, ådrade skivor — narrkantarellen har riktiga skivor men är ofarlig.",
     ageIdeal: [40, 130],
+    sisIdeal: [14, 24],
   },
   trattkantarell: {
     label: "Trattkantarell",
@@ -58,8 +60,9 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     edge: 0.2,
     frostSensitive: false,
     eatScore: 4,
-    note: "Gulbrun tratt, ihålig fot — inga giftiga dubbelgångare.",
+    note: "Gulbrun tratt, ihålig fot. Kontrollera varje exemplar — dödligt giftig toppig giftspindling kan växa i samma mossa.",
     ageIdeal: [30, 120],
+    sisIdeal: [16, 26],
   },
   karljohan: {
     label: "Karljohan",
@@ -77,8 +80,9 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     edge: 0.5,
     frostSensitive: false,
     eatScore: 5,
-    note: "Rödbrun hatt, vita rör. Skilj från gallsopp (bitter, rosa rör vid snitt).",
+    note: "Rödbrun hatt, vita porer. Skilj från gallsopp (bitter, rosa porer vid snitt) — ej giftig.",
     ageIdeal: [30, 120],
+    sisIdeal: [18, 28],
   },
   "svart-trumpetsvamp": {
     label: "Svart trumpetsvamp",
@@ -99,9 +103,10 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     eatScore: 5,
     note: "Svart tratt, ihålig — mycket svår att förväxla. Kräver kalkrik lövskog.",
     ageIdeal: [40, 130],
+    sisIdeal: [20, 30],
   },
   jattemusseron: {
-    label: "Jättemusseron (goliatmusseron)",
+    label: "Jättemusseron/goliatmusseron (Tricholoma colossus)",
     seasonStart: 8,
     seasonEnd: 10.5,
     hosts: { tall: 1, gran: 0.2 },
@@ -116,8 +121,9 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     edge: 0.2,
     frostSensitive: false,
     eatScore: 5,
-    note: "FRIDLYST i Sverige — beundra men plocka inte. Jättestor med ormskinnig fot och vit sporer; växer i gammal tallskog på sandig mark.",
+    note: "FRIDLYST och rödlistad (VU) i Sverige — beundra men plocka inte. Jättestor, ormskinnig fot, kaneldoft; gammal tallskog på sandig mager mark (ej matsutake).",
     ageIdeal: [60, 160],
+    sisIdeal: [8, 15],
     protected: true,
   },
   "stolt-fjallskivling": {
@@ -138,6 +144,7 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     eatScore: 4,
     note: "Vit sporer, ormmönstrad fot, rörlig ring. Små fjällskivlingar (Lepiota) kan vara dödligt giftiga — kontrollera alltid storlek, ormskinn och ring.",
     ageIdeal: [0, 80],
+    sisIdeal: [10, 20],
   },
   "rodgul-trumpetsvamp": {
     label: "Rödgul trumpetsvamp",
@@ -154,9 +161,10 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     depression: 1,
     edge: 0.2,
     frostSensitive: false,
-    eatScore: 4,
-    note: "Gul fot, ihålig, veckad undersida — inga giftiga dubbelgångare.",
+    eatScore: 5,
+    note: "Orange ihålig fot, veckad undersida, aprikosdoft — inga giftiga dubbelgångare.",
     ageIdeal: [30, 120],
+    sisIdeal: [14, 24],
   },
   "blek-taggsvamp": {
     label: "Blek taggsvamp",
@@ -173,9 +181,10 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     depression: 0.5,
     edge: 0.5,
     frostSensitive: false,
-    eatScore: 3,
+    eatScore: 4,
     note: "Taggar (ej skivor) under hatten — inga giftiga taggsvampar i Sverige.",
     ageIdeal: [20, 120],
+    sisIdeal: [14, 24],
   },
   varskivling: {
     label: "Vårskivling",
@@ -195,6 +204,7 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     eatScore: 3,
     note: "Mjöldoft, köttig hatt; växer ofta i häxringar på ängar och skogsbryn — vårens första matsvamp.",
     ageIdeal: [0, 60],
+    sisIdeal: [14, 24],
   },
   brunsopp: {
     label: "Brunsopp",
@@ -211,9 +221,170 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     depression: 0.3,
     edge: 0.5,
     frostSensitive: false,
-    eatScore: 3,
-    note: "Brun sammetshatt, gula rör som blånar vid snitt — tydligt kännetecken.",
+    eatScore: 4,
+    note: "Brun sammetshatt, gula porer som blånar svagt vid snitt — inga giftiga dubbelgångare.",
     ageIdeal: [30, 120],
+    sisIdeal: [14, 22],
+  },
+  sandsopp: {
+    label: "Sandsopp (Suillus variegatus)",
+    seasonStart: 7,
+    seasonEnd: 10.5,
+    hosts: { tall: 1 },
+    minHostVolume: 20,
+    minTreeHeight: 8,
+    vetoMoisture: [4, 5],
+    moistureIdeal: [1, 2],
+    canopyIdeal: [8, 22],
+    soil: { acidic: 1, neutral: 0.7, calcareous: 0.3 },
+    sun: 1,
+    depression: 0,
+    edge: 0.3,
+    frostSensitive: false,
+    eatScore: 4,
+    note: "Olivgula porer på torr tallhed — omöjlig att ta fel.",
+    ageIdeal: [20, 90],
+    sisIdeal: [8, 15],
+  },
+  smorsopp: {
+    label: "Smörsopp (Suillus luteus)",
+    seasonStart: 7,
+    seasonEnd: 10,
+    hosts: { tall: 1, gran: 0.3 },
+    minHostVolume: 20,
+    minTreeHeight: 8,
+    vetoMoisture: [5],
+    moistureIdeal: [1, 3],
+    canopyIdeal: [10, 25],
+    soil: { acidic: 1, neutral: 0.8, calcareous: 0.4 },
+    sun: 1,
+    depression: 0.2,
+    edge: 0.5,
+    frostSensitive: false,
+    eatScore: 3,
+    note: "Klibbig brun hattskinn (skala av före tillagning), ring på foten, gula porer. Koka och häll av vattnet.",
+    ageIdeal: [15, 70],
+    sisIdeal: [10, 18],
+  },
+  blomkalssvamp: {
+    label: "Blomkålssvamp (Sparassis crispa)",
+    seasonStart: 8,
+    seasonEnd: 10,
+    hosts: { tall: 1 },
+    minHostVolume: 30,
+    minTreeHeight: 15,
+    vetoMoisture: [4, 5],
+    moistureIdeal: [2, 3],
+    canopyIdeal: [10, 25],
+    soil: { acidic: 1, neutral: 0.7, calcareous: 0.3 },
+    sun: 1,
+    depression: 0,
+    edge: 0.2,
+    frostSensitive: false,
+    eatScore: 4,
+    note: "Blekgul 'blomkål' vid basen av gamla tallar — omöjlig att förväxla.",
+    ageIdeal: [70, 160],
+    sisIdeal: [8, 16],
+  },
+  farticka: {
+    label: "Fårticka (Albatrellus ovinus)",
+    seasonStart: 8,
+    seasonEnd: 10,
+    hosts: { gran: 1, tall: 0.5, bjork: 0.4 },
+    minHostVolume: 25,
+    minTreeHeight: 12,
+    vetoMoisture: [4, 5],
+    moistureIdeal: [2, 3],
+    canopyIdeal: [20, 35],
+    soil: { acidic: 0.9, neutral: 1, calcareous: 0.9 },
+    sun: 0,
+    depression: 0.5,
+    edge: 0.5,
+    frostSensitive: false,
+    eatScore: 4,
+    note: "Små vita porer, blir citrongul vid stekning — ingen giftig dubbelgångare.",
+    ageIdeal: [40, 130],
+    sisIdeal: [14, 22],
+  },
+  "rodgul-taggsvamp": {
+    label: "Rödgul taggsvamp (Hydnum rufescens)",
+    seasonStart: 8,
+    seasonEnd: 11,
+    hosts: { gran: 1, tall: 0.6, bjork: 0.5 },
+    minHostVolume: 15,
+    minTreeHeight: 8,
+    vetoMoisture: [1],
+    moistureIdeal: [3, 4],
+    canopyIdeal: [15, 35],
+    soil: { acidic: 1, neutral: 0.9, calcareous: 0.7 },
+    sun: -0.5,
+    depression: 1,
+    edge: 0.3,
+    frostSensitive: false,
+    eatScore: 4,
+    note: "Orange mindre tvilling till blek taggsvamp — taggar under hatten, ej skivor.",
+    ageIdeal: [20, 120],
+    sisIdeal: [12, 22],
+  },
+  frostvaxing: {
+    label: "Frostvaxing (Hygrophorus hypothejus)",
+    seasonStart: 10,
+    seasonEnd: 12,
+    hosts: { tall: 1, gran: 0.4 },
+    minHostVolume: 25,
+    minTreeHeight: 12,
+    vetoMoisture: [3, 4, 5],
+    moistureIdeal: [1, 2],
+    canopyIdeal: [8, 20],
+    soil: { acidic: 1, neutral: 0.8, calcareous: 0.4 },
+    sun: 1,
+    depression: 0,
+    edge: 0.3,
+    frostSensitive: false,
+    eatScore: 4,
+    note: "Klibbig olivgrön hatt med gula vaxiga skivlor — håller säsongen igång in i december efter första frosten.",
+    ageIdeal: [30, 100],
+    sisIdeal: [8, 16],
+  },
+  aspsopp: {
+    label: "Aspsopp (Leccinum leucopodium)",
+    seasonStart: 7,
+    seasonEnd: 10,
+    hosts: { asp: 1, bjork: 0.6, ek: 0.4 },
+    minHostVolume: 15,
+    minTreeHeight: 8,
+    vetoMoisture: [4, 5],
+    moistureIdeal: [2, 3],
+    canopyIdeal: [10, 25],
+    soil: { acidic: 0.8, neutral: 1, calcareous: 0.9 },
+    sun: 0.5,
+    depression: 0.2,
+    edge: 0.8,
+    frostSensitive: false,
+    eatScore: 4,
+    note: "Vit hatt, sträv (fjällig) fot. Koka minst 15–20 min.",
+    ageIdeal: [20, 100],
+    sisIdeal: [14, 24],
+  },
+  tegelsopp: {
+    label: "Tegelsopp (Leccinum versipelle)",
+    seasonStart: 7,
+    seasonEnd: 10,
+    hosts: { bjork: 1, ek: 0.5 },
+    minHostVolume: 15,
+    minTreeHeight: 8,
+    vetoMoisture: [4, 5],
+    moistureIdeal: [2, 3],
+    canopyIdeal: [10, 25],
+    soil: { acidic: 0.9, neutral: 1, calcareous: 0.7 },
+    sun: 0.5,
+    depression: 0.2,
+    edge: 0.5,
+    frostSensitive: false,
+    eatScore: 4,
+    note: "Orange hatt, svarta fjäll på foten. Koka minst 15–20 min.",
+    ageIdeal: [20, 100],
+    sisIdeal: [14, 24],
   },
 };
 
@@ -329,6 +500,17 @@ export function staticHabitatScore(
     }
   }
 
+  const sisL = store.rasters.get("sis");
+  let fSIS = 1;
+  if (sisL) {
+    const v = sisL.sampleSync(easting, northing);
+    if (v !== null) {
+      covered = true;
+      const [lo, hi] = species.sisIdeal ?? [0, 40];
+      fSIS = v < lo ? Math.max(0.2, lo > 0 ? v / lo : 1) : v > hi ? Math.max(0.5, 1 - (v - hi) / 10) : 1;
+    }
+  }
+
   const moisture = store.rasters.get("markfuktighet");
   let fMoisture = 1;
   if (moisture) {
@@ -394,12 +576,12 @@ export function staticHabitatScore(
   const soft = (x: number) => Math.max(0.05, x);
   const sEnv =
     100 *
-    Math.pow(soft(fMoisture), 0.32) *
-    Math.pow(soft(fMaturity), 0.22) *
-    Math.pow(soft(fCanopy), 0.18) *
-    Math.pow(soft(fAge), 0.1) *
-    Math.pow(soft(fSoil), 0.09) *
-    Math.pow(soft(fTerrain), 0.09);
+    Math.pow(soft(fMoisture), 0.3) *
+    Math.pow(soft(fAge), 0.22) *
+    Math.pow(soft(fCanopy), 0.16) *
+    Math.pow(soft(fSoil), 0.12) *
+    Math.pow(soft(fSIS), 0.1) *
+    Math.pow(soft(fTerrain), 0.1);
   if (dbg) {
     Object.assign(dbg, {
       hostVol,
@@ -408,6 +590,7 @@ export function staticHabitatScore(
       fMaturity,
       fCanopy,
       fAge,
+      fSIS,
       fSoil,
       fTerrain,
       sEnv: Number(sEnv.toFixed(2)),
@@ -418,6 +601,8 @@ export function staticHabitatScore(
   let mBonus = 1;
   const keyBiotope = store.vectors.get("nyckelbiotoper");
   if (keyBiotope && keyBiotope.contains(easting, northing)) mBonus *= 1.3;
+  const sump = store.vectors.get("sumpskogar");
+  if (sump && sump.contains(easting, northing)) mBonus *= 1.15;
   if (ctx.forestEdge) mBonus *= 1 + 0.15 * species.edge;
   if (dbg) dbg.mBonus = mBonus;
 

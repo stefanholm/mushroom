@@ -1,5 +1,5 @@
 const mapContainer = document.getElementById("map");
-const speciesSelect = document.getElementById("species");
+const pillsEl = document.getElementById("speciesPills");
 const opacityInput = document.getElementById("opacity");
 const staticOnlyInput = document.getElementById("staticOnly");
 const dateSlider = document.getElementById("dateSlider");
@@ -16,26 +16,44 @@ const MONTHS = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "
 const seasonLabel = (s) => `${MONTHS[Math.max(0, Math.ceil(s[0]) - 1)]}–${MONTHS[Math.min(11, Math.ceil(s[1]) - 1)]}`;
 
 let speciesList = null;
+let onSpeciesChange = null;
 function applySpeciesList(list) {
   if (!Array.isArray(list) || list.length === 0) return;
   speciesList = list;
-  const current = speciesSelect.value;
-  speciesSelect.innerHTML = "";
+  pillsEl.innerHTML = "";
   for (const s of list) {
-    const opt = document.createElement("option");
-    opt.value = s.id;
-    opt.textContent = `${s.label} ${"★".repeat(s.eatScore)}${"☆".repeat(5 - s.eatScore)} (${seasonLabel(s.season)})`;
-    speciesSelect.appendChild(opt);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pill" + (s.id === "kantarell" ? " on" : "");
+    b.dataset.id = s.id;
+    b.title = `${s.label} — ätvärde ${s.eatScore}/5, säsong ${seasonLabel(s.season)}${s.protected ? " — FRIDLYST" : ""}`;
+    b.textContent = `${s.label.split(" (")[0]} ★${s.eatScore}`;
+    b.addEventListener("click", () => {
+      const wasOn = b.classList.contains("on");
+      const on = Array.from(pillsEl.querySelectorAll("button.on"));
+      if (wasOn && on.length === 1) return;
+      if (!wasOn && on.length >= 4) {
+        on[0].classList.remove("on");
+      }
+      b.classList.toggle("on");
+      updateSpeciesInfo();
+      onSpeciesChange?.();
+    });
+    pillsEl.appendChild(b);
   }
-  if (list.some((s) => s.id === current)) speciesSelect.value = current;
   updateSpeciesInfo();
 }
 
 function updateSpeciesInfo() {
-  const s = speciesList?.find((x) => x.id === speciesSelect.value);
-  if (!s || !speciesInfo) return;
-  speciesInfo.textContent = `${"★".repeat(s.eatScore)} ätvärde ${s.eatScore}/5 · säsong ${seasonLabel(s.season)} — ${s.note}${s.protected ? " ⚠ FRIDLYST" : ""}`;
-  speciesInfo.classList.toggle("warn", !!s.protected);
+  if (!speciesInfo) return;
+  const sel = selectedSpecies()
+    .map((id) => speciesList?.find((x) => x.id === id))
+    .filter(Boolean);
+  if (sel.length === 0) return;
+  speciesInfo.textContent = sel
+    .map((s) => `${s.label.split(" (")[0]}: ★${s.eatScore}/5 · ${seasonLabel(s.season)} — ${s.note}${s.protected ? " ⚠ FRIDLYST" : ""}`)
+    .join("\n");
+  speciesInfo.classList.toggle("warn", sel.some((s) => s.protected));
 }
 
 let map = null;
@@ -51,35 +69,48 @@ function updateDateLabel() {
   dateLabel.textContent = selectedDate() ?? "nu";
 }
 
-function habitatTileUrl() {
+function habitatTileUrl(speciesId) {
   const q = new URLSearchParams();
   if (staticOnlyInput.checked) q.set("static", "1");
   const d = selectedDate();
   if (d) q.set("date", d);
   q.set("sens", String(Number(sensInput.value)));
   q.set("v", TILE_V);
-  return `/api/tiles/habitat/${speciesSelect.value}/{z}/{x}/{y}.png?${q.toString()}`;
+  return `/api/tiles/habitat/${speciesId}/{z}/{x}/{y}.png?${q.toString()}`;
+}
+
+function selectedSpecies() {
+  const on = Array.from(pillsEl.querySelectorAll("button.on")).map((b) => b.dataset.id);
+  return on.length > 0 ? on : ["kantarell"];
 }
 
 function rebuildHabitat() {
   if (!map) return;
-  if (map.getLayer("habitat")) map.removeLayer("habitat");
-  if (map.getSource("habitat")) map.removeSource("habitat");
-  map.addSource("habitat", {
-    type: "raster",
-    tiles: [habitatTileUrl()],
-    tileSize: 256,
-    maxzoom: 16,
-  });
-  map.addLayer({
-    id: "habitat",
-    type: "raster",
-    source: "habitat",
-    paint: {
-      "raster-opacity": Number(opacityInput.value) / 100,
-      "raster-resampling": "linear",
-    },
-  });
+  for (const l of map.getStyle().layers ?? []) {
+    if (l.id.startsWith("habitat-")) {
+      if (map.getLayer(l.id)) map.removeLayer(l.id);
+      if (map.getSource(l.id.slice(8))) map.removeSource(l.id.slice(8));
+    }
+  }
+  for (const sp of selectedSpecies()) {
+    const srcId = "hab-" + sp;
+    const layerId = "habitat-" + sp;
+    map.addSource(srcId, {
+      type: "raster",
+      tiles: [habitatTileUrl(sp)],
+      tileSize: 256,
+      maxzoom: 16,
+    });
+    map.addLayer({
+      id: layerId,
+      type: "raster",
+      source: srcId,
+      paint: {
+        "raster-opacity": Number(opacityInput.value) / 100,
+        "raster-resampling": "linear",
+      },
+    });
+  }
   if (map.getLayer("trails")) map.moveLayer("trails");
 }
 
@@ -125,7 +156,7 @@ function updateTrails() {
 }
 
 async function refreshMeta() {
-  const q = new URLSearchParams({ species: speciesSelect.value });
+  const q = new URLSearchParams({ species: selectedSpecies()[0] });
   const d = selectedDate();
   if (d) q.set("date", d);
   try {
@@ -222,17 +253,14 @@ function initMap(maplibregl) {
       refreshMeta();
     }, 400);
   }
-  speciesSelect.addEventListener("change", () => {
-    updateSpeciesInfo();
-    scheduleRebuild();
-  });
+  onSpeciesChange = scheduleRebuild;
   savePngBtn.addEventListener("click", () => {
     if (!map) return;
     map.getCanvas().toBlob((blob) => {
       if (!blob) return;
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `svampkarta-${speciesSelect.value}-${selectedDate() ?? "nu"}.png`;
+      a.download = `svampkarta-${selectedSpecies().join("-")}-${selectedDate() ?? "nu"}.png`;
       a.click();
       URL.revokeObjectURL(a.href);
     }, "image/png");
@@ -247,8 +275,10 @@ function initMap(maplibregl) {
     scheduleRebuild();
   });
   opacityInput.addEventListener("input", () => {
-    if (map.getLayer("habitat")) {
-      map.setPaintProperty("habitat", "raster-opacity", Number(opacityInput.value) / 100);
+    for (const sp of selectedSpecies()) {
+      if (map.getLayer("habitat-" + sp)) {
+        map.setPaintProperty("habitat-" + sp, "raster-opacity", Number(opacityInput.value) / 100);
+      }
     }
   });
   trailsInput.addEventListener("change", updateTrails);

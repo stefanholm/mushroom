@@ -57,6 +57,18 @@
       "band": 1
     },
     {
+      "id": "asp",
+      "file": "skog_asp_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "sis",
+      "file": "skog_sis_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
       "id": "markfuktighet",
       "file": "markfuktighet_10m.tif",
       "nodata": 255,
@@ -94,6 +106,11 @@
     {
       "id": "nyckelbiotoper",
       "file": "nyckelbiotoper.geojson",
+      "crs": "EPSG:3006"
+    },
+    {
+      "id": "sumpskogar",
+      "file": "sumpskogar.geojson",
       "crs": "EPSG:3006"
     }
   ],

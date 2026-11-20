@@ -64,6 +64,8 @@ const bjork = new Float32Array(n);
 const ek = new Float32Array(n);
 const bok = new Float32Array(n);
 const hassel = new Float32Array(n);
+const asp = new Float32Array(n);
+const sis = new Float32Array(n);
 const markfuktighet = new Uint8Array(n);
 const jordart = new Uint8Array(n);
 const hojd = new Float32Array(n);
@@ -80,6 +82,8 @@ for (let j = 0; j < height; j++) {
     if (mix < 0.45) { gran[k] = volym[k] * 0.8; tall[k] = volym[k] * 0.1; bjork[k] = volym[k] * 0.1; }
     else if (mix < 0.75) { bjork[k] = volym[k] * 0.6; gran[k] = volym[k] * 0.25; ek[k] = volym[k] * 0.15; }
     else { ek[k] = volym[k] * 0.5; bok[k] = volym[k] * 0.3; hassel[k] = volym[k] * 0.1; bjork[k] = volym[k] * 0.1; }
+    asp[k] = volym[k] * (mix < 0.45 ? 0.05 : mix < 0.75 ? 0.2 : 0.05);
+    sis[k] = 10 + 18 * rand();
     const m = rand();
     markfuktighet[k] = m < 0.1 ? 1 : m < 0.5 ? 2 : m < 0.75 ? 3 : m < 0.95 ? 4 : 5;
     jordart[k] = r < 0.75 ? 1 : 2;
@@ -90,7 +94,7 @@ for (let j = 0; j < height; j++) {
     if (i >= 250 && i < 340 && j >= 80 && j < 200) {
       tradhojd[k] = 0;
       volym[k] = 0;
-      gran[k] = 0; tall[k] = 0; bjork[k] = 0; ek[k] = 0; bok[k] = 0; hassel[k] = 0;
+      gran[k] = 0; tall[k] = 0; bjork[k] = 0; ek[k] = 0; bok[k] = 0; hassel[k] = 0; asp[k] = 0;
       grundyta[k] = 0;
       alder[k] = 10;
     }
@@ -106,6 +110,8 @@ await writeRaster("skog_bjork_10m.tif", bjork, 32, 3);
 await writeRaster("skog_ek_10m.tif", ek, 32, 3);
 await writeRaster("skog_bok_10m.tif", bok, 32, 3);
 await writeRaster("skog_hassel_10m.tif", hassel, 32, 3);
+await writeRaster("skog_asp_10m.tif", asp, 32, 3);
+await writeRaster("skog_sis_10m.tif", sis, 32, 3);
 await writeRaster("markfuktighet_10m.tif", markfuktighet, 8, 1);
 await writeRaster("jordart_10m.tif", jordart, 8, 1);
 await writeRaster("hojdmodell_2m.tif", hojd, 32, 3);
@@ -157,6 +163,21 @@ const nyckelbiotoper = {
 await fs.writeFile(path.join(root, "nyckelbiotoper.geojson"), JSON.stringify(nyckelbiotoper, null, 2));
 console.log("wrote nyckelbiotoper.geojson");
 
+const sumpskogar = {
+  type: "FeatureCollection",
+  name: "sumpskogar",
+  crs: { type: "name", properties: { name: "urn:ogc:def:crs:EPSG::3006" } },
+  features: [
+    {
+      type: "Feature",
+      properties: { namn: "demo-sumpskog" },
+      geometry: { type: "Polygon", coordinates: clearcutSquare(18.24, 59.3, 18.3, 59.36) },
+    },
+  ],
+};
+await fs.writeFile(path.join(root, "sumpskogar.geojson"), JSON.stringify(sumpskogar, null, 2));
+console.log("wrote sumpskogar.geojson");
+
 const manifest = {
   crs: "EPSG:3006",
   comment:
@@ -171,6 +192,8 @@ const manifest = {
     { id: "ek", file: "skog_ek_10m.tif", nodata: -9999, band: 1 },
     { id: "bok", file: "skog_bok_10m.tif", nodata: -9999, band: 1 },
     { id: "hassel", file: "skog_hassel_10m.tif", nodata: -9999, band: 1 },
+    { id: "asp", file: "skog_asp_10m.tif", nodata: -9999, band: 1 },
+    { id: "sis", file: "skog_sis_10m.tif", nodata: -9999, band: 1 },
     { id: "markfuktighet", file: "markfuktighet_10m.tif", nodata: 255, band: 1 },
     {
       id: "jordart",
@@ -185,6 +208,7 @@ const manifest = {
   vectors: [
     { id: "avverkningar", file: "avverkningar_senaste_5ar.geojson", crs: "EPSG:3006" },
     { id: "nyckelbiotoper", file: "nyckelbiotoper.geojson", crs: "EPSG:3006" },
+    { id: "sumpskogar", file: "sumpskogar.geojson", crs: "EPSG:3006" },
   ],
   mask: {
     file: "nmd_10m.tif",

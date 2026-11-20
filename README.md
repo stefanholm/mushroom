@@ -34,6 +34,24 @@ npm run typecheck
   exporterar kartvyn som PNG, and a heatmap overlay from
   `GET /api/tiles/habitat/{species}/{z}/{x}/{y}.png` (also `GET /api/hotspots?...` GeoJSON).
 
+## Karta-funktioner
+
+- Artval: **flera samtidigt** via pill-knappar (max 4) — varje art får eget värmelager.
+- **Spara PNG** exporterar kartvyn som bild.
+- `GET /api/peaks?species=...&minLon=...&minScore=80` — GeoJSON med lokala score-toppar
+  (för PNG-ikoner/symbol-lager i t.ex. Xcode-appen).
+- Väder: regn 14 d + min-temp 48 h (frostspärr) + **kalla nätter 7 d (flush, upp till ×1.25)**.
+
+### Skala till hela Sverige
+
+1. Kör `npm run bake-tiles -- --all-species --bbox <län> --zmin 5 --zmax 12` offline —
+   serverns disk-cache `data/tiles/r14/` fylls med **statiska** habitat-tiles (vädret hålls live).
+2. Servera `data/tiles/` som statiska PNG från CDN (t.ex. Cloudflare R2, noll egress) —
+   aldrig rendera GIS per användare live.
+3. SMHI väder som ett litet nationellt JSON (5×5 km multiplikatorer) i stället för per-punkt.
+4. App Store: backend över HTTPS, PMTiles per län för offline, attributionssida för
+   CC0/CC-BY-källorna (NV NMD, SGU, SLU, Skogsstyrelsen, SMHI, Lantmäteriet/OSM).
+
 ## Data layers (folder structure)
 
 Raster/vector layers live in `data/layers/` (GeoTIFF/GeoJSON files themselves are
@@ -53,12 +71,15 @@ data/
     ├── skog_ek_10m.tif                   # SLU Skogskarta – volym ek, GeoTIFF
     ├── skog_bok_10m.tif                  # SLU Skogskarta – volym bok, GeoTIFF
     ├── skog_hassel_10m.tif               # SLU Skogskarta – volym hassel, GeoTIFF (valfri, svart trumpetsvamp)
-    ├── skog_alder_10m.tif                # SLU Skogskarta – skogsålder (år), GeoTIFF — används i S_env (fAge)
+    ├── skog_asp_10m.tif                  # SLU Skogskarta – volym asp, GeoTIFF (valfri, aspsopp)
+    ├── skog_alder_10m.tif                # SLU Skogskarta – beståndsmedelålder (år), GeoTIFF — fAge i S_env
+    ├── skog_sis_10m.tif                  # Skogliga grunddata – ståndortsindex SIS (H100, m), GeoTIFF — fSIS i S_env
     ├── markfuktighet_10m.tif             # SLU Markfuktighetskarta – klass 1..5 (1=torr … 5=blöt), GeoTIFF
     ├── jordart_10m.tif                   # SGU jordarter – klasskod, GeoTIFF (recode i manifest: 1=acidic, 2=calcareous)
     ├── hojdmodell_2m.tif                 # Lantmäteriet nationell höjdmodell – höjd (m), GeoTIFF (lutning/aspekt beräknas i kod)
     ├── avverkningar_senaste_5ar.geojson  # Skogsstyrelsen "Utförda avverkningar" – polygoner (hårdspärr), GeoJSON
-    └── nyckelbiotoper.geojson            # Skogsstyrelsen nyckelbiotoper – polygoner (bonus ×1.3), GeoJSON
+    ├── nyckelbiotoper.geojson            # Skogsstyrelsen nyckelbiotoper – polygoner (bonus ×1.3), GeoJSON
+    └── sumpskogar.geojson                # Skogsstyrelsen sumpskogar – polygoner (bonus ×1.15), GeoJSON
 ```
 
 ## Tile endpoints (cached XYZ rasters)

@@ -185,6 +185,60 @@ async function minTempLast48h(lat: number, lon: number): Promise<number | null> 
   }
 }
 
+const coolCache = new Map<string, { at: number; cool: number | null }>();
+
+async function coolNightsLast7d(lat: number, lon: number, asOf: Date): Promise<number | null> {
+  const key = `${lat.toFixed(1)},${lon.toFixed(1)},${asOf.toISOString().slice(0, 10)}`;
+  const cached = coolCache.get(key);
+  if (cached && Date.now() - cached.at < 6 * 3600 * 1000) return cached.cool;
+  try {
+    const stations = await getStations();
+    const active = stations.filter((s) => s.active);
+    const candidates = active.length > 0 ? active : stations;
+    const cosLat = Math.cos((lat * Math.PI) / 180);
+    const ranked = [...candidates].sort(
+      (a, b) =>
+        (a.lat - lat) ** 2 + ((a.lon - lon) * cosLat) ** 2 - ((b.lat - lat) ** 2 + ((b.lon - lon) * cosLat) ** 2),
+    );
+    let body: { value?: { to?: unknown; value?: unknown }[] } | null = null;
+    for (const station of ranked.slice(0, 4)) {
+      const r = await fetch(
+        `${SMHI_BASE}/parameter/${TEMP_PARAMETER}/station/${station.id}/period/latest-months/data.json`,
+        { signal: AbortSignal.timeout(15_000) },
+      );
+      if (r.ok) {
+        body = (await r.json()) as { value?: { to?: unknown; value?: unknown }[] };
+        if ((body.value ?? []).length > 0) break;
+      }
+    }
+    if (!body) return null;
+    const values = (body.value ?? [])
+      .map((v) => ({ to: Number(v.to), value: Number(v.value) }))
+      .filter((v) => Number.isFinite(v.to) && Number.isFinite(v.value))
+      .sort((a, b) => a.to - b.to);
+    const end = asOf.getTime();
+    const cutoff = end - 7 * 86400_000;
+    const perDay = new Map<string, number>();
+    for (const v of values) {
+      if (v.to < cutoff || v.to > end) continue;
+      const day = new Date(v.to).toISOString().slice(0, 10);
+      const prev = perDay.get(day);
+      if (prev === undefined || v.value < prev) perDay.set(day, v.value);
+    }
+    let cool = 0;
+    for (const min of perDay.values()) if (min <= 10) cool++;
+    coolCache.set(key, { at: Date.now(), cool });
+    return cool;
+  } catch {
+    return null;
+  }
+}
+
+function flushFactor(coolNights: number | null): number {
+  if (coolNights === null) return 1;
+  return 1 + 0.25 * Math.min(1, coolNights / 4);
+}
+
 const OVERPASS_HOSTS = [
   "https://overpass-api.de/api/interpreter",
   "https://lz4.overpass-api.de/api/interpreter",
@@ -700,9 +754,13 @@ async function computeCells(
   const rainFactor = rain14 === null ? 0.5 : Math.min(1, rain14 / 60);
   let minTemp: number | null = null;
   let frost = 1;
+  let coolNights: number | null = null;
+  let flush = 1;
   if (!staticOnly) {
     minTemp = await minTempLast48h(centerLat, centerLon);
     if (species.frostSensitive && minTemp !== null && minTemp <= -3) frost = 0;
+    coolNights = await coolNightsLast7d(centerLat, centerLon, asOf);
+    flush = flushFactor(coolNights);
   }
 
   const span = Math.max(maxLon - minLon, maxLat - minLat);
@@ -768,7 +826,7 @@ async function computeCells(
         roadFactor,
         forestEdge,
       });
-      const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * rainFactor * frost;
+      const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * rainFactor * frost * flush;
       const score = Math.min(100, Math.round(100 * habitat * dynamic));
       cells.push({ lon: clon, lat: clat, score, heat: 0 });
     }
@@ -806,6 +864,8 @@ async function computeCells(
       seasonFactor: Number(seasonalFactor(species, centerLat, asOf).toFixed(2)),
       minTemp48h: minTemp,
       frost,
+      coolNights7d: coolNights,
+      flush,
       hostFallback: hostFallback(store),
       staticOnly,
       asOf: asOf.toISOString().slice(0, 10),
@@ -858,6 +918,56 @@ app.get("/api/hotspots", async (req, res) => {
       generatedAt: new Date().toISOString(),
     },
     features,
+  });
+});
+
+app.get("/api/peaks", async (req, res) => {
+  const key = String(req.query.species ?? "");
+  const species = SPECIES[key];
+  const box = ["minLon", "minLat", "maxLon", "maxLat"].map((k) => Number(req.query[k]));
+  const minScore = Math.max(0, Math.min(100, Number(req.query.minScore ?? 80) || 80));
+  if (!species || box.some((n) => !Number.isFinite(n))) {
+    return res
+      .status(400)
+      .json({ error: "Expected query params: species, minLon, minLat, maxLon, maxLat, [minScore]." });
+  }
+  let [minLon, minLat, maxLon, maxLat] = box;
+  if (minLon > maxLon) [minLon, maxLon] = [maxLon, minLon];
+  if (minLat > maxLat) [minLat, maxLat] = [maxLat, minLat];
+  if (maxLon - minLon > 4 || maxLat - minLat > 4) {
+    return res.status(400).json({ error: "Bounding box too large (max 4 degrees per side)." });
+  }
+  const staticOnly = req.query.static === "1";
+  const asOf = parseAsOf(String(req.query.date ?? ""));
+  const span = Math.max(maxLon - minLon, maxLat - minLat);
+  const cell = cellForSpan(span);
+  const { cells, meta } = await computeCells(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
+  const grid = new Map<string, CellScore>();
+  for (const c of cells) grid.set(`${c.lon.toFixed(6)},${c.lat.toFixed(6)}`, c);
+  const peaks: CellScore[] = [];
+  for (const c of cells) {
+    if (c.score < minScore) continue;
+    let isPeak = true;
+    for (let dj = -1; dj <= 1 && isPeak; dj++) {
+      for (let di = -1; di <= 1; di++) {
+        if (!di && !dj) continue;
+        const n = grid.get(`${(c.lon + di * cell).toFixed(6)},${(c.lat + dj * cell).toFixed(6)}`);
+        if (n && n.score > c.score) {
+          isPeak = false;
+          break;
+        }
+      }
+    }
+    if (isPeak) peaks.push(c);
+  }
+  res.json({
+    type: "FeatureCollection",
+    meta: { ...meta, minScore, peakCount: peaks.length },
+    features: peaks.map((c) => ({
+      type: "Feature",
+      properties: { score: c.score, heat: c.heat, species: key, label: species.label, eatScore: species.eatScore },
+      geometry: { type: "Point", coordinates: [c.lon, c.lat] },
+    })),
   });
 });
 
@@ -1044,6 +1154,8 @@ app.get("/api/meta", async (req, res) => {
   ]);
   const minTemp = await minTempLast48h(62.5, 15.5);
   const frost = species.frostSensitive && minTemp !== null && minTemp <= -3 ? 0 : 1;
+  const coolNights = await coolNightsLast7d(62.5, 15.5, asOf);
+  const flush = flushFactor(coolNights);
   res.json({
     species: key,
     label: species.label,
@@ -1064,6 +1176,8 @@ app.get("/api/meta", async (req, res) => {
     seasonFactor: Number(seasonalFactor(species, 62.5, asOf).toFixed(2)),
     minTemp48h: minTemp,
     frost,
+    coolNights7d: coolNights,
+    flush,
     hostFallback: hostFallback(store),
     asOf: asOf.toISOString().slice(0, 10),
     layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
@@ -1289,7 +1403,9 @@ app.get("/api/debug/cell", async (req, res) => {
   const rainFactor = rain14 === null ? 0.5 : Math.min(1, rain14 / 60);
   const minTemp = staticOnly ? null : await minTempLast48h(lat, lon);
   const frost = species.frostSensitive && minTemp !== null && minTemp <= -3 ? 0 : 1;
-  const dynamic = staticOnly ? 1 : seasonalFactor(species, lat, asOf) * rainFactor * frost;
+  const coolNights = staticOnly ? null : await coolNightsLast7d(lat, lon, asOf);
+  const flush = flushFactor(coolNights);
+  const dynamic = staticOnly ? 1 : seasonalFactor(species, lat, asOf) * rainFactor * frost * flush;
   res.json({
     species: key,
     lon,
@@ -1310,6 +1426,8 @@ app.get("/api/debug/cell", async (req, res) => {
     seasonFactor: Number(seasonalFactor(species, lat, asOf).toFixed(2)),
     minTemp48h: minTemp,
     frost,
+    coolNights7d: coolNights,
+    flush,
     score: Math.min(100, Math.round(100 * habitat * dynamic)),
     layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
   });
