@@ -1212,10 +1212,13 @@ app.get("/api/meta", async (req, res) => {
     console.error("SMHI fetch failed:", err);
   }
   const store = await getLayerStore();
-  const [f, x] = await Promise.allSettled([
-    forestPolygonsForBox(17.6, 59.0, 18.4, 59.6),
-    exclusionsForBox(17.6, 59.0, 18.4, 59.6),
-  ]);
+  const [f, x] =
+    store.mask !== null
+      ? [null, null]
+      : await Promise.allSettled([
+          forestPolygonsForBox(17.6, 59.0, 18.4, 59.6),
+          exclusionsForBox(17.6, 59.0, 18.4, 59.6),
+        ]);
   const minTemp = await minTempLast48h(mLat, mLon);
   const frost = species.frostSensitive && minTemp !== null && minTemp <= -3 ? 0 : 1;
   const coolNights = await coolNightsLast7d(mLat, mLon, asOf);
@@ -1250,12 +1253,12 @@ app.get("/api/meta", async (req, res) => {
     asOf: asOf.toISOString().slice(0, 10),
     layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
     tileVersion: path.basename(TILES_DIR),
-    forestAreas: f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
-    forestKnown: store.mask !== null || (f.status === "fulfilled" && f.value !== null),
+    forestAreas: f && f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
+    forestKnown: store.mask !== null || (f !== null && f.status === "fulfilled" && f.value !== null),
     maskUsed: store.mask !== null,
-    excludedAreas: x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
-    forestCount: f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
-    exclCount: x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
+    excludedAreas: x && x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
+    forestCount: f && f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
+    exclCount: x && x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
   });
 });
 
