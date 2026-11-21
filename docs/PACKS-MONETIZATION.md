@@ -36,10 +36,16 @@ Totalt: 6 gratis + 11×5 = 61 arter, 0 överlapp (fail-fast-validering i modulen
 
 ## Helhetsköp & solo-premium
 
-- `all` — Alla 61 arter, **149 kr** engångsköp.
-- `pro` — Pro, **299 kr/år** (alt 49 kr/mån): allt ovan + fläckvarning + obegränsad chatt + offline hela Sverige.
-- `goliatmusseron-solo` — **79 kr**, enbart jättemusseron (flyttad ur områdespaketet; alltid med
-  FRIDLYST-varning — solo-paketet ger karta/foto, aldrig plocktips).
+- `all` — Alla 61 arter, **149 kr** engångsköp (toppköpet; enda sättet att få allt på en gång).
+- `goliatmusseron-solo` — **79 kr**, enbart jättemusseron: **foto/karta-paket** (FRIDLYST/VU —
+  appen visar habitat + artinfo, aldrig plocktips).
+- `pro` finns kvar som entitlement i koden men är **inte till salu** (`forSale=false`, dold i
+  `/api/shop`) — säsongen är för kort för prenumeration. Kan aktiveras för betatestare/dev.
+
+### Prisbedömning (29–39 kr per 5-pack, 79 solo, 149 alla)
+Rimligt för Sverige: jämför appar som kostar 30–60 kr engång eller ~300 kr/år prenumeration.
+5-pack 29–39 kr ligger i "impulsköp"-spannet; 149 kr för alla 61 är ett tydligt bästa-värde.
+Solo 79 kr motiveras av att jättemusseron är sällsynt + skyddad (foto-upplevelse).
 - Regionpack per län offline: 39 kr/län (PMTiles, klient-side) — ej i PACK_DEFS än.
 
 ## "Lås upp 1 svamp mot betyg/kommentar" (review-reward)
