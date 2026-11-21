@@ -1517,7 +1517,7 @@ const WATER_DIST_IDEAL: Record<string, [number, number]> = {
 // #9–#11 är ärligt geografiska/nischade områdespack. "all"/"pro" är helhetsköp.
 // Gratisarter = arterna UTAN pack nedan (kantarell, blek-taggsvamp, brunsopp, sandsopp,
 // smorsopp, stolt-fjallskivling). Fail-fast: modulen kastar fel om någon art saknas/dubbleras.
-const PACK_DEFS: [string, string, number, "mixed" | "regional" | "all" | "pro", string[]][] = [
+const PACK_DEFS: [string, string, number, "mixed" | "regional" | "solo" | "all" | "pro", string[]][] = [
   ["blandad-korg-1", "Blandad korg #1 — Skog & sensommar", 39, "mixed", ["trattkantarell", "karljohan", "mandelkremla", "ostronmussling", "varmusseron"]],
   ["blandad-korg-2", "Blandad korg #2 — Kust, tall & höst", 39, "mixed", ["rodbrun-stensopp", "granblodriska", "snobolischampinjon", "vinterskivling", "frostvaxing"]],
   ["blandad-korg-3", "Blandad korg #3 — Björk, mosse & skörd", 29, "mixed", ["bjorksopp", "rodgul-trumpetsvamp", "sillkremla", "honungsskivling", "blamusseron"]],
@@ -1528,14 +1528,16 @@ const PACK_DEFS: [string, string, number, "mixed" | "regional" | "all" | "pro", 
   ["blandad-korg-8", "Blandad korg #8 — Tagg, löv & extra fynd", 29, "mixed", ["rodgul-taggsvamp", "larksopp", "jatteroksvamp", "fjallig-blacksvamp", "tallblodriska"]],
   ["syd-adellov-kalk", "Syd- & ädellöv / kalkmark", 29, "regional", ["blek-kantarell", "kruskantarell", "finluden-stensopp", "sommartryffel", "judasora"]],
   ["nordlig-fuktig-profil", "Nordlig & fuktig skogsprofil", 29, "regional", ["zonerad-granblodriska", "sotvaxing", "bla-taggsvamp", "rod-svavelticka", "farsticka"]],
-  ["varme-lov-specialsoppar", "Värme- & lövpräglade specialsoppar", 29, "regional", ["blodsopp", "gulsopp", "jattemusseron", "tallskrubb", "blodriska"]],
+  ["varme-lov-specialsoppar", "Värme- & lövpräglade specialsoppar", 29, "regional", ["blodsopp", "gulsopp", "tallskrubb", "blodriska"]],
+  ["goliatmusseron-solo", "Goliatmusseron — specialutgåva (FRIDLYST: karta/foto, aldrig plocktips)", 79, "solo", ["jattemusseron"]],
   ["all", "Alla 61 arter", 149, "all", []],
   ["pro", "Pro (allt + fläckvarning + offline)", 299, "pro", []],
 ];
 const SPECIES_PACK: Record<string, string> = {};
 for (const [pid, , , kind, list] of PACK_DEFS) {
-  if (kind !== "mixed" && kind !== "regional") continue;
-  if (list.length !== 5) throw new Error(`Paket ${pid} har ${list.length} arter (förväntade 5)`);
+  if (kind !== "mixed" && kind !== "regional" && kind !== "solo") continue;
+  if (kind === "solo" ? list.length !== 1 : list.length < 4 || list.length > 6)
+    throw new Error(`Paket ${pid} har ${list.length} arter (fel antal)`);
   for (const sid of list) {
     if (SPECIES_PACK[sid]) throw new Error(`Art ${sid} ligger i både ${SPECIES_PACK[sid]} och ${pid}`);
     SPECIES_PACK[sid] = pid;
@@ -1575,11 +1577,29 @@ for (const [k, s] of Object.entries(SPECIES)) {
   s.pack = SPECIES_PACK[k];
 }
 
+// Belöningspool för "lås upp 1 svamp mot betyg/kommentar": bara LÅSTA "helt ok"-arter —
+// aldrig topparter (kantarell/karljohan/trattkantarell/trumpetsvampar/stensopp/riskor) och
+// aldrig exklusiva/känsliga (jattemusseron, sommartryffel, murklor, korallticka, blomkålssvamp).
+export const REVIEW_REWARD_SPECIES: string[] = [
+  "bjorksopp",
+  "aspsopp",
+  "tegelsopp",
+  "grynsopp",
+  "larksopp",
+  "sillkremla",
+  "mandelkremla",
+  "gronkremla",
+  "ostronmussling",
+  "blek-ostronmussling",
+  "rokslojskivling",
+  "vinterskivling",
+];
+
 export type PackInfo = {
   id: string;
   label: string;
   priceSek: number;
-  kind: "mixed" | "regional" | "all" | "pro";
+  kind: "mixed" | "regional" | "solo" | "all" | "pro";
   species: string[];
 };
 
@@ -1591,17 +1611,22 @@ export const PACKS: Record<string, PackInfo> = Object.fromEntries(
       label,
       priceSek,
       kind,
-      species: kind === "mixed" || kind === "regional" ? [...list] : Object.keys(SPECIES),
+      species: kind === "mixed" || kind === "regional" || kind === "solo" ? [...list] : Object.keys(SPECIES),
     },
   ]),
 );
 
 // true om arten är upplåst med givna entitlements (tomma = gratisversionen).
+// "reward:<id>" gäller bara för arter i REVIEW_REWARD_SPECIES (valideras i server.ts).
 export function isSpeciesUnlocked(id: string, ents: Set<string>): boolean {
   const s = SPECIES[id];
   if (!s) return false;
   if (!s.pack) return true;
-  return ents.has("pro") || ents.has("all") || ents.has(s.pack);
+  return ents.has("pro") || ents.has("all") || ents.has(s.pack) || ents.has("reward:" + id);
+}
+
+export function isValidRewardClaim(id: string): boolean {
+  return REVIEW_REWARD_SPECIES.includes(id);
 }
 
 const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));

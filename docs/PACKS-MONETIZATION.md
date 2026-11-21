@@ -34,11 +34,25 @@ säkerhetschecklista i chatt), Stigar, Terrängskugga, Spara PNG, Hitta bilen, t
 
 Totalt: 6 gratis + 11×5 = 61 arter, 0 överlapp (fail-fast-validering i modulen kastar fel vid dubblett/saknad).
 
-## Helhetsköp
+## Helhetsköp & solo-premium
 
 - `all` — Alla 61 arter, **149 kr** engångsköp.
 - `pro` — Pro, **299 kr/år** (alt 49 kr/mån): allt ovan + fläckvarning + obegränsad chatt + offline hela Sverige.
+- `goliatmusseron-solo` — **79 kr**, enbart jättemusseron (flyttad ur områdespaketet; alltid med
+  FRIDLYST-varning — solo-paketet ger karta/foto, aldrig plocktips).
 - Regionpack per län offline: 39 kr/län (PMTiles, klient-side) — ej i PACK_DEFS än.
+
+## "Lås upp 1 svamp mot betyg/kommentar" (review-reward)
+
+- Pool: `REVIEW_REWARD_SPECIES` (12 arter, **alla låsta** "helt ok"-arter: bjorksopp, aspsopp,
+  tegelsopp, grynsopp, larksopp, sillkremla, mandelkremla, gronkremla, ostronmussling,
+  blek-ostronmussling, rokslojskivling, vinterskivling). Topparter och exklusiva/känsliga arter
+  (kantarell, karljohan, trattkantarell, trumpet/taggsvampar, jattemusseron, sommartryffel, murklor,
+  korallticka, blomkålssvamp…) kan ALDRIG komma via belöning.
+- Max 1 art per användare; sparas som entitlement `reward:<id>` i samma lista som packköp.
+- Server-validerat: `?entitlements=reward:karljohan` kastas bort (403) — bara id:n i poolen accepteras.
+  `/api/meta` returnerar `reviewRewardSpecies`. I produktion: verifiera betyget server-side via
+  App Store/Server API innan `reward:<id>` sätts.
 
 ## Regler (inte förhandlingsbara)
 

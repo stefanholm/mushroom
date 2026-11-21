@@ -7,18 +7,28 @@ import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
 import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
-import { SPECIES, PACKS, effectiveGdd5, hostFallback, isSpeciesUnlocked, seasonalFactor, staticHabitatScore } from "./habitat.js";
+import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
 
-// Entitlements skickas som ?entitlements=pro,expert (csv). I produktion ska detta INTE
-// litas på från klienten — validera App Store-kvittot server-side (App Store Server API /
-// StoreKit 2) och sätt entitlements där. Här är det dev/test-läge.
+// Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
+// I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
+// (App Store Server API / StoreKit 2) och sätt entitlements där. Här är det dev/test-läge.
+// "reward:<id>" accepteras bara om arten finns i REVIEW_REWARD_SPECIES (server-validerad —
+// topparter/exklusiva arter kan aldrig låsas upp via betyg/kommentar).
 function resolveEntitlements(req: express.Request): Set<string> {
-  return new Set(
-    String(req.query.entitlements ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-  );
+  const raw = String(req.query.entitlements ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out = new Set<string>();
+  for (const e of raw) {
+    if (e.startsWith("reward:")) {
+      const id = e.slice(7);
+      if (isValidRewardClaim(id)) out.add(e);
+    } else {
+      out.add(e);
+    }
+  }
+  return out;
 }
 
 function gateSpecies(req: express.Request, keys: string[]): string[] {
@@ -1381,6 +1391,7 @@ app.get("/api/meta", async (req, res) => {
     lookalikes: species.lookalikes ?? null,
     season: [species.seasonStart, species.seasonEnd],
     entitlements: [...resolveEntitlements(req)],
+    reviewRewardSpecies: REVIEW_REWARD_SPECIES,
     packs: Object.values(PACKS).map((p) => ({ id: p.id, label: p.label, priceSek: p.priceSek, kind: p.kind, speciesCount: p.species.length })),
     speciesList: Object.entries(SPECIES).map(([id, s]) => ({
       id,
