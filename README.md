@@ -29,7 +29,7 @@ npm run typecheck
 - **Chatt** — talks to `mistral-small-latest` via the official SDK; the server prepends a
   Swedish system prompt so answers come back in Swedish. The API key never leaves the server.
 - **Karta** — a MapLibre map of Sweden (basemap switch Terräng/OSM/Satellit) with a species
-  selector — **51 matsvampar** med ätvärde ★ och säsong i listan (kantarell, karljohan,
+  selector — **61 matsvampar** med ätvärde ★ och säsong i listan (kantarell, karljohan,
   jättemusseron som är fridlyst och varningsmarkeras, …) — plus a "Spara PNG"-knapp som
   exporterar kartvyn som PNG, and a heatmap overlay from
   `GET /api/tiles/habitat/{species}/{z}/{x}/{y}.png` (also `GET /api/hotspots?...` GeoJSON).

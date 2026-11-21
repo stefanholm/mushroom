@@ -86,6 +86,16 @@ const SPECIES = [
   ["snobolischampinjon", "Agaricus arvensis"],
   ["citronslemskivling", "Gomphidius glutinosus"],
   ["streckmusseron", "Tricholoma portentosum"],
+  ["blodriska", "Lactarius deliciosus"],
+  ["varmusseron", "Calocybe gambosa"],
+  ["gulsopp", "Xerocomus subtomentosus"],
+  ["blasopp", "Gyroporus cyanescens"],
+  ["farsticka", "Albatrellus confluens"],
+  ["bla-taggsvamp", "Hydnellum caeruleum"],
+  ["blek-ostronmussling", "Pleurotus pulmonarius"],
+  ["rod-svavelticka", "Laetiporus cincinnatus"],
+  ["honungsskivling", "Armillaria mellea"],
+  ["rodnande-blacksvamp", "Amanita rubescens"],
 ];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

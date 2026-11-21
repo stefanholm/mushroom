@@ -129,7 +129,7 @@ D = seasonalFactor × rainFactor × frost × flush
 Every species also carries `eatScore` (ätvärde 1–5, shown as ★ in the UI and `/api/meta`
 `speciesList`), a Swedish `note` with identification/safety guidance, `ageIdeal`, and
 `protected` (jättemusseron is **fridlyst** in Sweden — shown with a warning, do not pick) and
-`expertMode` (51 species total; expert-mode species — murklor, champinjoner, vårmusseron,
+`expertMode` (61 species total; expert-mode species — murklor, champinjoner, vårmusseron,
 kremlor, spindelskivlingar m.fl. — have deadly lookalikes and are only shown in the UI behind
 the Expertläge toggle, always with their warning note; the chat never recommends them as safe).
 Habitat references: Artdatabanken Artfakta, Svampguiden, Wikipedia.
