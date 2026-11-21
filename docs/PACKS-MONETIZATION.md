@@ -42,10 +42,21 @@ Totalt: 6 gratis + 11×5 = 61 arter, 0 överlapp (fail-fast-validering i modulen
 - `pro` finns kvar som entitlement i koden men är **inte till salu** (`forSale=false`, dold i
   `/api/shop`) — säsongen är för kort för prenumeration. Kan aktiveras för betatestare/dev.
 
-### Prisbedömning (29–39 kr per 5-pack, 79 solo, 149 alla)
+### Prisbedömning (29–39 kr per 5-pack, 79 solo, 149 alla, 10 kr enskild)
 Rimligt för Sverige: jämför appar som kostar 30–60 kr engång eller ~300 kr/år prenumeration.
 5-pack 29–39 kr ligger i "impulsköp"-spannet; 149 kr för alla 61 är ett tydligt bästa-värde.
 Solo 79 kr motiveras av att jättemusseron är sällsynt + skyddad (foto-upplevelse).
+**Enskild svamp kostar 10 kr** (`species:<id>`) — alla låsta arter utom `jattemusseron`
+(solo-only). 10 kr är lågt men meningen är konvertering/engagemang, inte intäkt per køp.
+
+### Shop-visning
+- Varje packkort visar bild på mest prominent art (högst ätvärde): `/icons/<id>.png`
+  (PNG:er läggs i `public/icons/` på Macen; webben gömmer bilden om filen saknas).
+- Rullista "Köp en enskild svamp" längst ner i shopen (alla 54 låsta arter à 10 kr).
+- Alla 12 reward-arter ligger garanterat i varsitt pack (fail-fast i modulen) — ingen art är
+  "död" (varken köpbara eller rewardbara saknas).
+- `/api/shop` ger även `singles`, `singlePriceSek`, `soloOnlySpecies`, `image`/`topSpecies` per pack.
+- Dev-endpoint `POST /api/single/claim {species}` (samma mönster som `/api/reward/claim`).
 - Regionpack per län offline: 39 kr/län (PMTiles, klient-side) — ej i PACK_DEFS än.
 
 ## "Lås upp 1 svamp mot betyg/kommentar" (review-reward)
