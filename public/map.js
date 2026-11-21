@@ -789,32 +789,75 @@ document.getElementById("closeRewardBtn")?.addEventListener("click", closeReward
 document.getElementById("reviewRewardModal")?.addEventListener("click", (e) => {
   if (e.target.id === "reviewRewardModal") closeRewardModal();
 });
+document.getElementById("rewardType")?.addEventListener("change", (e) => {
+  const row = document.getElementById("referralRow");
+  if (row) row.hidden = e.target.value !== "referral";
+});
+document.getElementById("createReferralBtn")?.addEventListener("click", async () => {
+  const r = await fetch("/api/referral/create", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ device: localStorage.getItem("mushroom-device") || "web" }),
+  });
+  const j = await r.json();
+  if (j.code && navigator.share) {
+    await navigator.share({ title: "SvampRadar", text: j.shareText, url: location.origin }).catch(() => {});
+  } else if (j.code) {
+    prompt("Din referral-kod att dela:", j.code + " — " + j.shareText);
+  }
+});
 document.getElementById("claimRewardBtn")?.addEventListener("click", async () => {
   const sel = document.getElementById("rewardSpeciesSelect");
   const ratingEl = document.getElementById("rewardRating");
   const commentEl = document.getElementById("rewardComment");
+  const typeEl = document.getElementById("rewardType");
+  const codeEl = document.getElementById("referralCode");
   if (!sel || !sel.value) return;
-  const rating = Number(ratingEl?.value || 0);
-  const comment = (commentEl?.value || "").trim();
-  if (!(rating >= 1 && rating <= 5) && comment.length < 3) {
-    alert("Ange ett betyg (1–5) eller skriv en kort kommentar först.");
-    return;
-  }
   const chosenId = sel.value;
   if (!metaRewardSpecies.includes(chosenId)) {
     alert("Ogiltig belöningsart.");
     return;
   }
+  const type = typeEl?.value === "referral" ? "referral" : "review";
+  const ents = activeEntitlements();
+  const types = ents.filter((e) => e.startsWith("claim:")).map((e) => e.slice(6));
+  const body = {
+    species: chosenId,
+    type,
+    claimed: ents.filter((e) => e.startsWith("reward:")),
+    types,
+    rating: Number(ratingEl?.value || 0),
+    comment: (commentEl?.value || "").trim(),
+  };
+  if (type === "referral") {
+    body.code = (codeEl?.value || "").trim().toUpperCase();
+    if (!body.code) {
+      alert("Lös in en referral-kod först (eller skapa din egen att dela).");
+      return;
+    }
+    const rr = await fetch("/api/referral/redeem", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: body.code, device: localStorage.getItem("mushroom-device") || "web" }),
+    });
+    if (!rr.ok) {
+      const j = await rr.json().catch(() => ({}));
+      alert(j.error || "Koden kunde inte lösas in.");
+      return;
+    }
+  }
   const r = await fetch("/api/reward/claim", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ species: chosenId, claimed: activeEntitlements() }),
+    body: JSON.stringify(body),
   });
   if (!r.ok) {
     const j = await r.json().catch(() => ({}));
-    throw new Error(j.error || "Kunde inte låsa upp belöningen.");
+    alert(j.error || "Kunde inte låsa upp belöningen.");
+    return;
   }
   addEntitlement("reward:" + chosenId);
+  addEntitlement("claim:" + type);
   updateShopBadge();
   if (speciesList) applySpeciesList(speciesList);
   rebuildHabitat();

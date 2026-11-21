@@ -1642,8 +1642,11 @@ export function isValidRewardClaim(id: string): boolean {
 // reward-pool-arter går att köpa enskilt EFTER att gratis-betyget använts (se MAX_REWARD_CLAIMS).
 export const SINGLE_PRICE_SEK = 10;
 export const SOLO_ONLY_SPECIES = ["jattemusseron"];
-// Hur många arter man max kan låsa upp gratis via verifierade betyg/kommentar ur poolen.
-export const MAX_REWARD_CLAIMS = 3;
+// Hur många arter man max kan låsa upp gratis ur poolen: 1 via app-recension + 2 via
+// referral-koder som faktiskt lösts in = max 3 totalt.
+export const MAX_REVIEW_CLAIMS = 1;
+export const MAX_REFERRAL_CLAIMS = 2;
+export const MAX_REWARD_CLAIMS = MAX_REVIEW_CLAIMS + MAX_REFERRAL_CLAIMS;
 // Topplista i shopen: de 5 mest populära arterna som enskilda köp (gratis eller 10 kr).
 // Får aldrig innehålla reward-pool-arter (valideras nedan).
 export const TOP_PICKS: string[] = ["kantarell", "karljohan", "trattkantarell", "svart-trumpetsvamp", "rodbrun-stensopp"];

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
 import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
-import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, MAX_REWARD_CLAIMS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
+import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, MAX_REWARD_CLAIMS, MAX_REVIEW_CLAIMS, MAX_REFERRAL_CLAIMS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
 
 // Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
 // I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
@@ -1893,27 +1893,70 @@ app.get("/api/unlocked", (req, res) => {
   });
 });
 
-// Dev-läge: lås upp upp till MAX_REWARD_CLAIMS arter ur poolen via betyg/kommentar.
-// Klienten skickar sina nuvarande reward-entitlements i body.claimed (csv/array) så servern
-// kan räkna. I produktion: verifiera varje betyg server-side (App Store Server API /
-// eget review-API) innan reward:<id> sätts.
+// --- Referral-koder (dev-läge, in-memory; i produktion i DB) ---
+// POST /api/referral/create {device} -> {code}  (användaren delar koden)
+// POST /api/referral/redeem {code, device} -> 200 om giltig, ej egen, ej använd; då får
+//   enheten ett referral-claim (max MAX_REFERRAL_CLAIMS st).
+const referralCodes = new Map<string, { owner: string; usedBy: string | null }>();
+const redeemedByDevice = new Map<string, number>();
+function newCode() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+app.post("/api/referral/create", (req, res) => {
+  const device = String(req.body?.device ?? "anon");
+  const code = newCode();
+  referralCodes.set(code, { owner: device, usedBy: null });
+  res.json({ code, shareText: `SvampRadar: prova appen! Använd min kod ${code} så får vi båda en gratis svamp-art.` });
+});
+app.post("/api/referral/redeem", (req, res) => {
+  const code = String(req.body?.code ?? "").toUpperCase();
+  const device = String(req.body?.device ?? "anon");
+  const entry = referralCodes.get(code);
+  if (!entry) return res.status(404).json({ error: "Ogiltig kod." });
+  if (entry.owner === device) return res.status(403).json({ error: "Kan inte lösa in sin egen kod." });
+  if (entry.usedBy) return res.status(409).json({ error: "Koden är redan använd." });
+  entry.usedBy = device;
+  redeemedByDevice.set(device, (redeemedByDevice.get(device) ?? 0) + 1);
+  res.json({ ok: true, referralClaims: Math.min(redeemedByDevice.get(device) ?? 1, MAX_REFERRAL_CLAIMS), maxReferralClaims: MAX_REFERRAL_CLAIMS });
+});
+
+// Dev-läge: lås upp en pool-art via verifierad belöning.
+// type: "review" (max MAX_REVIEW_CLAIMS, kräver rating/comment i body) eller
+//       "referral" (max MAX_REFERRAL_CLAIMS, kräver att enheten löst in en kod —
+//       här godkänns body.types från klienten; i produktion kollas referralCodes/redeemedByDevice i DB).
 app.post("/api/reward/claim", (req, res) => {
   const id = String(req.body?.species ?? "");
+  const type = String(req.body?.type ?? "review");
   if (!isValidRewardClaim(id)) {
-    return res.status(403).json({ error: "Arten kan inte lösas ut via betyg/kommentar.", allowed: REVIEW_REWARD_SPECIES });
+    return res.status(403).json({ error: "Arten kan inte lösas ut via belöning.", allowed: REVIEW_REWARD_SPECIES });
   }
   const claimedRaw = req.body?.claimed;
   const claimed: string[] = Array.isArray(claimedRaw)
     ? claimedRaw.map(String)
     : String(claimedRaw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  const rewardClaims = claimed.filter((c) => c.startsWith("reward:"));
-  if (rewardClaims.includes("reward:" + id)) {
+  if (claimed.includes("reward:" + id)) {
     return res.status(409).json({ error: "Redan upplåst via belöning.", entitlements: "reward:" + id });
   }
-  if (rewardClaims.length >= MAX_REWARD_CLAIMS) {
-    return res.status(403).json({ error: `Max ${MAX_REWARD_CLAIMS} gratis-upplåsningar via betyg — köp resten.`, maxRewardClaims: MAX_REWARD_CLAIMS });
+  const typesRaw = req.body?.types;
+  const types: string[] = Array.isArray(typesRaw) ? typesRaw.map(String) : String(typesRaw ?? "").split(",").filter(Boolean);
+  const nReview = types.filter((t) => t === "review").length;
+  const nRef = types.filter((t) => t === "referral").length;
+  if (claimed.filter((c) => c.startsWith("reward:")).length >= MAX_REWARD_CLAIMS) {
+    return res.status(403).json({ error: `Max ${MAX_REWARD_CLAIMS} gratis-arter (1 recension + ${MAX_REFERRAL_CLAIMS} referrals) — köp resten för 10 kr.`, maxRewardClaims: MAX_REWARD_CLAIMS });
   }
-  res.json({ ok: true, entitlements: `reward:${id}`, unlocked: id, rewardClaimsLeft: MAX_REWARD_CLAIMS - rewardClaims.length - 1 });
+  if (type === "review") {
+    const rating = Number(req.body?.rating ?? 0);
+    const comment = String(req.body?.comment ?? "").trim();
+    if (nReview >= MAX_REVIEW_CLAIMS) return res.status(403).json({ error: "App-recensionen är redan använd (max 1)." });
+    if (!(rating >= 1 && rating <= 5) && comment.length < 3) {
+      return res.status(400).json({ error: "Ange betyg 1–5 eller en kommentar." });
+    }
+  } else if (type === "referral") {
+    if (nRef >= MAX_REFERRAL_CLAIMS) return res.status(403).json({ error: `Max ${MAX_REFERRAL_CLAIMS} referral-belöningar.`, maxReferralClaims: MAX_REFERRAL_CLAIMS });
+  } else {
+    return res.status(400).json({ error: "Ogiltig belöningstyp (review|referral)." });
+  }
+  res.json({ ok: true, type, entitlements: `reward:${id}`, unlocked: id, rewardClaimsLeft: MAX_REWARD_CLAIMS - claimed.filter((c) => c.startsWith("reward:")).length - 1 });
 });
 
 const port = Number(process.env.PORT ?? 3000);

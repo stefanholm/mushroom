@@ -108,6 +108,13 @@
         <div id="shopNotice" class="shop-notice"></div>
         <div class="settings-card" style="margin-bottom:0.85rem;">
           <label class="settings-row">
+            <span><strong>Typ av belöning</strong></span>
+            <select id="rewardType">
+              <option value="review">⭐ App-recension (max 1)</option>
+              <option value="referral">🔗 Referral-kod (max 2)</option>
+            </select>
+          </label>
+          <label class="settings-row" style="margin-top:0.6rem;">
             <span><strong>Ditt betyg (1–5)</strong></span>
             <select id="rewardRating">
               <option value="5">★★★★★ (5)</option>
@@ -120,6 +127,11 @@
           <label class="settings-row" style="margin-top:0.6rem;">
             <span><strong>Kommentar (valfri om betyg satts)</strong></span>
             <input id="rewardComment" type="text" placeholder="T.ex. Bra karta i skogen..." style="flex:1;max-width:340px;" />
+          </label>
+          <label class="settings-row" style="margin-top:0.6rem;" id="referralRow" hidden>
+            <span><strong>Referral-kod du löst in</strong></span>
+            <input id="referralCode" type="text" placeholder="T.ex. ABC123" style="flex:1;max-width:200px;text-transform:uppercase;" />
+            <button id="createReferralBtn" type="button" class="shop-buy-btn">Skapa min kod att dela</button>
           </label>
           <label class="settings-row" style="margin-top:0.6rem;">
             <span><strong>Välj 1 låst belöningsart</strong></span>
