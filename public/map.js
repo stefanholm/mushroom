@@ -2,27 +2,35 @@
 const tabChat = document.getElementById("tab-chat");
 const tabMap = document.getElementById("tab-map");
 const tabSettings = document.getElementById("tab-settings");
+const tabShop = document.getElementById("tab-shop");
 const paneChat = document.getElementById("pane-chat");
 const paneMap = document.getElementById("pane-map");
 const paneSettings = document.getElementById("pane-settings");
+const paneShop = document.getElementById("pane-shop");
 
 function activatePane(target) {
   for (const [btn, pane] of [
     [tabChat, paneChat],
     [tabMap, paneMap],
     [tabSettings, paneSettings],
+    [tabShop, paneShop],
   ]) {
     if (btn) btn.classList.toggle("active", btn === target);
-    if (pane) pane.hidden = pane !== (target === tabChat ? paneChat : target === tabMap ? paneMap : paneSettings);
+    if (pane) pane.hidden = pane !== paneOf(target);
   }
   if (target === tabMap && map) {
     setTimeout(() => map.resize(), 50);
   }
+  if (target === tabShop) renderShop();
+}
+function paneOf(target) {
+  return target === tabChat ? paneChat : target === tabMap ? paneMap : target === tabSettings ? paneSettings : paneShop;
 }
 
 tabChat?.addEventListener("click", () => activatePane(tabChat));
 tabMap?.addEventListener("click", () => activatePane(tabMap));
 tabSettings?.addEventListener("click", () => activatePane(tabSettings));
+tabShop?.addEventListener("click", () => activatePane(tabShop));
 
 const mapContainer = document.getElementById("map");
 const pillsEl = document.getElementById("speciesPills");
@@ -112,14 +120,20 @@ function applySpeciesList(list) {
   speciesList = list;
   pillsEl.innerHTML = "";
   for (const s of list) {
+    const locked = !isSpeciesUnlocked(s);
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "pill" + (s.id === "kantarell" ? " on" : "");
+    b.className = "pill" + (s.id === "kantarell" ? " on" : "") + (locked ? " locked" : "");
     b.dataset.id = s.id;
     if (s.expertMode) b.dataset.expert = "1";
-    b.title = `${s.label} — ätvärde ${s.eatScore}/5, säsong ${seasonLabel(s.season)}${s.protected ? " — FRIDLYST" : ""}${s.expertMode ? " — EXPERT (dödligt giftiga förväxlingar)" : ""}`;
-    b.textContent = `${s.label.split(" (")[0]} ★${s.eatScore}${s.expertMode ? " ⚠" : ""}${s.protected ? " 🚫" : ""}`;
+    b.title = `${s.label} — ätvärde ${s.eatScore}/5, säsong ${seasonLabel(s.season)}${s.protected ? " — FRIDLYST" : ""}${s.expertMode ? " — EXPERT (dödligt giftiga förväxlingar)" : ""}${locked ? " — 🔒 kräver pack (se 🛍️ Affär)" : ""}`;
+    b.textContent = `${s.label.split(" (")[0]} ★${s.eatScore}${s.expertMode ? " ⚠" : ""}${s.protected ? " 🚫" : ""}${locked ? " 🔒" : ""}`;
     b.addEventListener("click", () => {
+      if (locked) {
+        activatePane(tabShop);
+        renderShop();
+        return;
+      }
       const wasOn = b.classList.contains("on");
       const on = Array.from(pillsEl.querySelectorAll("button.on"));
       if (wasOn && on.length === 1) return;
@@ -181,6 +195,11 @@ function habitatTileUrl(speciesId) {
   if (d) q.set("date", d);
   q.set("sens", String(Number(sensInput.value)));
   q.set("v", TILE_V);
+  const ents = activeEntitlements();
+  if (ents.length > 0) {
+    q.set("entitlements", ents.join(","));
+    q.set("ents", ents.join(","));
+  }
   return `/api/tiles/habitat/${speciesId}/{z}/{x}/{y}.png?${q.toString()}`;
 }
 
@@ -296,6 +315,7 @@ async function refreshMeta() {
     const r = await fetch("/api/meta?" + q);
     if (!r.ok) return;
     const m = await r.json();
+    if (m.reviewRewardSpecies) metaRewardSpecies = m.reviewRewardSpecies;
     if (m.speciesList) applySpeciesList(m.speciesList);
     metaEl.textContent = `Regn 14 d: ${
       m.rain14 === null ? "okänt" : m.rain14.toFixed(1) + " mm"
@@ -510,6 +530,102 @@ import("/vendor/maplibre/maplibre-gl.mjs")
 
 
 let metaRewardSpecies = [];
+const metaFreeSpecies = new Set();
+
+function activeEntitlements() {
+  try {
+    return (localStorage.getItem("mushroom-ents") || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function addEntitlement(e) {
+  const ents = new Set(activeEntitlements());
+  ents.add(e);
+  localStorage.setItem("mushroom-ents", [...ents].join(","));
+}
+
+// Dev-läge för köp: pack läggs bara till lokalt; reward: går via serverns validering.
+// I iOS-produktion ersätts detta av StoreKit 2-köp + server-validerat kvitto.
+window.MushroomBilling = {
+  async purchase(id) {
+    if (id.startsWith("reward:")) {
+      const r = await fetch("/api/reward/claim", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ species: id.slice(7) }),
+      });
+      if (!r.ok) throw new Error("Belöningen kunde inte låsas upp (arten är inte i poolen).");
+    }
+    addEntitlement(id);
+    updateShopBadge();
+  },
+};
+
+function updateShopBadge() {
+  if (!tabShop) return;
+  const n = activeEntitlements().filter((e) => !e.startsWith("reward:")).length;
+  tabShop.textContent = n > 0 ? `🛍️ Affär (${n})` : "🛍️ Affär";
+}
+
+async function renderShop() {
+  const grid = document.getElementById("shopGrid");
+  if (!grid) return;
+  let shop = null;
+  try {
+    const r = await fetch("/api/shop");
+    if (r.ok) shop = await r.json();
+  } catch {}
+  if (!shop) {
+    grid.textContent = "Kunde inte hämta affären ( är servern igång? )";
+    return;
+  }
+  metaRewardSpecies = shop.reviewRewardSpecies ?? [];
+  for (const id of shop.freeSpecies ?? []) metaFreeSpecies.add(id);
+  const ents = new Set(activeEntitlements());
+  const labelOf = (id) => speciesList?.find((s) => s.id === id)?.label.split(" (")[0] ?? id;
+  grid.innerHTML = "";
+  for (const p of shop.packs) {
+    const owned = ents.has("pro") || ents.has("all") || ents.has(p.id);
+    const card = document.createElement("div");
+    card.className = "shop-card";
+    const names = (p.species ?? []).slice(0, 8).map(labelOf).join(", ") + (p.species.length > 8 ? " …" : "");
+    card.innerHTML =
+      `<h3>${p.label}</h3>` +
+      `<div class="shop-price">${p.priceSek} kr${p.kind === "pro" ? " /år" : ""}</div>` +
+      `<div class="shop-kind">${p.kind === "mixed" ? "Blandad korg" : p.kind === "regional" ? "Områdespack" : p.kind === "solo" ? "Solo-premium" : p.kind === "pro" ? "Prenumeration" : "Alla arter"} · ${p.species.length} arter</div>` +
+      `<div class="shop-species">${names}</div>`;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "shop-buy-btn";
+    btn.textContent = owned ? "Ägd ✓" : `Köp — ${p.priceSek} kr`;
+    btn.disabled = owned;
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await window.MushroomBilling.purchase(p.id);
+        renderShop();
+        if (speciesList) applySpeciesList(speciesList);
+        rebuildHabitat();
+        refreshMeta();
+      } catch (e) {
+        alert(e.message);
+        btn.disabled = false;
+      }
+    });
+    card.appendChild(btn);
+    grid.appendChild(card);
+  }
+  updateShopBadge();
+}
+
+function closeShop() {
+  if (paneShop) paneShop.hidden = true;
+}
 
 function getClaimedRewardSpecies() {
   return activeEntitlements()

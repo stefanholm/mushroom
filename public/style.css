@@ -293,3 +293,49 @@ button:disabled {
 .settings-row small {
   color: #57606a;
 }
+.pill.locked {
+  opacity: 0.55;
+  border-style: dashed;
+}
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.7rem;
+}
+.shop-card {
+  border: 1px solid #ccc;
+  border-radius: 0.5rem;
+  padding: 0.7rem 0.8rem;
+  background: #fff;
+}
+.shop-card h3 {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+}
+.shop-price {
+  font-weight: 700;
+  color: #2f6f3e;
+}
+.shop-kind {
+  font-size: 0.75rem;
+  color: #666;
+}
+.shop-species {
+  font-size: 0.75rem;
+  color: #444;
+  margin: 0.3rem 0 0.5rem;
+}
+.shop-buy-btn {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid #2f6f3e;
+  border-radius: 0.4rem;
+  background: #2f6f3e;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.shop-buy-btn:disabled {
+  background: #9db8a4;
+  border-color: #9db8a4;
+  cursor: default;
+}
