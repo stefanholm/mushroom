@@ -1,6 +1,9 @@
 node_modules/
 .env
 dist/
+.DS_Store
+*.bak
+data/tiles/
 data/layers/*.tif
 data/layers/*.geojson
 data/tile-cache/
