@@ -38,11 +38,9 @@ const tiff = await fromFile(demFile);
 const image = await tiff.getImage();
 const W = image.getWidth();
 const H = image.getHeight();
-const fd = image.getFileDirectory();
-const res = Math.abs(fd.ModelPixelScale?.[0] ?? 2);
-const originX = fd.ModelTiepoint?.[3] ?? 0;
-const originY = fd.ModelTiepoint?.[4] ?? 0;
-const nod = fd.GDAL_NODATA ? Number.parseFloat(fd.GDAL_NODATA) : -9999;
+const res = Math.abs(image.getResolution()[0]);
+const [originX, originY] = image.getOrigin();
+const nod = image.getGDALNoData() ?? -9999;
 const bands = image.getSamplesPerPixel();
 console.log(`DEM: ${W}x${H} @ ${res} m (${(W * H / 1e6).toFixed(1)} M px), nodata=${nod}`);
 
