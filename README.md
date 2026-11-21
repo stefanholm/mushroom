@@ -80,12 +80,10 @@ Artfakta-API:t kräver prenumerationsnyckel; `speciesdata/assessments` och
 Horn-lutning på demo-DEM:en). För riktiga 2 m-DEM på din Mac:
 
 ```
-gdaldem slope -compute_edges -of GTiff data/layers/hojdmodell_2m.tif data/layers/slope_2m.tif
-gdalwarp -overwrite -tr 10 10 -r bilinear data/layers/slope_2m.tif data/layers/slope_10m.tif
-saga_cmd ta_hydrology "Topographic Wetness Index (TWI)" -DEM data/layers/hojdmodell_2m.tif -TWI data/layers/twi_2m.tif -SCA data/layers/sca_2m.tif
-gdalwarp -overwrite -tr 10 10 -r bilinear data/layers/twi_2m.tif data/layers/twi_10m.tif
-rm -f data/layers/slope_2m.tif data/layers/twi_2m.tif data/layers/sca_2m.tif
+npm run twi
 ```
+
+(eller utan extra skript: `gdaldem slope -compute_edges -of GTiff data/layers/hojdmodell_2m.tif data/layers/slope_2m.tif` + `gdalwarp -overwrite -tr 10 10 ...`, och TWI via SAGA `saga_cmd ta_hydrology "Topographic Wetness Index (TWI)" ...` eller QGIS Processing — `npm run twi` gör samma sak i ren Node och skriver aldrig över befintliga filer utan `--force`.)
 
 Båda lagren är valfria — saknas de i `manifest.json`/`data/layers` hoppas faktorn över
 (default 1). Per art sätts `twiIdeal`/`slopeIdeal` i `src/habitat.ts`.
