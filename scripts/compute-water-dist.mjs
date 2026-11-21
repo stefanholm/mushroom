@@ -52,62 +52,67 @@ async function main() {
     process.exit(1);
   }
   const { w, h, res, ox, oy } = src;
-  const n = w * h;
-  // Chamfer 2-pass distance transform (3-4 vikter), i meter
+  // Poola vattenmasken till 10 m först (mycket snabbare än chamfer på 65 M px):
+  // en 10 m-cell är vatten om någon källcell i den är det.
+  const outRes = res * pool;
+  const oW = Math.ceil(w / pool);
+  const oH = Math.ceil(h / pool);
+  const water10 = new Uint8Array(oW * oH);
+  for (let oj = 0; oj < oH; oj++) {
+    for (let oi = 0; oi < oW; oi++) {
+      let wet = 0;
+      const j0 = oj * pool;
+      const i0 = oi * pool;
+      for (let j = j0; j < Math.min(h, j0 + pool) && !wet; j++) {
+        for (let i = i0; i < Math.min(w, i0 + pool); i++) {
+          if (isWater(j * w + i)) {
+            wet = 1;
+            break;
+          }
+        }
+      }
+      water10[oj * oW + oi] = wet;
+    }
+  }
+  console.log(`vattenmask poolad till ${oW}x${oH} @ ${outRes} m, kör chamfer…`);
+  // Chamfer 2-pass på 10 m-grid, avstånd i meter
   const INF = 1e12;
-  const dist = new Float64Array(n).fill(INF);
-  for (let k = 0; k < n; k++) if (isWater(k)) dist[k] = 0;
-  const d1 = res * 1.0;
-  const d2 = res * 1.41421356;
+  const dist = new Float64Array(oW * oH).fill(INF);
+  for (let k = 0; k < oW * oH; k++) if (water10[k]) dist[k] = 0;
+  const d1 = outRes;
+  const d2 = outRes * 1.41421356;
   const nbrs = [
     [-1, 0, d1], [1, 0, d1], [0, -1, d1], [0, 1, d1],
     [-1, -1, d2], [1, -1, d2], [-1, 1, d2], [1, 1, d2],
   ];
-  for (let j = 0; j < h; j++) {
-    for (let i = 0; i < w; i++) {
-      const k = j * w + i;
+  for (let j = 0; j < oH; j++) {
+    for (let i = 0; i < oW; i++) {
+      const k = j * oW + i;
       let m = dist[k];
       for (const [di, dj, d] of nbrs) {
         const ii = i + di, jj = j + dj;
-        if (ii < 0 || jj < 0 || ii >= w || jj >= h) continue;
-        const v = dist[jj * w + ii] + d;
+        if (ii < 0 || jj < 0 || ii >= oW || jj >= oH) continue;
+        const v = dist[jj * oW + ii] + d;
         if (v < m) m = v;
       }
       dist[k] = m;
     }
   }
-  for (let j = h - 1; j >= 0; j--) {
-    for (let i = w - 1; i >= 0; i--) {
-      const k = j * w + i;
+  for (let j = oH - 1; j >= 0; j--) {
+    for (let i = oW - 1; i >= 0; i--) {
+      const k = j * oW + i;
       let m = dist[k];
       for (const [di, dj, d] of nbrs) {
         const ii = i - di, jj = j - dj;
-        if (ii < 0 || jj < 0 || ii >= w || jj >= h) continue;
-        const v = dist[jj * w + ii] + d;
+        if (ii < 0 || jj < 0 || ii >= oW || jj >= oH) continue;
+        const v = dist[jj * oW + ii] + d;
         if (v < m) m = v;
       }
       dist[k] = m;
     }
   }
-  // poola till 10 m (max = närmaste vatten inom poolen räcker)
-  const outRes = res * pool;
-  const oW = Math.ceil(w / pool);
-  const oH = Math.ceil(h / pool);
   const out = new Float32Array(oW * oH).fill(src.nod);
-  for (let oj = 0; oj < oH; oj++) {
-    for (let oi = 0; oi < oW; oi++) {
-      let best = INF;
-      const j0 = oj * pool;
-      const i0 = oi * pool;
-      for (let j = j0; j < Math.min(h, j0 + pool); j++) {
-        for (let i = i0; i < Math.min(w, i0 + pool); i++) {
-          const v = dist[j * w + i];
-          if (v < best) best = v;
-        }
-      }
-      if (best < INF) out[oj * oW + oi] = best;
-    }
-  }
+  for (let k = 0; k < oW * oH; k++) if (dist[k] < INF) out[k] = dist[k];
   const p = path.join(LAYERS, "water_dist_10m.tif");
   if (fs.existsSync(p) && !FORCE) {
     console.log("hoppar över water_dist_10m.tif (finns redan; --force skriver över)");
