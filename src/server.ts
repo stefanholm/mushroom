@@ -871,8 +871,8 @@ function obsPrior(index: ObsIndex, species: string, lon: number, lat: number): n
         const dx = (olo - lon) * 111000 * cosLat;
         const dy = (ala - lat) * 111000;
         const d = Math.hypot(dx, dy);
-        if (d > 750) continue;
-        const v = Math.exp(-((d / 250) ** 2));
+        if (d > 1200) continue;
+        const v = Math.exp(-((d / 400) ** 2));
         if (v > best) best = v;
       }
     }
@@ -905,9 +905,11 @@ async function computeCells(
     console.error("SMHI fetch failed:", err);
   }
   // Kort regn driver fruktning nu; långsiktigt regn (90 d) laddar markfukten före det.
+  // Mättande kurvor (deep-dive): 1-exp(-r/32) för 14 d (halvering ~22 mm) och
+  // 0.75+0.25*(1-exp(-r/120)) för 90 d — linjära ramper gav oproportionerligt utslag vid skyfall.
   const rainFactor =
-    (rain14 === null ? 0.5 : Math.min(1, rain14 / 60)) *
-    (rain90 === null ? 1 : 0.75 + 0.25 * Math.min(1, rain90 / 200));
+    (rain14 === null ? 0.5 : 1 - Math.exp(-rain14 / 32)) *
+    (rain90 === null ? 1 : 0.75 + 0.25 * (1 - Math.exp(-rain90 / 120)));
   let minTemp: number | null = null;
   let frost = 1;
   let coolNights: number | null = null;
@@ -988,8 +990,9 @@ async function computeCells(
         forestEdge,
       });
       const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * rainFactor * frost * flush;
-      const prior = obsPrior(await getObsIndex(), key, clon, clat);
-      const score = Math.min(100, Math.round(100 * habitat * dynamic * (1 + 0.35 * prior)));
+      let prior = obsPrior(await getObsIndex(), key, clon, clat);
+      if (species.protected) prior = 0;
+      const score = Math.min(100, Math.round(100 * habitat * dynamic * (1 + 0.15 * prior)));
       cells.push({ lon: clon, lat: clat, score, heat: 0 });
     }
   }
@@ -1427,7 +1430,7 @@ app.get("/api/meta", async (req, res) => {
       locked: !isSpeciesUnlocked(id, resolveEntitlements(req)),
     })),
     rain14,
-    rainFactor: rain14 === null ? 0.5 : Number(Math.min(1, rain14 / 60).toFixed(3)),
+    rainFactor: rain14 === null ? 0.5 : Number((1 - Math.exp(-rain14 / 32)).toFixed(3)),
     seasonFactor: Number(seasonalFactor(species, mLat, asOf).toFixed(2)),
     lat: mLat,
     lon: mLon,
@@ -1729,15 +1732,16 @@ app.get("/api/debug/cell", async (req, res) => {
     rain90 = sumRain(vals, asOf, 90);
   } catch {}
   const rainFactor =
-    (rain14 === null ? 0.5 : Math.min(1, rain14 / 60)) *
-    (rain90 === null ? 1 : 0.75 + 0.25 * Math.min(1, rain90 / 200));
+    (rain14 === null ? 0.5 : 1 - Math.exp(-rain14 / 32)) *
+    (rain90 === null ? 1 : 0.75 + 0.25 * (1 - Math.exp(-rain90 / 120)));
   const [minTemp, coolNights] = staticOnly
     ? [null, null]
     : await Promise.all([minTempLast48h(lat, lon), coolNightsLast7d(lat, lon, asOf)]);
   const frost = species.frostSensitive && minTemp !== null && minTemp <= -3 ? 0 : 1;
   const flush = flushFactor(coolNights);
   const dynamic = staticOnly ? 1 : seasonalFactor(species, lat, asOf) * rainFactor * frost * flush;
-  const prior = obsPrior(await getObsIndex(), key, lon, lat);
+  let prior = obsPrior(await getObsIndex(), key, lon, lat);
+  if (species.protected) prior = 0;
   res.json({
     species: key,
     lon,
@@ -1763,7 +1767,7 @@ app.get("/api/debug/cell", async (req, res) => {
     frost,
     coolNights7d: coolNights,
     flush,
-    score: Math.min(100, Math.round(100 * habitat * dynamic * (1 + 0.35 * prior))),
+    score: Math.min(100, Math.round(100 * habitat * dynamic * (1 + 0.15 * prior))),
     layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
   });
 });

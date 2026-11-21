@@ -65,11 +65,20 @@ low = near-binary. This is the "how forgiving is this species" knob.
 ## 3. Dynamic score (`D`) + observation prior
 
 ```
-D = season(lat-shifted, winter-wrap aware) × min(1, rain14/60) × (0.75 + 0.25·min(1, rain90/200))
+D = season(lat-shifted, winter-wrap aware) × (1−exp(−rain14/32)) × (0.75 + 0.25·(1−exp(−rain90/120)))
     × frost (frostSensitive && min48h ≤ −3 °C → 0) × flush (1 + 0.25·min(1, coolNights7d/4))
-score = min(100, 100 · habitat · D · (1 + 0.35·obsPrior))
-obsPrior = max exp(−(d/250 m)²) over Artportalen occurrences of that species (grid-indexed 0.05°)
+score = min(100, 100 · habitat · D · (1 + 0.15·obsPrior))     ← saturating rain curves + capped prior
+obsPrior = max exp(−(d/400 m)²) over Artportalen occurrences, cutoff 1200 m (grid-indexed 0.05°);
+           obsPrior = 0 forced for protected species (jättemusseron)
 ```
+
+**APPLIED 2026-11 (deep-dive fixes, commit after 743a880):** (1) softFloor inverted to
+`0.02 + 0.28·p`; (2) S_env weights rebalanced — moisture .15, age .15, canopy .09, soil .10,
+SIS .07, climate .07, depth .07, terrain .07, TWI .04, waterHollow .03, standStruct .05,
+waterDist .03, deadwood .05 (hydrology total .25, no double-count); (3) specialist veto:
+plasticity ≤ 0.30 && (fSoil < 0.20 || fDepth < 0.20) → score 0; (4) rain14/rain90 now
+saturating `1−exp(−r/32)` / `0.75+0.25·(1−exp(−r/120))`; (5) obsPrior capped at +15 %, σ 400 m,
+cutoff 1200 m, and forced 0 for protected species.
 
 Weather: SMHI metobs latest-months, 6 h caches; `date` param is ISO YYYY-MM-DD, max 120 d back.
 
@@ -98,12 +107,13 @@ deadly lookalikes — murklor, champinjoner, vårmusseron, kremlor, Cortinarius�
 
 ## 6. Questions for Gemini's deep-dive
 
-1. Are the S_env weights (esp. moisture .17 vs TWI .06 vs waterHollow .05) sensible, or
-   should TWI/water_rel dominate over the class-based markfuktighet?
-2. Is the plasticity mechanics (exponent sharpening + gate softening + GDD widening) the
-   right shape, or should low-plasticity species get hard vetoes on more factors?
-3. obsPrior +35 % max — too strong for rare/protected species (overcollection risk)?
-4. rain90 factor shape (0.75 + 0.25·min(1, rain90/200)) — better alternative (log, lag)?
+1. ~~S_env weights~~ → APPLIED: rebalanced to hydrology total .25 (see §3 above); question
+   remains whether TWI/water_rel should dominate markfuktighet classes on real data.
+2. ~~plasticity shape~~ → APPLIED: floor inverted (`0.02+0.28·p`) + specialist veto on
+   soil/depth for p ≤ 0.30; keep an eye on whether more factors deserve vetoes.
+3. ~~obsPrior +35 %~~ → APPLIED: +15 % max, σ 400 m, cutoff 1200 m, protected → 0.
+4. ~~rain90 shape~~ → APPLIED: saturating `0.75+0.25·(1−exp(−rain90/120))`, rain14
+   `1−exp(−rain14/32)`; lag/lead effects still open.
 5. Missing layers worth adding: brandfält (fire sites — murklor), stigavstånd (path edge),
    Sentinel-2 NDVI, SGU berggrund kalk/pH, first/last frost rasters, soil compaction.
 6. AUC targets: what per-species AUC is "good enough" to ship, and which species should we

@@ -1983,25 +1983,33 @@ export function staticHabitatScore(
     }
   }
 
-  // Plasticity styr kurvornas skärpa: hög plasticity -> låga exponenter (platt, förlåtande),
-  // låg plasticity -> höga exponenter + högre golv (nästan binärt: exakt dessa faktorer krävs).
+  // Specialist-hårda vetoer (deep-dive): plast ≤ 0.30 får score 0 om jord eller jorddjup är för dåligt.
+  if (plast <= 0.3 && (fSoil < 0.2 || fDepth < 0.2)) {
+    if (dbg) dbg.specialistVeto = true;
+    return 0;
+  }
+
+  // Plasticity styr kurvornas skärpa: hög plasticity -> låga exponenter + högre golv (förlåtande),
+  // låg plasticity -> höga exponenter + lågt golv (nästan binärt, kan gå mot 0 = strikt).
   const sharp = 1.8 - 1.6 * plast;
-  const floor = 0.05 + 0.25 * (1 - plast);
+  const floor = 0.02 + 0.28 * plast;
   const soft = (x: number) => Math.max(floor, x);
+  // Vikter ombalanserade för att ta bort hydrologisk dubbelräkning
+  // (markfuktighet + TWI + water_rel + water_dist tillsammans .15+.04+.03+.03 = .25, var .32).
   const sEnv =
     100 *
-    Math.pow(soft(fMoisture), 0.17 * sharp) *
-    Math.pow(soft(fAge), 0.13 * sharp) *
-    Math.pow(soft(fCanopy), 0.08 * sharp) *
-    Math.pow(soft(fSoil), 0.09 * sharp) *
+    Math.pow(soft(fMoisture), 0.15 * sharp) *
+    Math.pow(soft(fAge), 0.15 * sharp) *
+    Math.pow(soft(fCanopy), 0.09 * sharp) *
+    Math.pow(soft(fSoil), 0.1 * sharp) *
     Math.pow(soft(fSIS), 0.07 * sharp) *
     Math.pow(soft(fClimate), 0.07 * sharp) *
     Math.pow(soft(fDepth), 0.07 * sharp) *
     Math.pow(soft(fTerrain), 0.07 * sharp) *
-    Math.pow(soft(fTWI), 0.06 * sharp) *
-    Math.pow(soft(fWaterHollow), 0.05 * sharp) *
+    Math.pow(soft(fTWI), 0.04 * sharp) *
+    Math.pow(soft(fWaterHollow), 0.03 * sharp) *
     Math.pow(soft(fStandStruct), 0.05 * sharp) *
-    Math.pow(soft(fWaterDist), 0.04 * sharp) *
+    Math.pow(soft(fWaterDist), 0.03 * sharp) *
     Math.pow(soft(fDeadwood), 0.05 * sharp);
   if (dbg) {
     Object.assign(dbg, {

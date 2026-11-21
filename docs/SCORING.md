@@ -62,9 +62,13 @@ else (fallback, flagged as hostFallback in /api/meta):
 ### S_env — environmental suitability (0–100)
 
 ```
-S_env = 100 × g(fMoisture)^0.26 × g(fAge)^0.18 × g(fCanopy)^0.12 × g(fSoil)^0.10 × g(fSIS)^0.08
-            × g(fClimate)^0.08 × g(fDepth)^0.08 × g(fTerrain)^0.10
-        where g(x) = max(0.05, x)
+S_env = 100 × g(fMoisture)^0.15 × g(fAge)^0.15 × g(fCanopy)^0.09 × g(fSoil)^0.10 × g(fSIS)^0.07
+            × g(fClimate)^0.07 × g(fDepth)^0.07 × g(fTerrain)^0.07 × g(fTWI)^0.04
+            × g(fWaterHollow)^0.03 × g(fStandStruct)^0.05 × g(fWaterDist)^0.03 × g(fDeadwood)^0.05
+        where g(x) = max(floor, x), floor = 0.02 + 0.28·plasticity (deep-dive fix: generalister
+        förlåtande högt golv, specialister nästan binärt lågt golv)
+        Specialist-veto: plasticity ≤ 0.30 && (fSoil < 0.20 || fDepth < 0.20) → score 0 direkt
+        (hydrologi räknas inte dubbelt: moisture+TWI+waterHollow+waterDist = .15+.04+.03+.03 = .25)
         (weighted GEOMETRIC mean — a single weak factor drags the whole cell down
          instead of being averaged away; true hard vetoes below return score 0 directly)
 
@@ -115,8 +119,10 @@ northern/central range).
 ```
 seasonalFactor = 0 outside [seasonStart−0.5, seasonEnd+0.5], linear ramps of 0.5 month,
                  month shifted by latitude: month' = month + (59 − lat) × 0.1
-rainFactor     = min(1, rain14 / 60 mm)   ; rain14 = Σ daily precip, 14 days ending at the
-                 selected date, nearest active station; no data → 0.5 (neutral)
+rainFactor     = (1 − exp(−rain14 / 32 mm)) × (0.75 + 0.25·(1 − exp(−rain90 / 120 mm)))
+                 ; rain14/rain90 = Σ daily precip, 14/90 days ending at the
+                 selected date, nearest active station; no data → 0.5 / 1.0 (neutral).
+                 Mättande kurvor (deep-dive): linjära ramper gav oproportionerligt utslag vid skyfall.
 frost          = 0 if species.frostSensitive and min(temp last 48 h) ≤ −3 °C, else 1
 flush          = 1 + 0.25 × min(1, coolNights7d / 4)   ; coolNights7d = days with daily min
                  temp ≤ 10 °C in the 7 days ending at the selected date (no data → 1).
@@ -128,25 +134,29 @@ D = seasonalFactor × rainFactor × frost × flush
 
 - **`plasticity`** (0–1, default 0.65) per art styr hur "flytande" arten är:
   låg plasticity (sommartryffel 0.15, jättemusseron 0.25, korallticka 0.3) → skarpare
-  S_env-exponenter (`weight × (1.8 − 1.6·p)`), högre golv (`0.05 + 0.25·(1−p)`), hårdare
+  S_env-exponenter (`weight × (1.8 − 1.6·p)`), golv `0.02 + 0.28·p` (högt för generalister,
+  lågt för specialister), hårdare
   GDD-kuvert; hög plasticity (trattkantarell 0.9, kantarell 0.85) → plattare kurvor,
   mjukare hårda trösklar (`minHostVolume × (1−0.6p)`, `minTreeHeight × (1−0.5p)`) och
   GDD-kuvertet breddas med `150·p`.
 - **TWI + lutning**: `twi_10m.tif` (ln(a/tan β), D8/SAGA från 2 m-DEM) blir egen S_env-faktor
-  (vikt 0.08, `twiIdeal` per art, default [5,11]); `slope_10m.tif` (grader, Horn/gdaldem)
+  (vikt 0.04, `twiIdeal` per art, default [5,11]); `slope_10m.tif` (grader, Horn/gdaldem)
   viktas in i fTerrain (0.7/0.3, `slopeIdeal` per art, default [0,30]). Saknas lagren →
   faktorn = 1. Demo: `npm run demo-data`; riktiga: se README (gdaldem slope + SAGA TWI).
 - **Mikroklimatlager** (valfria, `npm run microclimate`): `water_rel_10m.tif` (vatten-/svacknärhet
   0..1) och `stand_struct_10m.tif` (skogsstruktur/kantzon 0..1) → `bandAffinity` per art
   (`waterIdeal`/`structIdeal`, gaussiskt straff utanför fönstret, skärpa efter plasticity;
-  saknas lager → faktor 1). Vikt 0.05 vardera i S_env.
+  saknas lager → faktor 1). Vikt i S_env: waterHollow 0.03, standStruct 0.05.
 - **Vattenavstånd & död ved**: `water_dist_10m.tif` (meter, chamfer från NMD 61/62) →
-  `fWaterDist` via `bandAffinity` på dist/2500 (`waterDistIdeal` per art, vikt 0.04);
+  `fWaterDist` via `bandAffinity` på dist/2500 (`waterDistIdeal` per art, vikt 0.03);
   `dodved_10m.tif` (m³/ha) → `fDeadwood` endast för `woodHost`-arter (vikt 0.05, annars 1).
-- **Långsiktigt regn**: `D` innehåller nu `min(1, rain14/60) × (0.75 + 0.25·min(1, rain90/200))`
+- **Långsiktigt regn**: `D` innehåller nu `(1−exp(−rain14/32)) × (0.75 + 0.25·(1−exp(−rain90/120)))`
   (SMHI latest-months, samma cache ger rain30/rain90 i `/api/debug/cell`).
 - **Observationsprior**: `data/validation/observations.geojson` (från `npm run artfakta`)
-  laddas i ett rutnät (0.05°) per art; score × (1 + 0.35·exp(−(d/250 m)²)) nära riktiga fynd.
+  laddas i ett rutnät (0.05°) per art; score × (1 + 0.15·exp(−(d/400 m)²)) nära riktiga fynd,
+  cutoff 1200 m (deep-dive: σ 250→400 m, boost 0.35→0.15 — mjukare, bredare, mindre
+  överinsamlingsrisk). **Skyddade arter (`protected`, t.ex. jättemusseron) får alltid
+  prior = 0** — deras fyndplatser ska aldrig lysa upp på kartan.
   Ingår i tiles och `/api/debug/cell` (`obsPrior`).
 
 ## 2. Species rule matrix (src/habitat.ts, `SPECIES`)
