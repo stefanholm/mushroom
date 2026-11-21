@@ -9,9 +9,15 @@ Implementerat i kod: `src/habitat.ts` (`REVIEW_REWARD_SPECIES`, `TOP_PICKS`,
 - **Pool**: 12 låsta "helt ok"-arter (`REVIEW_REWARD_SPECIES`). Alla ligger också i vanliga
   pack (fail-fast i koden). Toppar/exklusiva (kantarell, karljohan, trattkantarell, trumpet-/
   taggsvampar, jattemusseron, sommartryffel, murklor, korallticka, blomkålssvamp) är spärrade.
-- **Max 3 gratis-upplåsningar per användare** (`MAX_REWARD_CLAIMS = 3`).
-  `POST /api/reward/claim {species, claimed:[...]}` → 200 + `rewardClaimsLeft`, 409 vid
-  dubblett, 403 vid max. Efteråt kan samma art köpas enskilt för 10 kr (`species:<id>`).
+- **Max 3 gratis-upplåsningar per användare = 1 app-recension + 2 referral-koder**
+  (`MAX_REVIEW_CLAIMS = 1`, `MAX_REFERRAL_CLAIMS = 2`, `MAX_REWARD_CLAIMS = 3`).
+  `POST /api/reward/claim {species, type: "review"|"referral", rating?, comment?, claimed:[...], types:[...]}`
+  → 200 + `rewardClaimsLeft`, 409 vid dubblett, 403 när typens max är nått, 400 om
+  review saknar betyg/kommentar.
+- **Referral-koder**: `POST /api/referral/create {device}` → `{code, shareText}`;
+  `POST /api/referral/redeem {code, device}` → 200 (max 2 per enhet), 404 ogiltig kod,
+  403 egen kod, 409 redan använd. (Dev: in-memory; produktion: i DB kopplad till Apple-ID.)
+  Efteråt kan samma art köpas enskilt för 10 kr (`species:<id>`).
 - Jättemusseron är `SOLO_ONLY` — aldrig i poolen, bara `goliatmusseron-solo` (79 kr, foto/karta).
 
 ## 2. Verifierbarhet per kanal (viktigt — olika kanaler är olika säkra)
