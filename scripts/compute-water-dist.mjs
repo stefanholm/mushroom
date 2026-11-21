@@ -17,7 +17,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, "..");
 const LAYERS = path.join(root, "data", "layers");
 const FORCE = process.argv.includes("--force");
-const pool = 5;
+let pool = 5; // justeras nedan så utdata blir ~10 m
 
 async function readBand(file) {
   const image = await (await fromFile(file)).getImage();
@@ -51,7 +51,9 @@ async function main() {
     console.error("FEL: varken nmd_10m.tif eller hojdmodell_2m.tif hittades");
     process.exit(1);
   }
-  const { w, h, res, ox, oy } = src;
+  const { w, h, ox, oy } = src;
+  const res = src.res;
+  pool = Math.max(1, Math.round(10 / res)); // mål: ~10 m i utdata
   // Poola vattenmasken till 10 m först (mycket snabbare än chamfer på 65 M px):
   // en 10 m-cell är vatten om någon källcell i den är det.
   const outRes = res * pool;
