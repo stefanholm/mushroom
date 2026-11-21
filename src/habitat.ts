@@ -1601,6 +1601,7 @@ export type PackInfo = {
   priceSek: number;
   kind: "mixed" | "regional" | "solo" | "all" | "pro";
   species: string[];
+  forSale: boolean;
 };
 
 export const PACKS: Record<string, PackInfo> = Object.fromEntries(
@@ -1612,6 +1613,7 @@ export const PACKS: Record<string, PackInfo> = Object.fromEntries(
       priceSek,
       kind,
       species: kind === "mixed" || kind === "regional" || kind === "solo" ? [...list] : Object.keys(SPECIES),
+      forSale: kind !== "pro",
     },
   ]),
 );

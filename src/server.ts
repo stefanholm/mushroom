@@ -1834,7 +1834,9 @@ app.get("/api/tiles/hillshade/:z/:x/:y.png", async (req, res) => {
 // Affärs-katalog för StoreKit-vyn (ingen species-param behövs).
 app.get("/api/shop", (_req, res) => {
   res.json({
-    packs: Object.values(PACKS).map((p) => ({ id: p.id, label: p.label, priceSek: p.priceSek, kind: p.kind, species: p.species })),
+    packs: Object.values(PACKS)
+      .filter((p) => p.forSale)
+      .map((p) => ({ id: p.id, label: p.label, priceSek: p.priceSek, kind: p.kind, species: p.species })),
     reviewRewardSpecies: REVIEW_REWARD_SPECIES,
     freeSpecies: Object.entries(SPECIES).filter(([, s]) => !s.pack).map(([id]) => id),
   });
