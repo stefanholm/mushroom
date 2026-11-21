@@ -2033,6 +2033,8 @@ PREWARM_POINTS.push([59.35, 18.05]);
 async function prewarmWeather(): Promise<void> {
   for (const [lat, lon] of PREWARM_POINTS) {
     await rainLast14Days(lat, lon, new Date()).catch(() => {});
+    await getLayerStore().catch(() => {}); // förvärm raster så första riktiga anropet är snabbt
+    await getObsIndex().catch(() => {});
     await minTempLast48h(lat, lon);
   }
 }
