@@ -88,6 +88,16 @@ npm run twi
 Båda lagren är valfria — saknas de i `manifest.json`/`data/layers` hoppas faktorn över
 (default 1). Per art sätts `twiIdeal`/`slopeIdeal` i `src/habitat.ts`.
 
+Därefter mikroklimat/struktur (också valfria, neutral faktor 1.0 om de saknas):
+
+```
+npm run microclimate
+```
+
+skriver `water_rel_10m.tif` (vatten-/svacknärhet 0..1 från TWI+lutning) och
+`stand_struct_10m.tif` (skogsstruktur/kantzon 0..1 från trädhöjd+lutning+TWI).
+Per art sätts `waterIdeal`/`structIdeal` i `src/habitat.ts` (`SPECIES_MICROCLIMATE`).
+
 ## Data layers (folder structure)
 
 Raster/vector layers live in `data/layers/` (GeoTIFF/GeoJSON files themselves are

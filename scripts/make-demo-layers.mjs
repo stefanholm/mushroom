@@ -262,6 +262,8 @@ const manifest = {
     { id: "alder", file: "skog_alder_10m.tif", nodata: -9999, band: 1 },
     { id: "twi", file: "twi_10m.tif", nodata: -9999, band: 1 },
     { id: "slope", file: "slope_10m.tif", nodata: -9999, band: 1 },
+    { id: "water_rel", file: "water_rel_10m.tif", nodata: -9999, band: 1 },
+    { id: "stand_struct", file: "stand_struct_10m.tif", nodata: -9999, band: 1 },
   ],
   vectors: [
     { id: "avverkningar", file: "avverkningar_senaste_5ar.geojson", crs: "EPSG:3006" },

@@ -14,7 +14,8 @@
     "bake-tiles": "node scripts/bake-tiles.mjs",
     "artfakta": "node scripts/fetch-artdatabanken.mjs",
     "validate": "node scripts/validate-auc.mjs",
-    "twi": "node scripts/compute-twi.mjs"
+    "twi": "node scripts/compute-twi.mjs",
+    "microclimate": "node scripts/make-microclimate-structure-layers.mjs"
   },
   "dependencies": {
     "@mistralai/mistralai": "^3.5.0",

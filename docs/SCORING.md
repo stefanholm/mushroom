@@ -136,6 +136,10 @@ D = seasonalFactor × rainFactor × frost × flush
   (vikt 0.08, `twiIdeal` per art, default [5,11]); `slope_10m.tif` (grader, Horn/gdaldem)
   viktas in i fTerrain (0.7/0.3, `slopeIdeal` per art, default [0,30]). Saknas lagren →
   faktorn = 1. Demo: `npm run demo-data`; riktiga: se README (gdaldem slope + SAGA TWI).
+- **Mikroklimatlager** (valfria, `npm run microclimate`): `water_rel_10m.tif` (vatten-/svacknärhet
+  0..1) och `stand_struct_10m.tif` (skogsstruktur/kantzon 0..1) → `bandAffinity` per art
+  (`waterIdeal`/`structIdeal`, gaussiskt straff utanför fönstret, skärpa efter plasticity;
+  saknas lager → faktor 1). Vikt 0.05 vardera i S_env.
 - **Observationsprior**: `data/validation/observations.geojson` (från `npm run artfakta`)
   laddas i ett rutnät (0.05°) per art; score × (1 + 0.35·exp(−(d/250 m)²)) nära riktiga fynd.
   Ingår i tiles och `/api/debug/cell` (`obsPrior`).

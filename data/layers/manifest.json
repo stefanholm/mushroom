@@ -119,6 +119,18 @@
       "file": "slope_10m.tif",
       "nodata": -9999,
       "band": 1
+    },
+    {
+      "id": "water_rel",
+      "file": "water_rel_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "stand_struct",
+      "file": "stand_struct_10m.tif",
+      "nodata": -9999,
+      "band": 1
     }
   ],
   "vectors": [

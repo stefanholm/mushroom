@@ -29,6 +29,8 @@ export type SpeciesProfile = {
   plasticity?: number;
   twiIdeal?: [number, number];
   slopeIdeal?: [number, number];
+  waterIdeal?: [number, number];
+  structIdeal?: [number, number];
 };
 
 export const SPECIES: Record<string, SpeciesProfile> = {
@@ -1456,6 +1458,39 @@ const SLOPE_IDEAL: Record<string, [number, number]> = {
   "snobolischampinjon": [0, 8],
   "stolt-fjallskivling": [0, 12],
 };
+// Mikroklimat per art: vatten-/svacknärhet (0..1) och skogsstruktur/kantzon (0..1).
+const SPECIES_MICROCLIMATE: Record<string, { waterIdeal: [number, number]; structIdeal: [number, number] }> = {
+  trattkantarell: { waterIdeal: [0.45, 0.92], structIdeal: [0.45, 0.95] },
+  "svart-trumpetsvamp": { waterIdeal: [0.45, 0.9], structIdeal: [0.4, 0.95] },
+  "rodgul-trumpetsvamp": { waterIdeal: [0.4, 0.9], structIdeal: [0.4, 0.95] },
+  blomkalssvamp: { waterIdeal: [0.5, 0.95], structIdeal: [0.5, 0.95] },
+  granblodriska: { waterIdeal: [0.45, 0.9], structIdeal: [0.4, 0.95] },
+  "zonerad-granblodriska": { waterIdeal: [0.5, 0.95], structIdeal: [0.45, 0.95] },
+  frostvaxing: { waterIdeal: [0.45, 0.9], structIdeal: [0.45, 0.95] },
+  sotvaxing: { waterIdeal: [0.5, 0.95], structIdeal: [0.5, 0.95] },
+  citronslemskivling: { waterIdeal: [0.45, 0.9], structIdeal: [0.4, 0.95] },
+  ostronmussling: { waterIdeal: [0.4, 0.9], structIdeal: [0.35, 0.9] },
+  "blek-ostronmussling": { waterIdeal: [0.4, 0.9], structIdeal: [0.35, 0.9] },
+  judasora: { waterIdeal: [0.5, 0.95], structIdeal: [0.4, 0.9] },
+  honungsskivling: { waterIdeal: [0.4, 0.9], structIdeal: [0.35, 0.9] },
+  "rokslojskivling": { waterIdeal: [0.45, 0.95], structIdeal: [0.4, 0.9] },
+  vinterskivling: { waterIdeal: [0.4, 0.9], structIdeal: [0.35, 0.9] },
+  korallticka: { waterIdeal: [0.4, 0.85], structIdeal: [0.55, 1] },
+  "rod-svavelticka": { waterIdeal: [0.35, 0.8], structIdeal: [0.5, 1] },
+  sandsopp: { waterIdeal: [0.1, 0.55], structIdeal: [0.3, 0.85] },
+  grynsopp: { waterIdeal: [0.15, 0.6], structIdeal: [0.3, 0.85] },
+  smorsopp: { waterIdeal: [0.15, 0.6], structIdeal: [0.3, 0.85] },
+  larksopp: { waterIdeal: [0.15, 0.6], structIdeal: [0.3, 0.85] },
+  "rodbrun-stensopp": { waterIdeal: [0.1, 0.5], structIdeal: [0.3, 0.85] },
+  tallskrubb: { waterIdeal: [0.1, 0.55], structIdeal: [0.35, 0.9] },
+  jattemusseron: { waterIdeal: [0.1, 0.5], structIdeal: [0.4, 0.95] },
+  "stolt-fjallskivling": { waterIdeal: [0.1, 0.5], structIdeal: [0.25, 0.8] },
+  "fjallig-blacksvamp": { waterIdeal: [0.1, 0.5], structIdeal: [0.15, 0.7] },
+  "jatteroksvamp": { waterIdeal: [0.1, 0.5], structIdeal: [0.15, 0.7] },
+  "snobolischampinjon": { waterIdeal: [0.1, 0.5], structIdeal: [0.15, 0.7] },
+  streckmusseron: { waterIdeal: [0.1, 0.5], structIdeal: [0.3, 0.85] },
+  sommartryffel: { waterIdeal: [0.2, 0.6], structIdeal: [0.4, 0.9] },
+};
 for (const [k, s] of Object.entries(SPECIES)) {
   const sf = SEASON_FROM_OBS[k];
   if (sf) {
@@ -1474,9 +1509,28 @@ for (const [k, s] of Object.entries(SPECIES)) {
   if (tw) s.twiIdeal = tw;
   const sl = SLOPE_IDEAL[k];
   if (sl) s.slopeIdeal = sl;
+  const mc = SPECIES_MICROCLIMATE[k];
+  if (mc) {
+    s.waterIdeal = mc.waterIdeal;
+    s.structIdeal = mc.structIdeal;
+  }
 }
 
 const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
+
+// Mjuk band-affinitet för 0..1-lager (vatten/svacka, skogsstruktur): neutral 1.0 om
+// värdet saknas; annars gaussiskt straff utanför artens idealfönster, skärpan styrs av plasticity.
+function bandAffinity(value: number | null, ideal: [number, number], plast: number): number {
+  if (value === null || !Number.isFinite(value)) return 1;
+  const p = clamp01(plast);
+  const spread = 0.08 + 0.14 * p;
+  const floor = 0.25 + 0.35 * p;
+  const [minV, maxV] = ideal;
+  if (value >= minV && value <= maxV) return 1;
+  const dist = value < minV ? minV - value : value - maxV;
+  const raw = Math.exp(-((dist / Math.max(0.03, spread)) ** 2));
+  return floor + (1 - floor) * raw;
+}
 
 export function seasonalFactor(species: SpeciesProfile, lat: number, now: Date): number {
   const shift = Math.min(1, Math.max(-1, (59 - lat) * 0.1));
@@ -1679,6 +1733,13 @@ export function staticHabitatScore(
     }
   }
 
+  const waterL = store.rasters.get("water_rel");
+  const fWaterHollow = bandAffinity(waterL ? waterL.sampleSync(easting, northing) : null, species.waterIdeal ?? [0.25, 0.85], plast);
+  if (waterL) covered = true;
+  const structL = store.rasters.get("stand_struct");
+  const fStandStruct = bandAffinity(structL ? structL.sampleSync(easting, northing) : null, species.structIdeal ?? [0.35, 0.95], plast);
+  if (structL) covered = true;
+
   const moisture = store.rasters.get("markfuktighet");
   let fMoisture = 1;
   if (moisture) {
@@ -1762,15 +1823,17 @@ export function staticHabitatScore(
   const soft = (x: number) => Math.max(floor, x);
   const sEnv =
     100 *
-    Math.pow(soft(fMoisture), 0.24 * sharp) *
-    Math.pow(soft(fAge), 0.16 * sharp) *
-    Math.pow(soft(fCanopy), 0.11 * sharp) *
+    Math.pow(soft(fMoisture), 0.2 * sharp) *
+    Math.pow(soft(fAge), 0.15 * sharp) *
+    Math.pow(soft(fCanopy), 0.1 * sharp) *
     Math.pow(soft(fSoil), 0.09 * sharp) *
     Math.pow(soft(fSIS), 0.07 * sharp) *
     Math.pow(soft(fClimate), 0.07 * sharp) *
     Math.pow(soft(fDepth), 0.07 * sharp) *
-    Math.pow(soft(fTerrain), 0.09 * sharp) *
-    Math.pow(soft(fTWI), 0.08 * sharp);
+    Math.pow(soft(fTerrain), 0.08 * sharp) *
+    Math.pow(soft(fTWI), 0.07 * sharp) *
+    Math.pow(soft(fWaterHollow), 0.05 * sharp) *
+    Math.pow(soft(fStandStruct), 0.05 * sharp);
   if (dbg) {
     Object.assign(dbg, {
       hostVol,
@@ -1787,6 +1850,8 @@ export function staticHabitatScore(
       fTerrain,
       fSlope,
       fTWI,
+      fWaterHollow,
+      fStandStruct,
       sEnv: Number(sEnv.toFixed(2)),
       covered,
     });
