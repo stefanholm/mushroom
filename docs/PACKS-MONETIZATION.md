@@ -58,14 +58,16 @@ Solo 79 kr motiveras av att jättemusseron är sällsynt + skyddad (foto-uppleve
 - `/api/shop` ger även `singles`, `singlePriceSek`, `soloOnlySpecies`, `image`/`topSpecies` per pack.
 - Dev-endpoint `POST /api/single/claim {species}` (samma mönster som `/api/reward/claim`).
 
-### Affärsregel: belöningsarter säljs aldrig enskilt
-Arter i `REVIEW_REWARD_SPECIES` (12 st) kan låsas upp **gratis** via betyg/kommentar — därför
-säljs de **aldrig** som enskilda 10 kr-köp och får aldrig vara i ⭐ Topp 5 (fail-fast i koden).
-De finns kvar i sina vanliga pack. Så topp-listan/enskilda-köpen innehåller bara arter man
-verkligen måste betala för (eller som är gratis från början). `/api/shop.singles` är därför
-42 arter (54 låsta − 12 reward-pool); `POST /api/single/claim` svarar 403 för reward-arter.
-Topplistan (`TOP_PICKS`): kantarell (gratis), karljohan, trattkantarell, svart-trumpetsvamp,
-rodbrun-stensopp à 10 kr.
+### Belöningsflödet (verifierbart, flera claims)
+- `REVIEW_REWARD_SPECIES` (12 låsta arter) kan låsas upp **gratis** via betyg/kommentar —
+  max **`MAX_REWARD_CLAIMS = 3`** per användare. `POST /api/reward/claim {species, claimed:[...]}`
+  svarar 200 (med `rewardClaimsLeft`), **409** om redan upplåst, **403** när max är nått.
+  I produktion verifieras varje betyg server-side (App Store Server API / eget review-API).
+- Efter gratis-claims kan samma arter **köpas enskilt (10 kr)** som alla andra — dvs poolen
+  är "förhandsmak", inte evig gratis. `/api/shop.singles` = alla 54 låsta arter.
+- ⭐ Topp 5 (`TOP_PICKS`) får aldrig innehålla reward-pool-arter (fail-fast) — bara arter man
+  verkligen betalat för, eller som är gratis från början: kantarell (gratis), karljohan,
+  trattkantarell, svart-trumpetsvamp, rodbrun-stensopp à 10 kr.
 - Regionpack per län offline: 39 kr/län (PMTiles, klient-side) — ej i PACK_DEFS än.
 
 ## "Lås upp 1 svamp mot betyg/kommentar" (review-reward)
