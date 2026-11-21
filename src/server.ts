@@ -913,9 +913,11 @@ async function computeCells(
   let coolNights: number | null = null;
   let flush = 1;
   if (!staticOnly) {
-    minTemp = await minTempLast48h(centerLat, centerLon);
+    [minTemp, coolNights] = await Promise.all([
+      minTempLast48h(centerLat, centerLon),
+      coolNightsLast7d(centerLat, centerLon, asOf),
+    ]);
     if (species.frostSensitive && minTemp !== null && minTemp <= -3) frost = 0;
-    coolNights = await coolNightsLast7d(centerLat, centerLon, asOf);
     flush = flushFactor(coolNights);
   }
 
@@ -947,7 +949,10 @@ async function computeCells(
   const startLat = Math.floor(minLat / cell) * cell;
   const cells: CellScore[] = [];
   for (let lat = startLat; lat < maxLat; lat += cell) {
+    let cellCount = 0;
     for (let lon = startLon; lon < maxLon; lon += cell) {
+      // Släpp igenom event-loopen regelbundet så /api/meta m.m. inte tajmar ut medan tiles körs
+      if (++cellCount % 96 === 0) await new Promise((r) => setImmediate(r));
       const clat = lat + cell / 2;
       const clon = lon + cell / 2;
       const [e0, n0] = toSWEREF(clon, clat);
@@ -1373,13 +1378,20 @@ app.get("/api/meta", async (req, res) => {
   const asOf = parseAsOf(String(req.query.date ?? ""));
   const mLat = Number.isFinite(Number(req.query.lat)) ? Number(req.query.lat) : 62.5;
   const mLon = Number.isFinite(Number(req.query.lon)) ? Number(req.query.lon) : 15.5;
-  let rain14: number | null = null;
-  try {
-    rain14 = await rainLast14Days(mLat, mLon, asOf);
-  } catch (err) {
-    console.error("SMHI fetch failed:", err);
-  }
   const store = await getLayerStore();
+  // Väderhämtningar parallellt (SMHI) så /api/meta inte står och väntar seriellt.
+  // ?fast=1 hoppar över väder helt (cache eller null) — räcker för artlista/GDD i klienten.
+  const fast = req.query.fast === "1";
+  const [rain14, minTemp, coolNights] = fast
+    ? [null, null, null]
+    : await Promise.all([
+        rainLast14Days(mLat, mLon, asOf).catch((err) => {
+          console.error("SMHI fetch failed:", err);
+          return null;
+        }),
+        minTempLast48h(mLat, mLon),
+        coolNightsLast7d(mLat, mLon, asOf),
+      ]);
   const [f, x] =
     store.mask !== null
       ? [null, null]
@@ -1387,9 +1399,7 @@ app.get("/api/meta", async (req, res) => {
           forestPolygonsForBox(17.6, 59.0, 18.4, 59.6),
           exclusionsForBox(17.6, 59.0, 18.4, 59.6),
         ]);
-  const minTemp = await minTempLast48h(mLat, mLon);
   const frost = species.frostSensitive && minTemp !== null && minTemp <= -3 ? 0 : 1;
-  const coolNights = await coolNightsLast7d(mLat, mLon, asOf);
   const flush = flushFactor(coolNights);
   const gdd5 = effectiveGdd5(store, mLon, mLat);
   res.json({
@@ -1721,9 +1731,10 @@ app.get("/api/debug/cell", async (req, res) => {
   const rainFactor =
     (rain14 === null ? 0.5 : Math.min(1, rain14 / 60)) *
     (rain90 === null ? 1 : 0.75 + 0.25 * Math.min(1, rain90 / 200));
-  const minTemp = staticOnly ? null : await minTempLast48h(lat, lon);
+  const [minTemp, coolNights] = staticOnly
+    ? [null, null]
+    : await Promise.all([minTempLast48h(lat, lon), coolNightsLast7d(lat, lon, asOf)]);
   const frost = species.frostSensitive && minTemp !== null && minTemp <= -3 ? 0 : 1;
-  const coolNights = staticOnly ? null : await coolNightsLast7d(lat, lon, asOf);
   const flush = flushFactor(coolNights);
   const dynamic = staticOnly ? 1 : seasonalFactor(species, lat, asOf) * rainFactor * frost * flush;
   const prior = obsPrior(await getObsIndex(), key, lon, lat);
