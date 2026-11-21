@@ -35,8 +35,9 @@ claims till App Store-konto (receipt) så samma Apple-ID inte kan farma på fler
 
 ## 3. Topplistan (⭐ Topp 5 i shopen)
 
-- `TOP_PICKS` = kantarell (gratis), karljohan, trattkantarell, svart-trumpetsvamp,
-  rodbrun-stensopp — visas överst som enskilda köp (gratis eller 10 kr) med bild.
+- `TOP_PICKS` = karljohan, trattkantarell, svart-trumpetsvamp, rodbrun-stensopp,
+  rodgul-trumpetsvamp — visas överst som enskilda köp à 10 kr med bild. Gratisarter
+  (kantarell) och reward-pool-arter får INTE vara med (fail-fast i koden).
 - **Regel (fail-fast i kod):** Topp 5 får aldrig innehålla reward-pool-arter — bara arter man
   verkligen betalat för, eller som är gratis från början.
 - Under topp-listan: 13 pack-kort (med bild på top-art per pack) + rullista för alla 54

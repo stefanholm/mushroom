@@ -65,9 +65,9 @@ Solo 79 kr motiveras av att jättemusseron är sällsynt + skyddad (foto-uppleve
   I produktion verifieras varje betyg server-side (App Store Server API / eget review-API).
 - Efter gratis-claims kan samma arter **köpas enskilt (10 kr)** som alla andra — dvs poolen
   är "förhandsmak", inte evig gratis. `/api/shop.singles` = alla 54 låsta arter.
-- ⭐ Topp 5 (`TOP_PICKS`) får aldrig innehålla reward-pool-arter (fail-fast) — bara arter man
-  verkligen betalat för, eller som är gratis från början: kantarell (gratis), karljohan,
-  trattkantarell, svart-trumpetsvamp, rodbrun-stensopp à 10 kr.
+- ⭐ Topp 5 (`TOP_PICKS`) får aldrig innehålla reward-pool-arter eller gratisarter (fail-fast) —
+  bara arter man verkligen betalat för: karljohan, trattkantarell, svart-trumpetsvamp,
+  rodbrun-stensopp, rodgul-trumpetsvamp à 10 kr.
 - Regionpack per län offline: 39 kr/län (PMTiles, klient-side) — ej i PACK_DEFS än.
 
 ## "Lås upp 1 svamp mot betyg/kommentar" (review-reward)
