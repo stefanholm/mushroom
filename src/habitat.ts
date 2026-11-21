@@ -26,6 +26,7 @@ export type SpeciesProfile = {
   protected?: boolean;
   expertMode?: boolean;
   lookalikes?: string;
+  plasticity?: number;
 };
 
 export const SPECIES: Record<string, SpeciesProfile> = {
@@ -1393,6 +1394,28 @@ const LOOKALIKES: Record<string, string> = {
   blodriska: "Alla orange mjölksaft-blödande riskor är ätliga — ingen dödligt giftig dubbelgångare.",
   tallblodriska: "Alla orange mjölksaft-blödande riskor är ätliga — ingen dödligt giftig dubbelgångare.",
 };
+// Hur "flytande" arten är (0 = specialist med smalt kuvert, 1 = generalist).
+// Styr hur skarpa responskurvorna är och hur mjuka de hårda trösklarna är:
+// hög plasticity -> plattare kurvor, lägre krav på värdvolym/trädhöjd, bredare GDD-kuvert.
+// Default 0.65. Ex: trattkantarell kan hittas "överallt" (0.9), sommartryffel/jättemusseron är strikta.
+const PLASTICITY: Record<string, number> = {
+  trattkantarell: 0.9,
+  kantarell: 0.85,
+  karljohan: 0.8,
+  sandsopp: 0.8,
+  smorsopp: 0.8,
+  bjorksopp: 0.8,
+  sommartryffel: 0.15,
+  jattemusseron: 0.25,
+  korallticka: 0.3,
+  tallskrubb: 0.45,
+  toppmurkla: 0.45,
+  "rund-toppmurkla": 0.45,
+  varskivling: 0.45,
+  varmusseron: 0.45,
+  rimskivling: 0.45,
+  "rodnande-blacksvamp": 0.5,
+};
 for (const [k, s] of Object.entries(SPECIES)) {
   const sf = SEASON_FROM_OBS[k];
   if (sf) {
@@ -1405,6 +1428,8 @@ for (const [k, s] of Object.entries(SPECIES)) {
   if (d) s.depthIdeal = d;
   const lk = LOOKALIKES[k];
   if (lk) s.lookalikes = lk;
+  const pl = PLASTICITY[k];
+  if (pl !== undefined) s.plasticity = pl;
 }
 
 const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
@@ -1473,7 +1498,11 @@ export function staticHabitatScore(
   dbg?: Record<string, unknown>,
 ): number {
   const species = SPECIES[speciesKey];
-  if (dbg) Object.assign(dbg, { inClearcut: ctx.inClearcut, excluded: ctx.excluded, forestOk: ctx.forestOk, roadFactor: ctx.roadFactor, forestEdge: ctx.forestEdge });
+  const plast = species.plasticity ?? 0.65;
+  if (dbg) Object.assign(dbg, { inClearcut: ctx.inClearcut, excluded: ctx.excluded, forestOk: ctx.forestOk, roadFactor: ctx.roadFactor, forestEdge: ctx.forestEdge, plasticity: plast });
+  // Plasticity mjukar upp de hårda trösklarna: generalister fruktar vid lägre värdvolym/trädhöjd.
+  const minHostEff = species.minHostVolume * (1 - 0.6 * plast);
+  const minTreeEff = species.minTreeHeight * (1 - 0.5 * plast);
   if (ctx.inClearcut || ctx.excluded) return 0;
   if (!ctx.forestOk) return 0;
   const [easting, northing] = toSWEREF(lon, lat);
@@ -1510,16 +1539,16 @@ export function staticHabitatScore(
   if (species.woodHost) {
     hostGate = 1;
   } else if (anyHost) {
-    if (hostVol < species.minHostVolume) return 0;
-    hostGate = 0.1 + 0.9 * clamp01(hostVol / (3 * species.minHostVolume));
+    if (hostVol < minHostEff) return 0;
+    hostGate = 0.1 + 0.9 * clamp01(hostVol / (3 * Math.max(1e-6, minHostEff)));
   } else {
     const vol = store.rasters.get("volym");
     if (vol) {
       const v = vol.sampleSync(easting, northing);
       if (v !== null) {
         covered = true;
-        if (v < species.minHostVolume) return 0;
-        hostGate = 0.1 + 0.9 * clamp01(v / (3 * species.minHostVolume));
+        if (v < minHostEff) return 0;
+        hostGate = 0.1 + 0.9 * clamp01(v / (3 * Math.max(1e-6, minHostEff)));
       }
     }
   }
@@ -1530,8 +1559,8 @@ export function staticHabitatScore(
     const v = height.sampleSync(easting, northing);
     if (v !== null) {
       covered = true;
-      if (v < species.minTreeHeight) return 0;
-      fMaturity = clamp01((v - species.minTreeHeight) / 16 + 0.35);
+      if (v < minTreeEff) return 0;
+      fMaturity = clamp01((v - minTreeEff) / 16 + 0.35);
     }
   }
 
@@ -1560,15 +1589,19 @@ export function staticHabitatScore(
   let fClimate = 1;
   const gddEff = effectiveGdd5(store, lon, lat);
   if (gddEff !== null && species.gddEnvelope) {
+    // Plasticity breddar GDD-kuvertet (generalister tolererar mer värme/kyla).
+    const gm = plast * 150;
     const [hMin, iMin, iMax, hMax] = species.gddEnvelope;
+    const hMinE = hMin - gm;
+    const hMaxE = hMax + gm;
     fClimate =
-      gddEff <= hMin || gddEff >= hMax
+      gddEff <= hMinE || gddEff >= hMaxE
         ? 0
         : gddEff >= iMin && gddEff <= iMax
           ? 1
           : gddEff < iMin
-            ? clamp01((gddEff - hMin) / Math.max(1e-6, iMin - hMin))
-            : clamp01((hMax - gddEff) / Math.max(1e-6, hMax - iMax));
+            ? clamp01((gddEff - hMinE) / Math.max(1e-6, iMin - hMinE))
+            : clamp01((hMaxE - gddEff) / Math.max(1e-6, hMaxE - iMax));
     if (fClimate <= 0) return 0;
   }
 
@@ -1645,17 +1678,21 @@ export function staticHabitatScore(
     }
   }
 
-  const soft = (x: number) => Math.max(0.05, x);
+  // Plasticity styr kurvornas skärpa: hög plasticity -> låga exponenter (platt, förlåtande),
+  // låg plasticity -> höga exponenter + högre golv (nästan binärt: exakt dessa faktorer krävs).
+  const sharp = 1.8 - 1.6 * plast;
+  const floor = 0.05 + 0.25 * (1 - plast);
+  const soft = (x: number) => Math.max(floor, x);
   const sEnv =
     100 *
-    Math.pow(soft(fMoisture), 0.26) *
-    Math.pow(soft(fAge), 0.18) *
-    Math.pow(soft(fCanopy), 0.12) *
-    Math.pow(soft(fSoil), 0.1) *
-    Math.pow(soft(fSIS), 0.08) *
-    Math.pow(soft(fClimate), 0.08) *
-    Math.pow(soft(fDepth), 0.08) *
-    Math.pow(soft(fTerrain), 0.1);
+    Math.pow(soft(fMoisture), 0.26 * sharp) *
+    Math.pow(soft(fAge), 0.18 * sharp) *
+    Math.pow(soft(fCanopy), 0.12 * sharp) *
+    Math.pow(soft(fSoil), 0.1 * sharp) *
+    Math.pow(soft(fSIS), 0.08 * sharp) *
+    Math.pow(soft(fClimate), 0.08 * sharp) *
+    Math.pow(soft(fDepth), 0.08 * sharp) *
+    Math.pow(soft(fTerrain), 0.1 * sharp);
   if (dbg) {
     Object.assign(dbg, {
       hostVol,

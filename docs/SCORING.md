@@ -124,6 +124,18 @@ flush          = 1 + 0.25 × min(1, coolNights7d / 4)   ; coolNights7d = days wi
 D = seasonalFactor × rainFactor × frost × flush
 ```
 
+## 1b. Plasticity & observation prior
+
+- **`plasticity`** (0–1, default 0.65) per art styr hur "flytande" arten är:
+  låg plasticity (sommartryffel 0.15, jättemusseron 0.25, korallticka 0.3) → skarpare
+  S_env-exponenter (`weight × (1.8 − 1.6·p)`), högre golv (`0.05 + 0.25·(1−p)`), hårdare
+  GDD-kuvert; hög plasticity (trattkantarell 0.9, kantarell 0.85) → plattare kurvor,
+  mjukare hårda trösklar (`minHostVolume × (1−0.6p)`, `minTreeHeight × (1−0.5p)`) och
+  GDD-kuvertet breddas med `150·p`.
+- **Observationsprior**: `data/validation/observations.geojson` (från `npm run artfakta`)
+  laddas i ett rutnät (0.05°) per art; score × (1 + 0.35·exp(−(d/250 m)²)) nära riktiga fynd.
+  Ingår i tiles och `/api/debug/cell` (`obsPrior`).
+
 ## 2. Species rule matrix (src/habitat.ts, `SPECIES`)
 
 Every species also carries `eatScore` (ätvärde 1–5, shown as ★ in the UI and `/api/meta`

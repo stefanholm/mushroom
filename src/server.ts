@@ -770,6 +770,71 @@ function parseAsOf(dateParam: string): Date {
   return new Date();
 }
 
+// Artportalen-observationslager ("out of the box"): verkliga fynd per art ger en
+// närhetsprior som höjer score nära tidigare fynd (gaussisk kernel, sigma 250 m, max +35 %).
+// Läser data/validation/observations.geojson (git-ignored, från `npm run artfakta`).
+type ObsIndex = Map<string, Map<string, [number, number][]>>;
+let obsIndexCache: ObsIndex | null = null;
+async function getObsIndex(): Promise<ObsIndex> {
+  if (obsIndexCache) return obsIndexCache;
+  const idx: ObsIndex = new Map();
+  try {
+    const p = path.join(here, "..", "data", "validation", "observations.geojson");
+    if (fs.existsSync(p)) {
+      const j = JSON.parse(await fsp.readFile(p, "utf8"));
+      for (const f of j.features ?? []) {
+        const sp = f.properties?.species;
+        const c = f.geometry?.coordinates;
+        if (typeof sp !== "string" || !Array.isArray(c) || c.length < 2) continue;
+        const lon = Number(c[0]);
+        const lat = Number(c[1]);
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+        const key = `${Math.floor(lon / 0.05)}:${Math.floor(lat / 0.05)}`;
+        let m = idx.get(sp);
+        if (!m) {
+          m = new Map();
+          idx.set(sp, m);
+        }
+        let arr = m.get(key);
+        if (!arr) {
+          arr = [];
+          m.set(key, arr);
+        }
+        arr.push([lon, lat]);
+      }
+      console.log(`Observationslager: ${idx.size} arter från observations.geojson`);
+    }
+  } catch (e) {
+    console.error("Kunde inte läsa observations.geojson:", e);
+  }
+  obsIndexCache = idx;
+  return idx;
+}
+
+function obsPrior(index: ObsIndex, species: string, lon: number, lat: number): number {
+  const m = index.get(species);
+  if (!m || m.size === 0) return 0;
+  const ci = Math.floor(lon / 0.05);
+  const cj = Math.floor(lat / 0.05);
+  const cosLat = Math.cos((lat * Math.PI) / 180);
+  let best = 0;
+  for (let dj = -1; dj <= 1; dj++) {
+    for (let di = -1; di <= 1; di++) {
+      const arr = m.get(`${ci + di}:${cj + dj}`);
+      if (!arr) continue;
+      for (const [olo, ala] of arr) {
+        const dx = (olo - lon) * 111000 * cosLat;
+        const dy = (ala - lat) * 111000;
+        const d = Math.hypot(dx, dy);
+        if (d > 750) continue;
+        const v = Math.exp(-((d / 250) ** 2));
+        if (v > best) best = v;
+      }
+    }
+  }
+  return best;
+}
+
 async function computeCells(
   key: string,
   minLon: number,
@@ -865,7 +930,8 @@ async function computeCells(
         forestEdge,
       });
       const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * rainFactor * frost * flush;
-      const score = Math.min(100, Math.round(100 * habitat * dynamic));
+      const prior = obsPrior(await getObsIndex(), key, clon, clat);
+      const score = Math.min(100, Math.round(100 * habitat * dynamic * (1 + 0.35 * prior)));
       cells.push({ lon: clon, lat: clat, score, heat: 0 });
     }
   }
@@ -1574,10 +1640,12 @@ app.get("/api/debug/cell", async (req, res) => {
   const coolNights = staticOnly ? null : await coolNightsLast7d(lat, lon, asOf);
   const flush = flushFactor(coolNights);
   const dynamic = staticOnly ? 1 : seasonalFactor(species, lat, asOf) * rainFactor * frost * flush;
+  const prior = obsPrior(await getObsIndex(), key, lon, lat);
   res.json({
     species: key,
     lon,
     lat,
+    obsPrior: Number(prior.toFixed(3)),
     forestKnown: useMask ? true : forestPolys !== null,
     maskUsed: useMask,
     forestPolys: forestPolys?.length ?? 0,
@@ -1596,7 +1664,7 @@ app.get("/api/debug/cell", async (req, res) => {
     frost,
     coolNights7d: coolNights,
     flush,
-    score: Math.min(100, Math.round(100 * habitat * dynamic)),
+    score: Math.min(100, Math.round(100 * habitat * dynamic * (1 + 0.35 * prior))),
     layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
   });
 });
