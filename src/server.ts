@@ -15,7 +15,8 @@ import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, effectiveGdd5, hostFallback, isS
 // "reward:<id>" accepteras bara om arten finns i REVIEW_REWARD_SPECIES (server-validerad —
 // topparter/exklusiva arter kan aldrig låsas upp via betyg/kommentar).
 function resolveEntitlements(req: express.Request): Set<string> {
-  const raw = String(req.query.entitlements ?? "")
+  // Acceptera både ?entitlements= och ?ents= (klienten skickar båda).
+  const raw = String(req.query.entitlements ?? req.query.ents ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
@@ -1828,6 +1829,35 @@ app.get("/api/tiles/hillshade/:z/:x/:y.png", async (req, res) => {
   res.setHeader("Content-Type", "image/png");
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
   res.send(buf);
+});
+
+// Affärs-katalog för StoreKit-vyn (ingen species-param behövs).
+app.get("/api/shop", (_req, res) => {
+  res.json({
+    packs: Object.values(PACKS).map((p) => ({ id: p.id, label: p.label, priceSek: p.priceSek, kind: p.kind, species: p.species })),
+    reviewRewardSpecies: REVIEW_REWARD_SPECIES,
+    freeSpecies: Object.entries(SPECIES).filter(([, s]) => !s.pack).map(([id]) => id),
+  });
+});
+
+// Vilka arter är upplåsta för dessa entitlements? (klienten kan synka detta efter köp)
+app.get("/api/unlocked", (req, res) => {
+  const ents = resolveEntitlements(req);
+  res.json({
+    entitlements: [...ents],
+    unlocked: Object.keys(SPECIES).filter((id) => isSpeciesUnlocked(id, ents)),
+  });
+});
+
+// Dev-läge: "lås upp 1 svamp mot betyg/kommentar". I produktion verifieras betyget
+// server-side (App Store Server API) innan reward:<id> sätts — här räcker det att arten
+// finns i REVIEW_REWARD_SPECIES.
+app.post("/api/reward/claim", (req, res) => {
+  const id = String(req.body?.species ?? "");
+  if (!isValidRewardClaim(id)) {
+    return res.status(403).json({ error: "Arten kan inte lösas ut via betyg/kommentar.", allowed: REVIEW_REWARD_SPECIES });
+  }
+  res.json({ ok: true, entitlements: `reward:${id}`, unlocked: id });
 });
 
 const port = Number(process.env.PORT ?? 3000);
