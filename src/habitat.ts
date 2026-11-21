@@ -1512,50 +1512,40 @@ const WATER_DIST_IDEAL: Record<string, [number, number]> = {
   tallblodriska: [0.25, 1],
   blodriska: [0.25, 1],
 };
-// Teman för icke-expert-arter. Gratispaketet är medvetet litet och säsongstidigt
-// (kantarell + taggsvampar + sandsopp + brunsopp från juni; jättemusseron som FRIDLYST-info) —
-// tidiga vårarter (murklor, vårmusseron) ligger i expert-paketet pga dödliga förväxlingar.
-const SPECIES_PACK: Record<string, string> = {
-  trattkantarell: "kantarell",
-  "svart-trumpetsvamp": "kantarell",
-  "rodgul-trumpetsvamp": "kantarell",
-  "rodgul-taggsvamp": "kantarell",
-  "blek-kantarell": "kantarell",
-  kruskantarell: "kantarell",
-  frostvaxing: "host-vinter",
-  ostronmussling: "host-vinter",
-  karljohan: "soppar",
-  smorsopp: "soppar",
-  bjorksopp: "soppar",
-  blomkalssvamp: "ved-tickor",
-  judasora: "ved-tickor",
-  "rodbrun-stensopp": "soppar",
-  "finluden-stensopp": "soppar",
-  blodsopp: "soppar",
-  gulsopp: "soppar",
-  blasopp: "soppar",
-  aspsopp: "soppar",
-  tegelsopp: "soppar",
-  tallskrubb: "soppar",
-  grynsopp: "soppar",
-  larksopp: "soppar",
-  mandelriska: "soppar",
-  tallblodriska: "soppar",
-  granblodriska: "soppar",
-  blodriska: "soppar",
-  "zonerad-granblodriska": "soppar",
-  farticka: "ved-tickor",
-  farsticka: "ved-tickor",
-  korallticka: "ved-tickor",
-  svavelticka: "ved-tickor",
-  "rod-svavelticka": "ved-tickor",
-  "blek-ostronmussling": "ved-tickor",
-  honungsskivling: "ved-tickor",
-  "fjallig-blacksvamp": "oppna",
-  "jatteroksvamp": "oppna",
-  "stolt-fjallskivling": "oppna",
-  "snobolischampinjon": "oppna",
-};
+// Betalpackar (Gemini-signerad struktur): 6 gratisarter + 11 pack à exakt 5 arter (0 överlapp).
+// #1–#8 är tvärblandade "blandade korgar" (olika svampgrupper/miljöer per pack),
+// #9–#11 är ärligt geografiska/nischade områdespack. "all"/"pro" är helhetsköp.
+// Gratisarter = arterna UTAN pack nedan (kantarell, blek-taggsvamp, brunsopp, sandsopp,
+// smorsopp, stolt-fjallskivling). Fail-fast: modulen kastar fel om någon art saknas/dubbleras.
+const PACK_DEFS: [string, string, number, "mixed" | "regional" | "all" | "pro", string[]][] = [
+  ["blandad-korg-1", "Blandad korg #1 — Skog & sensommar", 39, "mixed", ["trattkantarell", "karljohan", "mandelkremla", "ostronmussling", "varmusseron"]],
+  ["blandad-korg-2", "Blandad korg #2 — Kust, tall & höst", 39, "mixed", ["rodbrun-stensopp", "granblodriska", "snobolischampinjon", "vinterskivling", "frostvaxing"]],
+  ["blandad-korg-3", "Blandad korg #3 — Björk, mosse & skörd", 29, "mixed", ["bjorksopp", "rodgul-trumpetsvamp", "sillkremla", "honungsskivling", "blamusseron"]],
+  ["blandad-korg-4", "Blandad korg #4 — Blandad skog & övergång", 29, "mixed", ["aspsopp", "gronkremla", "mandelriska", "svavelticka", "varskivling"]],
+  ["blandad-korg-5", "Blandad korg #5 — Sand, glänta & senhöst", 29, "mixed", ["tegelsopp", "grynsopp", "citronslemskivling", "blek-ostronmussling", "rokslojskivling"]],
+  ["blandad-korg-6", "Blandad korg #6 — Vår, ved & karaktär", 39, "mixed", ["toppmurkla", "svart-trumpetsvamp", "blomkalssvamp", "rodnande-blacksvamp", "streckmusseron"]],
+  ["blandad-korg-7", "Blandad korg #7 — Fält, skog & samlarfynd", 29, "mixed", ["rund-toppmurkla", "farticka", "korallticka", "rimskivling", "blasopp"]],
+  ["blandad-korg-8", "Blandad korg #8 — Tagg, löv & extra fynd", 29, "mixed", ["rodgul-taggsvamp", "larksopp", "jatteroksvamp", "fjallig-blacksvamp", "tallblodriska"]],
+  ["syd-adellov-kalk", "Syd- & ädellöv / kalkmark", 29, "regional", ["blek-kantarell", "kruskantarell", "finluden-stensopp", "sommartryffel", "judasora"]],
+  ["nordlig-fuktig-profil", "Nordlig & fuktig skogsprofil", 29, "regional", ["zonerad-granblodriska", "sotvaxing", "bla-taggsvamp", "rod-svavelticka", "farsticka"]],
+  ["varme-lov-specialsoppar", "Värme- & lövpräglade specialsoppar", 29, "regional", ["blodsopp", "gulsopp", "jattemusseron", "tallskrubb", "blodriska"]],
+  ["all", "Alla 61 arter", 149, "all", []],
+  ["pro", "Pro (allt + fläckvarning + offline)", 299, "pro", []],
+];
+const SPECIES_PACK: Record<string, string> = {};
+for (const [pid, , , kind, list] of PACK_DEFS) {
+  if (kind !== "mixed" && kind !== "regional") continue;
+  if (list.length !== 5) throw new Error(`Paket ${pid} har ${list.length} arter (förväntade 5)`);
+  for (const sid of list) {
+    if (SPECIES_PACK[sid]) throw new Error(`Art ${sid} ligger i både ${SPECIES_PACK[sid]} och ${pid}`);
+    SPECIES_PACK[sid] = pid;
+  }
+}
+for (const sid of Object.keys(SPECIES)) {
+  if (!SPECIES_PACK[sid] && sid !== "kantarell" && sid !== "blek-taggsvamp" && sid !== "brunsopp" && sid !== "sandsopp" && sid !== "smorsopp" && sid !== "stolt-fjallskivling") {
+    throw new Error(`Art ${sid} saknar pack (och är inte gratisart)`);
+  }
+}
 for (const [k, s] of Object.entries(SPECIES)) {
   const sf = SEASON_FROM_OBS[k];
   if (sf) {
@@ -1581,38 +1571,27 @@ for (const [k, s] of Object.entries(SPECIES)) {
   }
   const wd = WATER_DIST_IDEAL[k];
   if (wd) s.waterDistIdeal = wd;
-  // Betalpack: expertarter -> "expert", övriga enligt tema, saknar pack = gratis.
-  s.pack = s.expertMode ? "expert" : SPECIES_PACK[k];
+  // Betalpack enligt PACK_DEFS; saknar pack = gratisart.
+  s.pack = SPECIES_PACK[k];
 }
 
 export type PackInfo = {
   id: string;
   label: string;
   priceSek: number;
-  kind: "species" | "all" | "pro";
+  kind: "mixed" | "regional" | "all" | "pro";
   species: string[];
 };
 
-const PACK_DEFS: [string, string, number, "species" | "all" | "pro"][] = [
-  ["kantarell", "Kantarellpaket", 29, "species"],
-  ["soppar", "Soppar & riskor", 39, "species"],
-  ["ved-tickor", "Tickor & ved-svampar", 39, "species"],
-  ["oppna", "Öppna marker & gläntor", 29, "species"],
-  ["host-vinter", "Höst & vinter", 29, "species"],
-  ["expert", "Expertpaket (kontrollista krävs)", 49, "species"],
-  ["all", "Alla arter", 99, "all"],
-  ["pro", "Pro (allt + fläckvarning + offline)", 299, "pro"],
-];
-
 export const PACKS: Record<string, PackInfo> = Object.fromEntries(
-  PACK_DEFS.map(([id, label, priceSek, kind]) => [
+  PACK_DEFS.map(([id, label, priceSek, kind, list]) => [
     id,
     {
       id,
       label,
       priceSek,
       kind,
-      species: kind === "species" ? Object.entries(SPECIES).filter(([, s]) => s.pack === id).map(([k]) => k) : Object.keys(SPECIES),
+      species: kind === "mixed" || kind === "regional" ? [...list] : Object.keys(SPECIES),
     },
   ]),
 );

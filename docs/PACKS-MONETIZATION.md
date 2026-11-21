@@ -1,66 +1,53 @@
-# Utkast: svamppack, regionpack & betalning i "steho" (att bolla med Gemini)
+# Svamppack & betalning i "steho" (Gemini-signerad struktur, implementerad i kod)
 
-Status: **utkast för diskussion** — inget är låst. Mål: tydlig, icke-girig prissättning där
-säkerhet ALLTID är gratis.
+Status: **implementerat** i `src/habitat.ts` (`PACK_DEFS`/`PACKS`), exponerat via
+`/api/meta` (`packs`, `speciesList[].pack/locked`) och 403-gating på tiles/hotspots/debug.
+Paketen ligger i KOD — inte i `data/species/artfakta.json` (den är git-ignored data).
 
-## Grundprinciper (inte förhandlingsbara)
+## Gratisnivå (6 arter — förtroendebyggare)
 
-1. **Säkerhet är alltid gratis**: alla 43 nybörjarsäkra arter, förväxlingsvarningar
-   (`lookalikes`), FRIDLYST-markeringar, expert-kontrollistor, chattens säkerhetsregler,
-   Giftinformationscentralen-info. Ingen paywall på livsfarlig information.
-2. **Inga annonser, inga dark patterns.** Tydliga priser i SEK, Family Sharing via StoreKit.
-3. **Gratisversionen ska vara riktigt användbar** — man ska kunna svampjaga med den.
+`kantarell`, `blek-taggsvamp`, `brunsopp`, `sandsopp`, `smorsopp`, `stolt-fjallskivling`
 
-## Föreslaget innehåll
+Alltid gratis även utanför artlistan: säkerhetsinfo (förväxlingsvarningar, FRIDLYST,
+säkerhetschecklista i chatt), Stigar, Terrängskugga, Spara PNG, Hitta bilen, tryck-inspektion.
 
-### Gratis (bas) — medvetet litet, säsongstidigt paket (6 arter)
-- Gratisarter: **kantarell**, blek taggsvamp, blå taggsvamp, sandsopp, brunsopp,
-  jättemusseron (FRIDLYST-info). Fokus: tidiga + lättidentifierade arter från juni (kantarell
-  jun–nov, sandsopp jul–okt…) så nya användare får träffar direkt och litar på appen.
-  Tidig vår (murklor/vårmusseron) ligger i expert-paketet pga dödliga förväxlingar.
-- Varje art visar alltid **säsong** (månader) i pill-tooltip, artinfo och inspektionskortet.
-- Karta + värmelager för gratisarterna — online.
-- Chatt: 20 frågor/dag (säkerhetsreglerna alltid på).
-- Stigar, Terrängskugga, Spara PNG, tryck-inspektion (`/api/debug/cell`), Hitta bilen.
-- 1 region online (valfri, t.ex. ditt eget län).
+## Blandade 5-pack (#1–#8 — tvärblandade grupper/miljöer, 0 överlapp)
 
-### Svamppack (engångsköp, teman av arter)
-- "Kantarell & trattkantarell" — 29 kr
-- "Soppar & tickor" — 39 kr
-- "Skivlingar EXPERT" (murklor, champinjoner, kremlor… bakom kontrollista) — 49 kr
-- "Vinter & ved-svampar" — 29 kr
-- "Alla 61 arter" — 99 kr (bästa värde)
-- Innehåll per pack: arternas värmelager + ikoner + detaljerade artkort + säsong/GDD-fönster.
+| Pack | Namn | Pris | Arter |
+| --- | --- | --- | --- |
+| blandad-korg-1 | Skog & sensommar | 39 kr | trattkantarell, karljohan, mandelkremla, ostronmussling, varmusseron |
+| blandad-korg-2 | Kust, tall & höst | 39 kr | rodbrun-stensopp, granblodriska, snobolischampinjon, vinterskivling, frostvaxing |
+| blandad-korg-3 | Björk, mosse & skörd | 29 kr | bjorksopp, rodgul-trumpetsvamp, sillkremla, honungsskivling, blamusseron |
+| blandad-korg-4 | Blandad skog & övergång | 29 kr | aspsopp, gronkremla, mandelriska, svavelticka, varskivling |
+| blandad-korg-5 | Sand, glänta & senhöst | 29 kr | tegelsopp, grynsopp, citronslemskivling, blek-ostronmussling, rokslojskivling |
+| blandad-korg-6 | Vår, ved & karaktär | 39 kr | toppmurkla, svart-trumpetsvamp, blomkalssvamp, rodnande-blacksvamp, streckmusseron |
+| blandad-korg-7 | Fält, skog & samlarfynd | 29 kr | rund-toppmurkla, farticka, korallticka, rimskivling, blasopp |
+| blandad-korg-8 | Tagg, löv & extra fynd | 29 kr | rodgul-taggsvamp, larksopp, jatteroksvamp, fjallig-blacksvamp, tallblodriska |
 
-### Regionpack (engångsköp per län, offline PMTiles)
-- 39 kr/län, eller "Hela Sverige offline" — 149 kr.
-- Innehåll: PMTiles per län (basemap + värmeraster bakade via `npm run bake-tiles`) → funkar utan täckning.
+## Områdesspecifika 5-pack (#9–#11 — ärlig geografi/nisch)
 
-### Pro-prenumeration
-- 49 kr/mån eller 299 kr/år (≈ 25 kr/mån), 7 dagars gratis provperiod.
-- Innehåll: obegränsad chatt, **fläckvarning** (bakgrundsvarning när du passerar in-season habitat —
-  kräver Always-location, därför Pro), hela Sverige offline, alla svamppack, nya arter direkt vid släpp.
+| Pack | Namn | Pris | Arter |
+| --- | --- | --- | --- |
+| syd-adellov-kalk | Syd- & ädellöv / kalkmark | 29 kr | blek-kantarell, kruskantarell, finluden-stensopp, sommartryffel, judasora |
+| nordlig-fuktig-profil | Nordlig & fuktig skogsprofil | 29 kr | zonerad-granblodriska, sotvaxing, bla-taggsvamp, rod-svavelticka, farsticka |
+| varme-lov-specialsoppar | Värme- & lövpräglade specialsoppar | 29 kr | blodsopp, gulsopp, jattemusseron, tallskrubb, blodriska |
 
-## Öppna frågor att bolla med Gemini
+Totalt: 6 gratis + 11×5 = 61 arter, 0 överlapp (fail-fast-validering i modulen kastar fel vid dubblett/saknad).
 
-1. One-time vs prenumeration-mix: är 299 kr/år + engångspack för austère? Risk: för många köpalternativ → beslutsångest. Kanske bara Gratis / Pro / Regionpack-län?
-2. Ska Expertpack vara gratis i stället (säkerhetsskäl) och bara "avancerade artkort" köpas?
-3. Prisnivåer i SEK för Sverige 2026 — vad tar liknande appar (Svampguiden, iNaturalist premium är gratis…) — differentiering: vi är den enda med habitatprognos + fläckvarning.
-4. B2B: kommuner/skogsägare (nyckelbiotoper, svampinventering) — separat licens?
-5. Fläckvarning: Always-location kan skrämma — räcker "När appen används" + notis vid rörelse?
-6. StoreKit: consumables (pack) vs non-consumable (region/län) vs subscription — rätt kategorier? Family Sharing på allt?
-7. Gratis trials: 7 dagar Pro — risk för abuse, men branschstandard.
+## Helhetsköp
 
-## Tekniskt (implementerat, dev-läge)
+- `all` — Alla 61 arter, **149 kr** engångsköp.
+- `pro` — Pro, **299 kr/år** (alt 49 kr/mån): allt ovan + fläckvarning + obegränsad chatt + offline hela Sverige.
+- Regionpack per län offline: 39 kr/län (PMTiles, klient-side) — ej i PACK_DEFS än.
 
-- `src/habitat.ts`: varje art har `pack` (gratis-arter saknar pack). `PACKS` katalog +
-  `isSpeciesUnlocked(id, ents)`.
-- `/api/meta` svarar med `entitlements`, `packs` (id/label/priceSek/kind/speciesCount) och
-  `speciesList[].pack/locked`.
-- `/api/tiles/habitat/...`, `/api/tiles/multi/...`, `/api/hotspots`, `/api/peaks`,
-  `/api/debug/cell` svarar **403 `{error, locked:[...]}`** för låsta arter.
-- Entitlements skickas idag som `?entitlements=pro,expert` (csv) — **bara för dev/test**.
-  I produktion: validera App Store-kvittot server-side (App Store Server API / StoreKit 2
-  `verifyReceipt`) och sätt entitlements där; klienten får aldrig bestämma själv.
-- Offline PMTiles per Regionpack är klient-filer (ingen server-gating behövs).
-- Fläckvarning: iOS background location + `/api/hotspots?lat&lon&radius` — se GEMINI-HANDOFF §1.
+## Regler (inte förhandlingsbara)
+
+1. Säkerhet alltid gratis (se ovan). 2. Inga annonser/dark patterns. 3. Tydliga SEK-priser, Family Sharing.
+4. Expertarter (murklor, champinjoner, vårmusseron, kremlor, Cortinarius…) är köpbara men ALLTID
+   med expertMode-varning + kontrollista i UI — packköp ger aldrig "plocka direkt".
+
+## Tekniskt
+
+- `?entitlements=blandad-korg-6,pro` (csv) är dev-läge; produktion: validera App Store-kvittot
+  server-side (App Store Server API) och sätt entitlements där.
+- `/api/tiles/*`, `/api/hotspots`, `/api/peaks`, `/api/debug/cell` → 403 `{error, locked:[...]}` vid låst art.
