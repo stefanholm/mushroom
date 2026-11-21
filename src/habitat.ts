@@ -1668,9 +1668,11 @@ export function staticHabitatScore(
   const twiL = store.rasters.get("twi");
   let fTWI = 1;
   if (twiL) {
-    const v = twiL.sampleSync(easting, northing);
-    if (v !== null) {
+    const raw = twiL.sampleSync(easting, northing);
+    if (raw !== null) {
       covered = true;
+      // hårt tak: extrem TWI på nästan plan mark (myrkanter) får inte spika faktorn
+      const v = Math.min(raw, 18);
       const [lo, hi] = species.twiIdeal ?? [5, 11];
       const dist = v < lo ? lo - v : v > hi ? v - hi : 0;
       fTWI = clamp01(1 - dist / 4);
