@@ -1040,8 +1040,14 @@ app.get("/api/hotspots", async (req, res) => {
     .split(",")
     .map((s) => s.trim())
     .filter((k) => SPECIES[k]);
+  // Låsta arter slängs bort här (200 + skipped) så kartan/pins fortfarande fungerar;
+  // 403 bara när ALLA efterfrågade arter är låsta.
   const locked0 = gateSpecies(req, keys);
-  if (locked0.length > 0) return lockedResponse(res, locked0);
+  const open0 = keys.filter((k) => !locked0.includes(k));
+  if (open0.length === 0 && locked0.length > 0) return lockedResponse(res, locked0);
+  keys.length = 0;
+  keys.push(...open0);
+  res.locals.skipped = locked0;
   const species = SPECIES[keys[0] ?? ""];
   const bboxParam = String(req.query.bbox ?? "");
   const box = bboxParam
@@ -1137,6 +1143,7 @@ app.get("/api/hotspots", async (req, res) => {
         ...(meta.layersLoaded as string[]),
       ],
       generatedAt: new Date().toISOString(),
+      skipped: (res.locals.skipped as string[] | undefined) ?? [],
     },
     features,
   });
@@ -1626,7 +1633,11 @@ app.get("/api/tiles/multi/:z/:x/:y.png", async (req, res) => {
     .slice(0, 6);
   if (keys.length === 0) return res.status(400).json({ error: "Okända arter i species=." });
   const lockedM = gateSpecies(req, keys);
-  if (lockedM.length > 0) return lockedResponse(res, lockedM);
+  const openM = keys.filter((k) => !lockedM.includes(k));
+  if (openM.length === 0 && lockedM.length > 0) return lockedResponse(res, lockedM);
+  keys.length = 0;
+  keys.push(...openM);
+  res.locals.skipped = lockedM;
   const z = Number(req.params.z);
   const x = Number(req.params.x);
   const y = Number(req.params.y);
