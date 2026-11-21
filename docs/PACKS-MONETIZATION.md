@@ -13,10 +13,12 @@ säkerhet ALLTID är gratis.
 
 ## Föreslaget innehåll
 
-### Gratis (bas) — medvetet litet paket (~8 arter)
-- Gratisarter: **kantarell**, svart trumpetsvamp, blek taggsvamp, brunsopp, sandsopp,
-  frostvaxing, ostronmussling, jättemusseron (FRIDLYST-info). Bara kantarell som "populär" art —
-  karljohan/trattkantarell m.fl. ligger i packen.
+### Gratis (bas) — medvetet litet, säsongstidigt paket (6 arter)
+- Gratisarter: **kantarell**, blek taggsvamp, blå taggsvamp, sandsopp, brunsopp,
+  jättemusseron (FRIDLYST-info). Fokus: tidiga + lättidentifierade arter från juni (kantarell
+  jun–nov, sandsopp jul–okt…) så nya användare får träffar direkt och litar på appen.
+  Tidig vår (murklor/vårmusseron) ligger i expert-paketet pga dödliga förväxlingar.
+- Varje art visar alltid **säsong** (månader) i pill-tooltip, artinfo och inspektionskortet.
 - Karta + värmelager för gratisarterna — online.
 - Chatt: 20 frågor/dag (säkerhetsreglerna alltid på).
 - Stigar, Terrängskugga, Spara PNG, tryck-inspektion (`/api/debug/cell`), Hitta bilen.
