@@ -49,7 +49,7 @@ npm run typecheck
   plus artens säkerhetskontroll (`note`) och förväxlingsvarning (`lookalikes`) — kartan
   släcker aldrig score för förväxlingsarter, utan visar varningen i stället.
 - **Spara PNG** exporterar kartvyn som bild.
-- `GET /api/peaks?species=...&minLon=...&minScore=80` — GeoJSON med lokala score-toppar
+- `GET /api/peaks?species=...&minLon=...&minScore=50` — GeoJSON med lokala score-toppar (default minScore=50; med `static=1` är score habitat×100 så använd då högre tröskel, t.ex. 80)
   (för PNG-ikoner/symbol-lager i t.ex. Xcode-appen).
 - Väder: regn 14 d + min-temp 48 h (frostspärr) + **kalla nätter 7 d (flush, upp till ×1.25)**.
 

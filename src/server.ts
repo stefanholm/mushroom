@@ -1074,7 +1074,9 @@ app.get("/api/hotspots", async (req, res) => {
   }
   const staticOnly = req.query.static === "1";
   const asOf = parseAsOf(String(req.query.date ?? ""));
-  const minScore = Math.max(0, Math.min(100, Number(req.query.minScore ?? 80) || 80));
+  // Default 50 (was 80): dynamiska score (säsong×regn) ligger oftast 30–60, så 80 gav alltid tomma pins.
+  // Med static=1 är score = habitat×100 och 80+ är "hett" — skicka då högre minScore från klienten.
+  const minScore = Math.max(0, Math.min(100, Number(req.query.minScore ?? 50) || 50));
 
   const span = Math.max(maxLon - minLon, maxLat - minLat);
   const cell = cellForSpan(span);
@@ -1163,7 +1165,7 @@ app.get("/api/peaks", async (req, res) => {
   if (locked1.length > 0) return lockedResponse(res, locked1);
   const species = SPECIES[key];
   const box = ["minLon", "minLat", "maxLon", "maxLat"].map((k) => Number(req.query[k]));
-  const minScore = Math.max(0, Math.min(100, Number(req.query.minScore ?? 80) || 80));
+  const minScore = Math.max(0, Math.min(100, Number(req.query.minScore ?? 50) || 50));
   if (!species || box.some((n) => !Number.isFinite(n))) {
     return res
       .status(400)
