@@ -12,6 +12,7 @@
       <nav>
         <button id="tab-chat" class="tab active" type="button">Chatt</button>
         <button id="tab-map" class="tab" type="button">Karta</button>
+        <button id="tab-settings" class="tab" type="button">Inställningar</button>
       </nav>
 
       <section id="pane-chat">
@@ -27,7 +28,7 @@
         <div class="map-controls">
           <div id="speciesPills" class="pills"></div>
           <button id="savePng" type="button" title="Spara kartvyn som PNG">Spara PNG</button>
-          <button id="carBtn" type="button" title="Spara bilens position (eller ta bort den vid andra trycket)">🚗 Hitta bilen</button>
+          <button id="carBtn" type="button" class="car-btn" title="Spara bilens position (eller ta bort den vid andra trycket)"><span class="car-ico" aria-hidden="true">🚗</span><span>Hitta bilen</span></button>
           <span id="carInfo"></span>
           <div id="speciesInfo" class="species-info"></div>
           <label>
@@ -55,10 +56,6 @@
             <button type="button" class="bm" data-basemap="sat">Satellit</button>
           </span>
           <label>
-            <input id="trails" type="checkbox" />
-            Stigar
-          </label>
-          <label>
             <input id="hillshade" type="checkbox" />
             Terrängskugga
           </label>
@@ -76,7 +73,57 @@
           Giftinformationscentralen, tel 112 vid akuta symtom.
         </p>
       </section>
+
+      <section id="pane-settings" hidden>
+        <h2>Inställningar</h2>
+        <div class="settings-card">
+          <label class="settings-row">
+            <span>
+              <strong>Stigar (vandrings- &amp; skogsstigar)</strong>
+              <small>Visa eller dölj stiglagret på kartan</small>
+            </span>
+            <input id="trails" type="checkbox" />
+          </label>
+        </div>
+      </section>
     </main>
+
+    <div id="reviewRewardModal" class="shop-modal" hidden role="dialog" aria-modal="true" aria-labelledby="rewardTitle">
+      <div class="shop-dialog">
+        <div class="shop-header">
+          <div>
+            <h2 id="rewardTitle">⭐ Lås upp 1 svamp mot betyg eller kommentar</h2>
+            <p class="shop-sub">Välj 1 av 12 låsta arter när du lämnat betyg (1–5) eller en kort kommentar.</p>
+          </div>
+          <button id="closeRewardBtn" type="button" class="shop-close" aria-label="Stäng belöningsfönster">✕</button>
+        </div>
+        <div id="shopNotice" class="shop-notice"></div>
+        <div class="settings-card" style="margin-bottom:0.85rem;">
+          <label class="settings-row">
+            <span><strong>Ditt betyg (1–5)</strong></span>
+            <select id="rewardRating">
+              <option value="5">★★★★★ (5)</option>
+              <option value="4">★★★★☆ (4)</option>
+              <option value="3">★★★☆☆ (3)</option>
+              <option value="2">★★☆☆☆ (2)</option>
+              <option value="1">★☆☆☆☆ (1)</option>
+            </select>
+          </label>
+          <label class="settings-row" style="margin-top:0.6rem;">
+            <span><strong>Kommentar (valfri om betyg satts)</strong></span>
+            <input id="rewardComment" type="text" placeholder="T.ex. Bra karta i skogen..." style="flex:1;max-width:340px;" />
+          </label>
+          <label class="settings-row" style="margin-top:0.6rem;">
+            <span><strong>Välj 1 låst belöningsart</strong></span>
+            <select id="rewardSpeciesSelect"></select>
+          </label>
+        </div>
+        <div class="shop-footer" style="border-top:none;padding-top:0;margin-top:0;">
+          <span id="rewardStatus" class="shop-sub"></span>
+          <button id="claimRewardBtn" type="button" class="shop-buy-btn">Lås upp vald art</button>
+        </div>
+      </div>
+    </div>
     <script src="/app.js"></script>
     <script type="module" src="/map.js"></script>
   </body>

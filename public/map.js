@@ -1,3 +1,29 @@
+
+const tabChat = document.getElementById("tab-chat");
+const tabMap = document.getElementById("tab-map");
+const tabSettings = document.getElementById("tab-settings");
+const paneChat = document.getElementById("pane-chat");
+const paneMap = document.getElementById("pane-map");
+const paneSettings = document.getElementById("pane-settings");
+
+function activatePane(target) {
+  for (const [btn, pane] of [
+    [tabChat, paneChat],
+    [tabMap, paneMap],
+    [tabSettings, paneSettings],
+  ]) {
+    if (btn) btn.classList.toggle("active", btn === target);
+    if (pane) pane.hidden = pane !== (target === tabChat ? paneChat : target === tabMap ? paneMap : paneSettings);
+  }
+  if (target === tabMap && map) {
+    setTimeout(() => map.resize(), 50);
+  }
+}
+
+tabChat?.addEventListener("click", () => activatePane(tabChat));
+tabMap?.addEventListener("click", () => activatePane(tabMap));
+tabSettings?.addEventListener("click", () => activatePane(tabSettings));
+
 const mapContainer = document.getElementById("map");
 const pillsEl = document.getElementById("speciesPills");
 const opacityInput = document.getElementById("opacity");
@@ -67,7 +93,11 @@ function drawCar() {
     carMarker = null;
   }
   if (carPos) {
-    carMarker = new maplibregl.Marker({ color: "#1d4ed8" }).setLngLat(carPos).addTo(map);
+    const el = document.createElement("div");
+    el.className = "car-map-pin";
+    el.title = "Sparad bilposition";
+    el.textContent = "🚗";
+    carMarker = new maplibregl.Marker({ element: el, anchor: "bottom" }).setLngLat(carPos).addTo(map);
   }
   updateCarInfo();
 }
@@ -388,6 +418,8 @@ function initMap(maplibregl) {
           ["Skog", j.inForest ? "ja" : "nej"],
           ["Vatten/väg/bebyggelse", j.excluded ? "för nära (0)" : "ok"],
           ["GDD5 (eff.)", j.gddEff ?? "–"],
+          ["Vatten/svacka (fWaterHollow)", typeof j.fWaterHollow === "number" ? j.fWaterHollow.toFixed(2) : (j.fWaterHollow ?? "–")],
+          ["Skogsstruktur (fStandStruct)", typeof j.fStandStruct === "number" ? j.fStandStruct.toFixed(2) : (j.fStandStruct ?? "–")],
           ["Plasticity", j.plasticity ?? "–"],
           ["Fyndprior (Artportalen)", j.obsPrior ?? "–"],
           ["Säsong", meta?.season ? seasonLabel(meta.season) : "–"],
@@ -444,7 +476,18 @@ function initMap(maplibregl) {
       }
     }
   });
-  trailsInput.addEventListener("change", updateTrails);
+  try {
+    const savedTrails = localStorage.getItem("mushroom-trails");
+    if (savedTrails !== null && trailsInput) {
+      trailsInput.checked = savedTrails === "1";
+    }
+  } catch {}
+  trailsInput.addEventListener("change", () => {
+    try {
+      localStorage.setItem("mushroom-trails", trailsInput.checked ? "1" : "0");
+    } catch {}
+    updateTrails();
+  });
   hillshadeInput.addEventListener("change", updateHillshade);
   expertInput.addEventListener("change", () => {
     refreshExpertVisibility();
@@ -464,3 +507,97 @@ import("/vendor/maplibre/maplibre-gl.mjs")
     mapContainer.style.cssText =
       "display:flex;align-items:center;justify-content:center;text-align:center;padding:1rem;color:#842029;";
   });
+
+
+let metaRewardSpecies = [];
+
+function getClaimedRewardSpecies() {
+  return activeEntitlements()
+    .filter((e) => typeof e === "string" && e.startsWith("reward:"))
+    .map((e) => e.slice("reward:".length));
+}
+
+function isSpeciesUnlocked(sp) {
+  if (!sp) return false;
+  if (sp.free === true || sp.pack === "free" || metaFreeSpecies.has(sp.id)) return true;
+  if (sp.unlocked === true) return true;
+  const ents = new Set(activeEntitlements());
+  if (ents.has("pro") || ents.has("all")) return true;
+  if (ents.has("reward:" + sp.id)) return true;
+  if (sp.pack && ents.has(sp.pack)) return true;
+  return false;
+}
+
+function normalizePacksList(packsData) {
+  if (Array.isArray(packsData)) return packsData;
+  if (packsData && typeof packsData === "object") {
+    return Object.entries(packsData).map(([id, cfg]) => ({ id, ...(cfg || {}) }));
+  }
+  return [];
+}
+
+function openRewardModal() {
+  const modal = document.getElementById("reviewRewardModal");
+  const sel = document.getElementById("rewardSpeciesSelect");
+  const status = document.getElementById("rewardStatus");
+  const btn = document.getElementById("claimRewardBtn");
+  if (!modal || !sel) return;
+
+  const claimed = getClaimedRewardSpecies();
+  const candidates = metaRewardSpecies.filter((id) => !isSpeciesUnlocked({ id }));
+  sel.innerHTML = "";
+  for (const id of metaRewardSpecies) {
+    const opt = document.createElement("option");
+    const found = speciesList?.find((x) => x.id === id);
+    const label = found ? found.label.split(" (")[0] : id;
+    opt.value = id;
+    opt.textContent = isSpeciesUnlocked({ id }) ? `${label} (redan upplåst)` : label;
+    sel.appendChild(opt);
+  }
+  if (candidates.length > 0) sel.value = candidates[0];
+
+  if (status) {
+    status.textContent = claimed.length > 0
+      ? `Redan upplåst belöningsart: ${claimed.join(", ")}`
+      : "Välj en art från de 12 låsta arterna och skicka betyg/kommentar.";
+  }
+  if (btn) btn.disabled = claimed.length > 0 || candidates.length === 0;
+  modal.hidden = false;
+}
+
+function closeRewardModal() {
+  const modal = document.getElementById("reviewRewardModal");
+  if (modal) modal.hidden = true;
+}
+
+document.getElementById("openRewardBtn")?.addEventListener("click", () => {
+  closeShop();
+  openRewardModal();
+});
+document.getElementById("closeRewardBtn")?.addEventListener("click", closeRewardModal);
+document.getElementById("reviewRewardModal")?.addEventListener("click", (e) => {
+  if (e.target.id === "reviewRewardModal") closeRewardModal();
+});
+document.getElementById("claimRewardBtn")?.addEventListener("click", async () => {
+  const sel = document.getElementById("rewardSpeciesSelect");
+  const ratingEl = document.getElementById("rewardRating");
+  const commentEl = document.getElementById("rewardComment");
+  if (!sel || !sel.value) return;
+  const rating = Number(ratingEl?.value || 0);
+  const comment = (commentEl?.value || "").trim();
+  if (!(rating >= 1 && rating <= 5) && comment.length < 3) {
+    alert("Ange ett betyg (1–5) eller skriv en kort kommentar först.");
+    return;
+  }
+  const chosenId = sel.value;
+  if (!metaRewardSpecies.includes(chosenId)) {
+    alert("Ogiltig belöningsart.");
+    return;
+  }
+  await window.MushroomBilling.purchase("reward:" + chosenId);
+  updateShopBadge();
+  if (speciesList) applySpeciesList(speciesList);
+  rebuildHabitat();
+  refreshMeta();
+  closeRewardModal();
+});
