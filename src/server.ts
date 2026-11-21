@@ -173,12 +173,12 @@ function nearestStation(stations: SmhiStation[], lat: number, lon: number): Smhi
   return best;
 }
 
-const rainCache = new Map<string, { at: number; rain14: number | null }>();
+const rainCache = new Map<string, { at: number; values: { to: number; value: string }[] }>();
 
-async function rainLast14Days(lat: number, lon: number, asOf: Date): Promise<number | null> {
-  const key = `${lat.toFixed(1)},${lon.toFixed(1)},${asOf.toISOString().slice(0, 10)}`;
+async function rainValues(lat: number, lon: number): Promise<{ to: number; value: string }[]> {
+  const key = `${lat.toFixed(1)},${lon.toFixed(1)}`;
   const cached = rainCache.get(key);
-  if (cached && Date.now() - cached.at < 6 * 3600 * 1000) return cached.rain14;
+  if (cached && Date.now() - cached.at < 6 * 3600 * 1000) return cached.values;
   const stations = await getStations();
   const active = stations.filter((s) => s.active);
   const station = nearestStation(active.length > 0 ? active : stations, lat, lon);
@@ -193,13 +193,23 @@ async function rainLast14Days(lat: number, lon: number, asOf: Date): Promise<num
         typeof v?.to === "number" && typeof v?.value === "string",
     )
     .sort((a, b) => a.to - b.to);
+  rainCache.set(key, { at: Date.now(), values });
+  return values;
+}
+
+function sumRain(values: { to: number; value: string }[], asOf: Date, days: number): number | null {
   const end = asOf.getTime();
-  const cutoff = end - 14 * 86400_000;
+  const cutoff = end - days * 86400_000;
   const inWindow = values.filter((v) => v.to >= cutoff && v.to <= end);
-  const rain14 =
-    inWindow.length === 0 ? null : inWindow.reduce((sum, v) => sum + Number(v.value), 0);
-  rainCache.set(key, { at: Date.now(), rain14 });
-  return rain14;
+  return inWindow.length === 0 ? null : inWindow.reduce((sum, v) => sum + Number(v.value), 0);
+}
+
+async function rainLast14Days(lat: number, lon: number, asOf: Date): Promise<number | null> {
+  return sumRain(await rainValues(lat, lon), asOf, 14);
+}
+
+async function rainLastNDays(lat: number, lon: number, asOf: Date, days: number): Promise<number | null> {
+  return sumRain(await rainValues(lat, lon), asOf, days);
 }
 
 const TEMP_PARAMETER = "1";
@@ -870,12 +880,20 @@ async function computeCells(
   const centerLat = (minLat + maxLat) / 2;
   const centerLon = (minLon + maxLon) / 2;
   let rain14: number | null = null;
+  let rain30: number | null = null;
+  let rain90: number | null = null;
   try {
-    rain14 = await rainLast14Days(centerLat, centerLon, asOf);
+    const vals = await rainValues(centerLat, centerLon);
+    rain14 = sumRain(vals, asOf, 14);
+    rain30 = sumRain(vals, asOf, 30);
+    rain90 = sumRain(vals, asOf, 90);
   } catch (err) {
     console.error("SMHI fetch failed:", err);
   }
-  const rainFactor = rain14 === null ? 0.5 : Math.min(1, rain14 / 60);
+  // Kort regn driver fruktning nu; långsiktigt regn (90 d) laddar markfukten före det.
+  const rainFactor =
+    (rain14 === null ? 0.5 : Math.min(1, rain14 / 60)) *
+    (rain90 === null ? 1 : 0.75 + 0.25 * Math.min(1, rain90 / 200));
   let minTemp: number | null = null;
   let frost = 1;
   let coolNights: number | null = null;
@@ -1666,10 +1684,17 @@ app.get("/api/debug/cell", async (req, res) => {
     dbg,
   );
   let rain14: number | null = null;
+  let rain30: number | null = null;
+  let rain90: number | null = null;
   try {
-    rain14 = await rainLast14Days(lat, lon, asOf);
+    const vals = await rainValues(lat, lon);
+    rain14 = sumRain(vals, asOf, 14);
+    rain30 = sumRain(vals, asOf, 30);
+    rain90 = sumRain(vals, asOf, 90);
   } catch {}
-  const rainFactor = rain14 === null ? 0.5 : Math.min(1, rain14 / 60);
+  const rainFactor =
+    (rain14 === null ? 0.5 : Math.min(1, rain14 / 60)) *
+    (rain90 === null ? 1 : 0.75 + 0.25 * Math.min(1, rain90 / 200));
   const minTemp = staticOnly ? null : await minTempLast48h(lat, lon);
   const frost = species.frostSensitive && minTemp !== null && minTemp <= -3 ? 0 : 1;
   const coolNights = staticOnly ? null : await coolNightsLast7d(lat, lon, asOf);
@@ -1693,6 +1718,8 @@ app.get("/api/debug/cell", async (req, res) => {
     ...dbg,
     habitat: Number(habitat.toFixed(4)),
     rain14,
+    rain30,
+    rain90,
     rainFactor: Number(rainFactor.toFixed(3)),
     seasonFactor: Number(seasonalFactor(species, lat, asOf).toFixed(2)),
     minTemp48h: minTemp,

@@ -31,6 +31,7 @@ export type SpeciesProfile = {
   slopeIdeal?: [number, number];
   waterIdeal?: [number, number];
   structIdeal?: [number, number];
+  waterDistIdeal?: [number, number];
   pack?: string;
 };
 
@@ -1492,6 +1493,25 @@ const SPECIES_MICROCLIMATE: Record<string, { waterIdeal: [number, number]; struc
   streckmusseron: { waterIdeal: [0.1, 0.5], structIdeal: [0.3, 0.85] },
   sommartryffel: { waterIdeal: [0.2, 0.6], structIdeal: [0.4, 0.9] },
 };
+// Avstånd-till-vatten-ideal (0..1 av 2500 m; hård 50 m-spärr finns redan i masken).
+const WATER_DIST_IDEAL: Record<string, [number, number]> = {
+  trattkantarell: [0.02, 0.3],
+  "svart-trumpetsvamp": [0.02, 0.4],
+  blomkalssvamp: [0.02, 0.4],
+  granblodriska: [0.02, 0.35],
+  "zonerad-granblodriska": [0.02, 0.3],
+  frostvaxing: [0.02, 0.4],
+  citronslemskivling: [0.02, 0.35],
+  sandsopp: [0.25, 1],
+  grynsopp: [0.25, 1],
+  smorsopp: [0.25, 1],
+  "rodbrun-stensopp": [0.25, 1],
+  tallskrubb: [0.25, 1],
+  jattemusseron: [0.25, 1],
+  streckmusseron: [0.25, 1],
+  tallblodriska: [0.25, 1],
+  blodriska: [0.25, 1],
+};
 // Teman för icke-expert-arter. Gratispaketet är medvetet litet och säsongstidigt
 // (kantarell + taggsvampar + sandsopp + brunsopp från juni; jättemusseron som FRIDLYST-info) —
 // tidiga vårarter (murklor, vårmusseron) ligger i expert-paketet pga dödliga förväxlingar.
@@ -1559,6 +1579,8 @@ for (const [k, s] of Object.entries(SPECIES)) {
     s.waterIdeal = mc.waterIdeal;
     s.structIdeal = mc.structIdeal;
   }
+  const wd = WATER_DIST_IDEAL[k];
+  if (wd) s.waterDistIdeal = wd;
   // Betalpack: expertarter -> "expert", övriga enligt tema, saknar pack = gratis.
   s.pack = s.expertMode ? "expert" : SPECIES_PACK[k];
 }
@@ -1820,6 +1842,26 @@ export function staticHabitatScore(
     }
   }
 
+  // Mjukt avstånd till vatten (m → 0..1 av 2500 m). Hård 50 m-spärr ligger i masken.
+  const wDistL = store.rasters.get("water_dist");
+  const wDistV = wDistL ? wDistL.sampleSync(easting, northing) : null;
+  if (wDistL && wDistV !== null) covered = true;
+  const fWaterDist = bandAffinity(
+    wDistV === null || wDistV === undefined ? null : clamp01(wDistV / 2500),
+    species.waterDistIdeal ?? [0.02, 1],
+    plast,
+  );
+  // Död ved (m³/ha) — bara meningsfull för vedarter (woodHost); andra får neutral 1.
+  const dodvedL = store.rasters.get("dodved");
+  let fDeadwood = 1;
+  if (dodvedL && species.woodHost) {
+    const v = dodvedL.sampleSync(easting, northing);
+    if (v !== null) {
+      covered = true;
+      fDeadwood = 0.25 + 0.75 * clamp01(v / 40);
+    }
+  }
+
   const waterL = store.rasters.get("water_rel");
   const fWaterHollow = bandAffinity(waterL ? waterL.sampleSync(easting, northing) : null, species.waterIdeal ?? [0.25, 0.85], plast);
   if (waterL) covered = true;
@@ -1910,17 +1952,19 @@ export function staticHabitatScore(
   const soft = (x: number) => Math.max(floor, x);
   const sEnv =
     100 *
-    Math.pow(soft(fMoisture), 0.2 * sharp) *
-    Math.pow(soft(fAge), 0.15 * sharp) *
-    Math.pow(soft(fCanopy), 0.1 * sharp) *
+    Math.pow(soft(fMoisture), 0.17 * sharp) *
+    Math.pow(soft(fAge), 0.13 * sharp) *
+    Math.pow(soft(fCanopy), 0.08 * sharp) *
     Math.pow(soft(fSoil), 0.09 * sharp) *
     Math.pow(soft(fSIS), 0.07 * sharp) *
     Math.pow(soft(fClimate), 0.07 * sharp) *
     Math.pow(soft(fDepth), 0.07 * sharp) *
-    Math.pow(soft(fTerrain), 0.08 * sharp) *
-    Math.pow(soft(fTWI), 0.07 * sharp) *
+    Math.pow(soft(fTerrain), 0.07 * sharp) *
+    Math.pow(soft(fTWI), 0.06 * sharp) *
     Math.pow(soft(fWaterHollow), 0.05 * sharp) *
-    Math.pow(soft(fStandStruct), 0.05 * sharp);
+    Math.pow(soft(fStandStruct), 0.05 * sharp) *
+    Math.pow(soft(fWaterDist), 0.04 * sharp) *
+    Math.pow(soft(fDeadwood), 0.05 * sharp);
   if (dbg) {
     Object.assign(dbg, {
       hostVol,
@@ -1939,6 +1983,8 @@ export function staticHabitatScore(
       fTWI,
       fWaterHollow,
       fStandStruct,
+      fWaterDist,
+      fDeadwood,
       sEnv: Number(sEnv.toFixed(2)),
       covered,
     });

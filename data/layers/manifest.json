@@ -131,6 +131,18 @@
       "file": "stand_struct_10m.tif",
       "nodata": -9999,
       "band": 1
+    },
+    {
+      "id": "water_dist",
+      "file": "water_dist_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "dodved",
+      "file": "dodved_10m.tif",
+      "nodata": -9999,
+      "band": 1
     }
   ],
   "vectors": [

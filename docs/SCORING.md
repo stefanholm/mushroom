@@ -140,6 +140,11 @@ D = seasonalFactor × rainFactor × frost × flush
   0..1) och `stand_struct_10m.tif` (skogsstruktur/kantzon 0..1) → `bandAffinity` per art
   (`waterIdeal`/`structIdeal`, gaussiskt straff utanför fönstret, skärpa efter plasticity;
   saknas lager → faktor 1). Vikt 0.05 vardera i S_env.
+- **Vattenavstånd & död ved**: `water_dist_10m.tif` (meter, chamfer från NMD 61/62) →
+  `fWaterDist` via `bandAffinity` på dist/2500 (`waterDistIdeal` per art, vikt 0.04);
+  `dodved_10m.tif` (m³/ha) → `fDeadwood` endast för `woodHost`-arter (vikt 0.05, annars 1).
+- **Långsiktigt regn**: `D` innehåller nu `min(1, rain14/60) × (0.75 + 0.25·min(1, rain90/200))`
+  (SMHI latest-months, samma cache ger rain30/rain90 i `/api/debug/cell`).
 - **Observationsprior**: `data/validation/observations.geojson` (från `npm run artfakta`)
   laddas i ett rutnät (0.05°) per art; score × (1 + 0.35·exp(−(d/250 m)²)) nära riktiga fynd.
   Ingår i tiles och `/api/debug/cell` (`obsPrior`).

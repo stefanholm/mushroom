@@ -174,6 +174,28 @@ for (const k of order) {
 await writeRaster("twi_10m.tif", twi, 32, 3);
 await writeRaster("slope_10m.tif", slope, 32, 3);
 
+// Demo: avstånd till "sjön" (nodata-rect i hojd) + död ved-volym (m³/ha)
+const waterDist = new Float32Array(n);
+for (let j = 0; j < height; j++) {
+  for (let i = 0; i < width; i++) {
+    const k = j * width + i;
+    let best = 1e9;
+    for (let jj = 300; jj < 390; jj++) {
+      for (let ii = 150; ii < 210; ii++) {
+        if (hojd[jj * width + ii] === -9999) {
+          const d = Math.hypot((ii - i) * res, (jj - j) * res);
+          if (d < best) best = d;
+        }
+      }
+    }
+    waterDist[k] = best === 1e9 ? 5000 : best;
+  }
+}
+await writeRaster("water_dist_10m.tif", waterDist, 32, 3);
+const dodved = new Float32Array(n);
+for (let k = 0; k < n; k++) dodved[k] = volym[k] > 0 ? 5 + 55 * rand() : 0;
+await writeRaster("dodved_10m.tif", dodved, 32, 3);
+
 const clearcutSquare = (lon0, lat0, lon1, lat1) => {
   const pts = [
     [lon0, lat0],
@@ -264,6 +286,8 @@ const manifest = {
     { id: "slope", file: "slope_10m.tif", nodata: -9999, band: 1 },
     { id: "water_rel", file: "water_rel_10m.tif", nodata: -9999, band: 1 },
     { id: "stand_struct", file: "stand_struct_10m.tif", nodata: -9999, band: 1 },
+    { id: "water_dist", file: "water_dist_10m.tif", nodata: -9999, band: 1 },
+    { id: "dodved", file: "dodved_10m.tif", nodata: -9999, band: 1 },
   ],
   vectors: [
     { id: "avverkningar", file: "avverkningar_senaste_5ar.geojson", crs: "EPSG:3006" },

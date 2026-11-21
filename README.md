@@ -103,6 +103,17 @@ skriver `water_rel_10m.tif` (vatten-/svacknärhet 0..1 från TWI+lutning) och
 `stand_struct_10m.tif` (skogsstruktur/kantzon 0..1 från trädhöjd+lutning+TWI).
 Per art sätts `waterIdeal`/`structIdeal` i `src/habitat.ts` (`SPECIES_MICROCLIMATE`).
 
+```
+npm run water-dist
+```
+
+skriver `water_dist_10m.tif` (avstånd i meter till närmaste vatten; NMD klass 61/62,
+fallback: höjdmodellens nodata). `npm run demo-data` skriver även `dodved_10m.tif`
+(död ved, m³/ha — riktig källa: Skogsstyrelsen/SLU död-ved-inventering, samma filnamn).
+Båda är valfria lager med `waterDistIdeal` per art; vedarter använder `dodved` via `fDeadwood`.
+Väder: `rain14` viktas ihop med `rain90` (långsiktig markfukt, SMHI samma cache); `rain30`/`rain90`
+visas i `/api/debug/cell`.
+
 ## Data layers (folder structure)
 
 Raster/vector layers live in `data/layers/` (GeoTIFF/GeoJSON files themselves are
