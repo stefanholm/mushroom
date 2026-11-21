@@ -40,6 +40,8 @@ npm run typecheck
 - **Expertläge**: arter med dödligt giftiga förväxlingsarter (murklor, champinjoner,
   vårmusseron/vårskivling, kremlor, spindelskivlingar m.fl.) visas bara när Expertläge är
   påslaget, alltid med ⚠-markering och sin varningstext (`expertMode` i `/api/meta`).
+- **🚗 Hitta bilen**: sparar bilens position (GPS eller kartens mitt) i localStorage och visar
+  avstånd + riktning dit — andra trycket på knappen rensar.
 - **Tryck på kartan** öppnar ett inspektionskort med score-faktorer från `/api/debug/cell`
   plus artens säkerhetskontroll (`note`) och förväxlingsvarning (`lookalikes`) — kartan
   släcker aldrig score för förväxlingsarter, utan visar varningen i stället.

@@ -242,3 +242,16 @@ button:disabled {
   font-size: 0.72rem;
   margin: 0.3rem 0 0;
 }
+#carBtn {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 0.4rem;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+#carInfo {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #1d4ed8;
+}

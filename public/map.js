@@ -14,6 +14,63 @@ const metaEl = document.getElementById("meta");
 const speciesInfo = document.getElementById("speciesInfo");
 const savePngBtn = document.getElementById("savePng");
 const inspectEl = document.getElementById("inspect");
+const carBtn = document.getElementById("carBtn");
+const carInfo = document.getElementById("carInfo");
+
+let carMarker = null;
+let carPos = null;
+let lastUser = null;
+try {
+  carPos = JSON.parse(localStorage.getItem("mushroom-car") || "null");
+} catch {}
+
+const haversineM = (a, b) => {
+  const R = 6371000;
+  const rad = Math.PI / 180;
+  const dLat = (b[1] - a[1]) * rad;
+  const dLon = (b[0] - a[0]) * rad;
+  const la1 = a[1] * rad;
+  const la2 = b[1] * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+const bearingDeg = (a, b) => {
+  const rad = Math.PI / 180;
+  const dLon = (b[0] - a[0]) * rad;
+  const la1 = a[1] * rad;
+  const la2 = b[1] * rad;
+  const y = Math.sin(dLon) * Math.cos(la2);
+  const x = Math.cos(la1) * Math.sin(la2) - Math.sin(la1) * Math.cos(la2) * Math.cos(dLon);
+  return (Math.atan2(y, x) / rad + 360) % 360;
+};
+const compass = (deg) => ["N", "NÖ", "Ö", "SÖ", "S", "SV", "V", "NV"][Math.round(deg / 45) % 8];
+
+function updateCarInfo() {
+  if (!carInfo) return;
+  if (!carPos) {
+    carInfo.textContent = "";
+    return;
+  }
+  if (lastUser) {
+    const d = haversineM(lastUser, carPos);
+    const b = bearingDeg(lastUser, carPos);
+    carInfo.textContent = `🚗 ${d < 1000 ? Math.round(d) + " m" : (d / 1000).toFixed(1) + " km"} åt ${compass(b)}`;
+  } else {
+    carInfo.textContent = "🚗 bilposition sparad";
+  }
+}
+
+function drawCar() {
+  if (!map) return;
+  if (carMarker) {
+    carMarker.remove();
+    carMarker = null;
+  }
+  if (carPos) {
+    carMarker = new maplibregl.Marker({ color: "#1d4ed8" }).setLngLat(carPos).addTo(map);
+  }
+  updateCarInfo();
+}
 
 const MONTHS = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 const seasonLabel = (s) => `${MONTHS[Math.max(0, Math.ceil(s[0]) - 1)]}–${MONTHS[Math.min(11, Math.ceil(s[1]) - 1)]}`;
@@ -275,9 +332,25 @@ function initMap(maplibregl) {
   map.addControl(geolocate);
   let autoZoomed = false;
   geolocate.on("geolocate", (e) => {
+    lastUser = [e.coords.longitude, e.coords.latitude];
+    updateCarInfo();
     if (autoZoomed) return;
     autoZoomed = true;
     map.flyTo({ center: [e.coords.longitude, e.coords.latitude], zoom: 11 });
+  });
+
+  carBtn.addEventListener("click", () => {
+    if (carPos) {
+      carPos = null;
+      localStorage.removeItem("mushroom-car");
+      drawCar();
+      return;
+    }
+    const c = lastUser ?? [map.getCenter().lng, map.getCenter().lat];
+    carPos = [Number(c[0]), Number(c[1])];
+    localStorage.setItem("mushroom-car", JSON.stringify(carPos));
+    drawCar();
+    map.flyTo({ center: carPos, zoom: Math.max(map.getZoom(), 16) });
   });
 
   map.on("load", () => {
@@ -286,6 +359,7 @@ function initMap(maplibregl) {
     rebuildHabitat();
     updateTrails();
     refreshMeta();
+    drawCar();
     geolocate.trigger();
   });
 
