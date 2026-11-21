@@ -390,6 +390,7 @@ function initMap(maplibregl) {
           ["GDD5 (eff.)", j.gddEff ?? "–"],
           ["Plasticity", j.plasticity ?? "–"],
           ["Fyndprior (Artportalen)", j.obsPrior ?? "–"],
+          ["Säsong", meta?.season ? seasonLabel(meta.season) : "–"],
         ]
       : [["Score", "kunde inte beräknas"]];
     const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));

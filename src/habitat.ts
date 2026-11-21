@@ -1492,14 +1492,18 @@ const SPECIES_MICROCLIMATE: Record<string, { waterIdeal: [number, number]; struc
   streckmusseron: { waterIdeal: [0.1, 0.5], structIdeal: [0.3, 0.85] },
   sommartryffel: { waterIdeal: [0.2, 0.6], structIdeal: [0.4, 0.9] },
 };
-// Teman för icke-expert-arter. Gratispaketet är medvetet litet (~8 arter, bara kantarell
-// som populär art) — resten ligger i packen nedan.
+// Teman för icke-expert-arter. Gratispaketet är medvetet litet och säsongstidigt
+// (kantarell + taggsvampar + sandsopp + brunsopp från juni; jättemusseron som FRIDLYST-info) —
+// tidiga vårarter (murklor, vårmusseron) ligger i expert-paketet pga dödliga förväxlingar.
 const SPECIES_PACK: Record<string, string> = {
   trattkantarell: "kantarell",
+  "svart-trumpetsvamp": "kantarell",
   "rodgul-trumpetsvamp": "kantarell",
   "rodgul-taggsvamp": "kantarell",
   "blek-kantarell": "kantarell",
   kruskantarell: "kantarell",
+  frostvaxing: "host-vinter",
+  ostronmussling: "host-vinter",
   karljohan: "soppar",
   smorsopp: "soppar",
   bjorksopp: "soppar",
@@ -1572,6 +1576,7 @@ const PACK_DEFS: [string, string, number, "species" | "all" | "pro"][] = [
   ["soppar", "Soppar & riskor", 39, "species"],
   ["ved-tickor", "Tickor & ved-svampar", 39, "species"],
   ["oppna", "Öppna marker & gläntor", 29, "species"],
+  ["host-vinter", "Höst & vinter", 29, "species"],
   ["expert", "Expertpaket (kontrollista krävs)", 49, "species"],
   ["all", "Alla arter", 99, "all"],
   ["pro", "Pro (allt + fläckvarning + offline)", 299, "pro"],
