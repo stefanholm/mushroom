@@ -314,6 +314,8 @@ function initMap(maplibregl) {
           ["Skog", j.inForest ? "ja" : "nej"],
           ["Vatten/väg/bebyggelse", j.excluded ? "för nära (0)" : "ok"],
           ["GDD5 (eff.)", j.gddEff ?? "–"],
+          ["Plasticity", j.plasticity ?? "–"],
+          ["Fyndprior (Artportalen)", j.obsPrior ?? "–"],
         ]
       : [["Score", "kunde inte beräknas"]];
     const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));

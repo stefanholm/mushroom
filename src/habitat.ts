@@ -1553,25 +1553,30 @@ export function staticHabitatScore(
     }
   }
 
+  const ageL = store.rasters.get("alder");
+  let ageV: number | null = null;
+  let fAge = 1;
+  if (ageL) {
+    const v = ageL.sampleSync(easting, northing);
+    if (v !== null) {
+      covered = true;
+      ageV = v;
+      const [lo, hi] = species.ageIdeal ?? [0, 250];
+      fAge = v < lo ? Math.max(0.2, lo > 0 ? v / lo : 1) : v > hi ? Math.max(0.5, 1 - (v - hi) / 80) : 1;
+    }
+  }
+
   const height = store.rasters.get("tradhojd");
   let fMaturity = 1;
   if (height) {
     const v = height.sampleSync(easting, northing);
     if (v !== null) {
       covered = true;
-      if (v < minTreeEff) return 0;
+      // Gamla men lågvuxna bestånd (hällmark/tallhed, där t.ex. jättemusseron trivs):
+      // hög ålder kompenserar för låg trädhöjd så låg plasticity inte straffar dem.
+      const relax = ageV !== null && ageV >= 80 ? 0.5 : 1;
+      if (v < minTreeEff * relax) return 0;
       fMaturity = clamp01((v - minTreeEff) / 16 + 0.35);
-    }
-  }
-
-  const ageL = store.rasters.get("alder");
-  let fAge = 1;
-  if (ageL) {
-    const v = ageL.sampleSync(easting, northing);
-    if (v !== null) {
-      covered = true;
-      const [lo, hi] = species.ageIdeal ?? [0, 250];
-      fAge = v < lo ? Math.max(0.2, lo > 0 ? v / lo : 1) : v > hi ? Math.max(0.5, 1 - (v - hi) / 80) : 1;
     }
   }
 
