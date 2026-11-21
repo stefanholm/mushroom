@@ -3,6 +3,7 @@ node_modules/
 dist/
 .DS_Store
 *.bak
+*.bak[0-9]*
 data/tiles/
 data/layers/*.tif
 data/layers/*.geojson
