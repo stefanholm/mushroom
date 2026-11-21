@@ -22,19 +22,20 @@ const SYSTEM_PROMPT =
   "Rekommendera bara lättidentifierade matsvampar utan dödligt giftiga dubbelgångare (t.ex. kantarell, karljohan, " +
   "trattkantarell, svart trumpetsvamp, rödgul trumpetsvamp, blek/rödgul taggsvamp, stolt fjällskivling, vårskivling, brunsopp). " +
   "Rekommendera aldrig murklor/Gyromitra, champinjoner (vit flugsvamp), små fjällskivlingar (Lepiota), " +
-  "vårmusseron (bolmörtsskivling) eller spindelskivlingar (Cortinarius). " +
+  "vårmusseron (bolmörtsskivling) eller spindelskivlingar (Cortinarius) som säkra — om användaren frågar om dem, " +
+  "svara bara med deras varnings-checklista (stenmurkla är ALLTID dödligt giftig och aldrig en matsvamp). " +
   "Goliatmusseron är FRIDLYST och rödlistad VU — rekommendera aldrig att plocka den. " +
   "Påminn alltid om att äta aldrig svamp man inte är 100 % säker på, och att vid misstanke om förgiftning kontakta " +
   "Giftinformationscentralen (112 vid akuta symtom).";
 
 const VERDICT_REQUEST =
-  /(ätlig|ätbar|äta (den|svampen)|plocka (den|svampen)|giftig|ofarlig|säker på|safe to eat|edible|poisonous|toxic)/iu;
+  /(ätlig|ätbar|äta|plocka|giftig|ofarlig|säker på|safe to eat|edible|poisonous|toxic)/iu;
 
 const SAFETY_CHECKLIST_REPLY =
   "Jag kan inte bekräfta att någon svamp är ätlig eller giftig utifrån en beskrivning — det kan vara livsfarligt fel. " +
   "Gör alltid så här:\n" +
   "1. Identifiera arten med en oberoende fälthandbok och kontrollera ALLA kännetecken: hatt, undersida (skivor/åsar/rör/taggar), fot, kött, mjölksaft, lukt och växtplats.\n" +
-  "2. Jämför alltid med dödligt giftiga dubbelgångare: vit flugsvamp och toppig giftspindling (har skivor), murklor (gyromitrin), små Lepiota, bolmörtsskivling, spindelskivlingar (Cortinarius).\n" +
+  "2. Jämför alltid med dödligt giftiga dubbelgångare: vit flugsvamp och toppig giftspindling (har skivor), stenmurkla och andra murklor/Gyromitra (gyromitrin — ALDRIG matsvamp), små Lepiota, bolmörtsskivling, spindelskivlingar (Cortinarius).\n" +
   "3. Är du inte 100 % säker — ät den inte.\n" +
   "4. Goliatmusseron är fridlyst (rödlistad VU) — plocka aldrig den.\n" +
   "5. Vid minsta misstanke om förgiftning: kontakta Giftinformationscentralen, tel 112 vid akuta symtom.\n" +
@@ -1267,6 +1268,7 @@ app.get("/api/meta", async (req, res) => {
     eatScore: species.eatScore,
     note: species.note,
     protected: !!species.protected,
+    expertMode: !!species.expertMode,
     season: [species.seasonStart, species.seasonEnd],
     speciesList: Object.entries(SPECIES).map(([id, s]) => ({
       id,
@@ -1275,6 +1277,7 @@ app.get("/api/meta", async (req, res) => {
       season: [s.seasonStart, s.seasonEnd],
       note: s.note,
       protected: !!s.protected,
+      expertMode: !!s.expertMode,
     })),
     rain14,
     rainFactor: rain14 === null ? 0.5 : Number(Math.min(1, rain14 / 60).toFixed(3)),

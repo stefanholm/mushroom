@@ -8,6 +8,7 @@ const sensInput = document.getElementById("sens");
 const sensLabel = document.getElementById("sensLabel");
 const trailsInput = document.getElementById("trails");
 const hillshadeInput = document.getElementById("hillshade");
+const expertInput = document.getElementById("expertMode");
 const basemapButtons = Array.from(document.querySelectorAll(".bm"));
 const metaEl = document.getElementById("meta");
 const speciesInfo = document.getElementById("speciesInfo");
@@ -27,8 +28,9 @@ function applySpeciesList(list) {
     b.type = "button";
     b.className = "pill" + (s.id === "kantarell" ? " on" : "");
     b.dataset.id = s.id;
-    b.title = `${s.label} — ätvärde ${s.eatScore}/5, säsong ${seasonLabel(s.season)}${s.protected ? " — FRIDLYST" : ""}`;
-    b.textContent = `${s.label.split(" (")[0]} ★${s.eatScore}`;
+    if (s.expertMode) b.dataset.expert = "1";
+    b.title = `${s.label} — ätvärde ${s.eatScore}/5, säsong ${seasonLabel(s.season)}${s.protected ? " — FRIDLYST" : ""}${s.expertMode ? " — EXPERT (dödligt giftiga förväxlingar)" : ""}`;
+    b.textContent = `${s.label.split(" (")[0]} ★${s.eatScore}${s.expertMode ? " ⚠" : ""}${s.protected ? " 🚫" : ""}`;
     b.addEventListener("click", () => {
       const wasOn = b.classList.contains("on");
       const on = Array.from(pillsEl.querySelectorAll("button.on"));
@@ -42,7 +44,21 @@ function applySpeciesList(list) {
     });
     pillsEl.appendChild(b);
   }
+  refreshExpertVisibility();
   updateSpeciesInfo();
+}
+
+function refreshExpertVisibility() {
+  const showExpert = expertInput && expertInput.checked;
+  for (const b of Array.from(pillsEl.querySelectorAll("button.pill"))) {
+    const isExpert = b.dataset.expert === "1";
+    b.style.display = isExpert && !showExpert ? "none" : "";
+    if (isExpert && !showExpert && b.classList.contains("on")) b.classList.remove("on");
+  }
+  if (Array.from(pillsEl.querySelectorAll("button.on")).length === 0) {
+    const k = pillsEl.querySelector('button[data-id="kantarell"]');
+    if (k) k.classList.add("on");
+  }
 }
 
 function updateSpeciesInfo() {
@@ -52,9 +68,9 @@ function updateSpeciesInfo() {
     .filter(Boolean);
   if (sel.length === 0) return;
   speciesInfo.textContent = sel
-    .map((s) => `${s.label.split(" (")[0]}: ★${s.eatScore}/5 · ${seasonLabel(s.season)} — ${s.note}${s.protected ? " ⚠ FRIDLYST" : ""}`)
+    .map((s) => `${s.label.split(" (")[0]}: ★${s.eatScore}/5 · ${seasonLabel(s.season)} — ${s.note}${s.protected ? " ⚠ FRIDLYST" : ""}${s.expertMode ? " ⚠ EXPERT" : ""}`)
     .join("\n");
-  speciesInfo.classList.toggle("warn", sel.some((s) => s.protected));
+  speciesInfo.classList.toggle("warn", sel.some((s) => s.protected || s.expertMode));
 }
 
 let map = null;
@@ -313,6 +329,11 @@ function initMap(maplibregl) {
   });
   trailsInput.addEventListener("change", updateTrails);
   hillshadeInput.addEventListener("change", updateHillshade);
+  expertInput.addEventListener("change", () => {
+    refreshExpertVisibility();
+    updateSpeciesInfo();
+    onSpeciesChange?.();
+  });
   for (const btn of basemapButtons) {
     btn.addEventListener("click", () => setBasemap(btn.dataset.basemap));
   }

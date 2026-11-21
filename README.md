@@ -29,7 +29,7 @@ npm run typecheck
 - **Chatt** — talks to `mistral-small-latest` via the official SDK; the server prepends a
   Swedish system prompt so answers come back in Swedish. The API key never leaves the server.
 - **Karta** — a MapLibre map of Sweden (basemap switch Terräng/OSM/Satellit) with a species
-  selector — 10 säkra matsvampar med ätvärde ★ och säsong i listan (kantarell, karljohan,
+  selector — **51 matsvampar** med ätvärde ★ och säsong i listan (kantarell, karljohan,
   jättemusseron som är fridlyst och varningsmarkeras, …) — plus a "Spara PNG"-knapp som
   exporterar kartvyn som PNG, and a heatmap overlay from
   `GET /api/tiles/habitat/{species}/{z}/{x}/{y}.png` (also `GET /api/hotspots?...` GeoJSON).
@@ -37,6 +37,9 @@ npm run typecheck
 ## Karta-funktioner
 
 - Artval: **flera samtidigt** via pill-knappar (max 4) — varje art får eget värmelager.
+- **Expertläge**: arter med dödligt giftiga förväxlingsarter (murklor, champinjoner,
+  vårmusseron/vårskivling, kremlor, spindelskivlingar m.fl.) visas bara när Expertläge är
+  påslaget, alltid med ⚠-markering och sin varningstext (`expertMode` i `/api/meta`).
 - **Spara PNG** exporterar kartvyn som bild.
 - `GET /api/peaks?species=...&minLon=...&minScore=80` — GeoJSON med lokala score-toppar
   (för PNG-ikoner/symbol-lager i t.ex. Xcode-appen).
