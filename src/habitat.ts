@@ -1647,11 +1647,12 @@ export const SOLO_ONLY_SPECIES = ["jattemusseron"];
 export const MAX_REVIEW_CLAIMS = 1;
 export const MAX_REFERRAL_CLAIMS = 2;
 export const MAX_REWARD_CLAIMS = MAX_REVIEW_CLAIMS + MAX_REFERRAL_CLAIMS;
-// Topplista i shopen: de 5 mest populära arterna som enskilda köp (gratis eller 10 kr).
-// Får aldrig innehålla reward-pool-arter (valideras nedan).
-export const TOP_PICKS: string[] = ["kantarell", "karljohan", "trattkantarell", "svart-trumpetsvamp", "rodbrun-stensopp"];
+// Topplista i shopen: de 5 mest populära arterna som enskilda BETALDA köp (10 kr).
+// Gratisarter (kantarell m.fl.) och reward-pool-arter får inte vara med (valideras nedan).
+export const TOP_PICKS: string[] = ["karljohan", "trattkantarell", "svart-trumpetsvamp", "rodbrun-stensopp", "rodgul-trumpetsvamp"];
 for (const id of TOP_PICKS) {
   if (REVIEW_REWARD_SPECIES.includes(id)) throw new Error(`Toppliste-art ${id} får inte vara i reward-poolen`);
+  if (!SPECIES[id]?.pack) throw new Error(`Toppliste-art ${id} är gratis — ska inte synas som betalt köp`);
 }
 export function isValidSingleClaim(id: string): boolean {
   return !!SPECIES[id] && !!SPECIES[id].pack && !SOLO_ONLY_SPECIES.includes(id);
