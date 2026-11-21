@@ -13,8 +13,11 @@ säkerhet ALLTID är gratis.
 
 ## Föreslaget innehåll
 
-### Gratis (bas)
-- Karta + värmelager för alla säkra arter (ej expertarter) — online.
+### Gratis (bas) — medvetet litet paket (~8 arter)
+- Gratisarter: **kantarell**, svart trumpetsvamp, blek taggsvamp, brunsopp, sandsopp,
+  frostvaxing, ostronmussling, jättemusseron (FRIDLYST-info). Bara kantarell som "populär" art —
+  karljohan/trattkantarell m.fl. ligger i packen.
+- Karta + värmelager för gratisarterna — online.
 - Chatt: 20 frågor/dag (säkerhetsreglerna alltid på).
 - Stigar, Terrängskugga, Spara PNG, tryck-inspektion (`/api/debug/cell`), Hitta bilen.
 - 1 region online (valfri, t.ex. ditt eget län).

@@ -1492,10 +1492,19 @@ const SPECIES_MICROCLIMATE: Record<string, { waterIdeal: [number, number]; struc
   streckmusseron: { waterIdeal: [0.1, 0.5], structIdeal: [0.3, 0.85] },
   sommartryffel: { waterIdeal: [0.2, 0.6], structIdeal: [0.4, 0.9] },
 };
-// Teman för icke-expert-arter (fria staple-arter har inget pack).
+// Teman för icke-expert-arter. Gratispaketet är medvetet litet (~8 arter, bara kantarell
+// som populär art) — resten ligger i packen nedan.
 const SPECIES_PACK: Record<string, string> = {
+  trattkantarell: "kantarell",
+  "rodgul-trumpetsvamp": "kantarell",
+  "rodgul-taggsvamp": "kantarell",
   "blek-kantarell": "kantarell",
   kruskantarell: "kantarell",
+  karljohan: "soppar",
+  smorsopp: "soppar",
+  bjorksopp: "soppar",
+  blomkalssvamp: "ved-tickor",
+  judasora: "ved-tickor",
   "rodbrun-stensopp": "soppar",
   "finluden-stensopp": "soppar",
   blodsopp: "soppar",
