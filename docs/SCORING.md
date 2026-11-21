@@ -132,6 +132,10 @@ D = seasonalFactor × rainFactor × frost × flush
   GDD-kuvert; hög plasticity (trattkantarell 0.9, kantarell 0.85) → plattare kurvor,
   mjukare hårda trösklar (`minHostVolume × (1−0.6p)`, `minTreeHeight × (1−0.5p)`) och
   GDD-kuvertet breddas med `150·p`.
+- **TWI + lutning**: `twi_10m.tif` (ln(a/tan β), D8/SAGA från 2 m-DEM) blir egen S_env-faktor
+  (vikt 0.08, `twiIdeal` per art, default [5,11]); `slope_10m.tif` (grader, Horn/gdaldem)
+  viktas in i fTerrain (0.7/0.3, `slopeIdeal` per art, default [0,30]). Saknas lagren →
+  faktorn = 1. Demo: `npm run demo-data`; riktiga: se README (gdaldem slope + SAGA TWI).
 - **Observationsprior**: `data/validation/observations.geojson` (från `npm run artfakta`)
   laddas i ett rutnät (0.05°) per art; score × (1 + 0.35·exp(−(d/250 m)²)) nära riktiga fynd.
   Ingår i tiles och `/api/debug/cell` (`obsPrior`).

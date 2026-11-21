@@ -74,6 +74,22 @@ KALIBRERA, skyddsklassade arter med brusade koordinater markeras separat).
 Artfakta-API:t kräver prenumerationsnyckel; `speciesdata/assessments` och
 `natureconservation` tas ur bruk jan 2027 (använd Taxon List Service API v2 för listor).
 
+## TWI + lutning från höjdmodellen
+
+`npm run demo-data` genererar även `twi_10m.tif` och `slope_10m.tif` (D8-ackumulering +
+Horn-lutning på demo-DEM:en). För riktiga 2 m-DEM på din Mac:
+
+```
+gdaldem slope -compute_edges -of GTiff data/layers/hojdmodell_2m.tif data/layers/slope_2m.tif
+gdalwarp -overwrite -tr 10 10 -r bilinear data/layers/slope_2m.tif data/layers/slope_10m.tif
+saga_cmd ta_hydrology "Topographic Wetness Index (TWI)" -DEM data/layers/hojdmodell_2m.tif -TWI data/layers/twi_2m.tif -SCA data/layers/sca_2m.tif
+gdalwarp -overwrite -tr 10 10 -r bilinear data/layers/twi_2m.tif data/layers/twi_10m.tif
+rm -f data/layers/slope_2m.tif data/layers/twi_2m.tif data/layers/sca_2m.tif
+```
+
+Båda lagren är valfria — saknas de i `manifest.json`/`data/layers` hoppas faktorn över
+(default 1). Per art sätts `twiIdeal`/`slopeIdeal` i `src/habitat.ts`.
+
 ## Data layers (folder structure)
 
 Raster/vector layers live in `data/layers/` (GeoTIFF/GeoJSON files themselves are

@@ -27,6 +27,8 @@ export type SpeciesProfile = {
   expertMode?: boolean;
   lookalikes?: string;
   plasticity?: number;
+  twiIdeal?: [number, number];
+  slopeIdeal?: [number, number];
 };
 
 export const SPECIES: Record<string, SpeciesProfile> = {
@@ -1416,6 +1418,44 @@ const PLASTICITY: Record<string, number> = {
   rimskivling: 0.45,
   "rodnande-blacksvamp": 0.5,
 };
+// TWI-ideal per art (topografiskt fuktindex från DEM; default [5,11]).
+// Fuktälskare: fuktiga svackor/hällmarkskanter. Torrt: sandiga åsar/hedar.
+const TWI_IDEAL: Record<string, [number, number]> = {
+  trattkantarell: [8, 15],
+  "svart-trumpetsvamp": [8, 13],
+  blomkalssvamp: [8, 14],
+  frostvaxing: [8, 14],
+  sotvaxing: [9, 15],
+  granblodriska: [8, 14],
+  "zonerad-granblodriska": [9, 15],
+  citronslemskivling: [8, 14],
+  judasora: [9, 16],
+  ostronmussling: [7, 15],
+  "blek-ostronmussling": [7, 15],
+  honungsskivling: [7, 14],
+  "rokslojskivling": [8, 15],
+  vinterskivling: [7, 14],
+  sandsopp: [3, 8],
+  grynsopp: [4, 9],
+  "rodbrun-stensopp": [3, 8],
+  tallskrubb: [4, 9],
+  "stolt-fjallskivling": [3, 8],
+  "snobolischampinjon": [3, 8],
+  "fjallig-blacksvamp": [3, 9],
+  "jatteroksvamp": [3, 8],
+  streckmusseron: [3, 8],
+  jattemusseron: [3, 8],
+  tallblodriska: [4, 9],
+  blodriska: [4, 9],
+};
+// Lutningsideal i grader (default [0,30]). Plan mark för ängs-/gläntsarter.
+const SLOPE_IDEAL: Record<string, [number, number]> = {
+  blomkalssvamp: [0, 15],
+  "fjallig-blacksvamp": [0, 10],
+  "jatteroksvamp": [0, 8],
+  "snobolischampinjon": [0, 8],
+  "stolt-fjallskivling": [0, 12],
+};
 for (const [k, s] of Object.entries(SPECIES)) {
   const sf = SEASON_FROM_OBS[k];
   if (sf) {
@@ -1430,6 +1470,10 @@ for (const [k, s] of Object.entries(SPECIES)) {
   if (lk) s.lookalikes = lk;
   const pl = PLASTICITY[k];
   if (pl !== undefined) s.plasticity = pl;
+  const tw = TWI_IDEAL[k];
+  if (tw) s.twiIdeal = tw;
+  const sl = SLOPE_IDEAL[k];
+  if (sl) s.slopeIdeal = sl;
 }
 
 const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
@@ -1621,6 +1665,18 @@ export function staticHabitatScore(
     }
   }
 
+  const twiL = store.rasters.get("twi");
+  let fTWI = 1;
+  if (twiL) {
+    const v = twiL.sampleSync(easting, northing);
+    if (v !== null) {
+      covered = true;
+      const [lo, hi] = species.twiIdeal ?? [5, 11];
+      const dist = v < lo ? lo - v : v > hi ? v - hi : 0;
+      fTWI = clamp01(1 - dist / 4);
+    }
+  }
+
   const moisture = store.rasters.get("markfuktighet");
   let fMoisture = 1;
   if (moisture) {
@@ -1683,6 +1739,20 @@ export function staticHabitatScore(
     }
   }
 
+  // Lutning (grader) från DEM: kombineras med terrängfaktorn ovan.
+  const slopeL = store.rasters.get("slope");
+  let fSlope = 1;
+  if (slopeL) {
+    const sv = slopeL.sampleSync(easting, northing);
+    if (sv !== null) {
+      covered = true;
+      const [lo, hi] = species.slopeIdeal ?? [0, 30];
+      const dist = sv < lo ? lo - sv : sv > hi ? sv - hi : 0;
+      fSlope = clamp01(1 - dist / 15);
+      fTerrain = clamp01(0.7 * fTerrain + 0.3 * fSlope);
+    }
+  }
+
   // Plasticity styr kurvornas skärpa: hög plasticity -> låga exponenter (platt, förlåtande),
   // låg plasticity -> höga exponenter + högre golv (nästan binärt: exakt dessa faktorer krävs).
   const sharp = 1.8 - 1.6 * plast;
@@ -1690,14 +1760,15 @@ export function staticHabitatScore(
   const soft = (x: number) => Math.max(floor, x);
   const sEnv =
     100 *
-    Math.pow(soft(fMoisture), 0.26 * sharp) *
-    Math.pow(soft(fAge), 0.18 * sharp) *
-    Math.pow(soft(fCanopy), 0.12 * sharp) *
-    Math.pow(soft(fSoil), 0.1 * sharp) *
-    Math.pow(soft(fSIS), 0.08 * sharp) *
-    Math.pow(soft(fClimate), 0.08 * sharp) *
-    Math.pow(soft(fDepth), 0.08 * sharp) *
-    Math.pow(soft(fTerrain), 0.1 * sharp);
+    Math.pow(soft(fMoisture), 0.24 * sharp) *
+    Math.pow(soft(fAge), 0.16 * sharp) *
+    Math.pow(soft(fCanopy), 0.11 * sharp) *
+    Math.pow(soft(fSoil), 0.09 * sharp) *
+    Math.pow(soft(fSIS), 0.07 * sharp) *
+    Math.pow(soft(fClimate), 0.07 * sharp) *
+    Math.pow(soft(fDepth), 0.07 * sharp) *
+    Math.pow(soft(fTerrain), 0.09 * sharp) *
+    Math.pow(soft(fTWI), 0.08 * sharp);
   if (dbg) {
     Object.assign(dbg, {
       hostVol,
@@ -1712,6 +1783,8 @@ export function staticHabitatScore(
       gddEff: gddEff === null ? undefined : Math.round(gddEff),
       fSoil,
       fTerrain,
+      fSlope,
+      fTWI,
       sEnv: Number(sEnv.toFixed(2)),
       covered,
     });

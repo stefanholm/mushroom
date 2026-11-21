@@ -137,6 +137,43 @@ await writeRaster("jordart_10m.tif", jordart, 8, 1);
 await writeRaster("hojdmodell_2m.tif", hojd, 32, 3);
 await writeRaster("skog_alder_10m.tif", alder, 32, 3);
 
+// TWI (topografiskt fuktindex, ln(a/tan β)) och lutning (Horn, grader) från demo-DEM:en.
+// Riktiga data: se README (gdaldem slope + SAGA TWI på hojdmodell_2m.tif, resampla till 10 m).
+const nod = -9999;
+const slope = new Float32Array(n).fill(nod);
+const twi = new Float32Array(n).fill(nod);
+const at = (i, j) => (i < 0 || j < 0 || i >= width || j >= height ? nod : hojd[j * width + i]);
+for (let j = 0; j < height; j++) {
+  for (let i = 0; i < width; i++) {
+    const k = j * width + i;
+    const z = hojd[k];
+    if (z === nod) continue;
+    const dzdx = ((at(i + 1, j - 1) + 2 * at(i + 1, j) + at(i + 1, j + 1)) - (at(i - 1, j - 1) + 2 * at(i - 1, j) + at(i - 1, j + 1))) / (8 * res);
+    const dzdy = ((at(i - 1, j + 1) + 2 * at(i, j + 1) + at(i + 1, j + 1)) - (at(i - 1, j - 1) + 2 * at(i, j - 1) + at(i + 1, j - 1))) / (8 * res);
+    slope[k] = Math.atan(Math.hypot(dzdx, dzdy)) * 180 / Math.PI;
+  }
+}
+// D8 flow accumulation (sortera högt->lågt, varje cell ger vidare sin ackumulerade area till lägsta grannen)
+const acc = new Float64Array(n);
+for (let k = 0; k < n; k++) acc[k] = hojd[k] === nod ? 0 : res * res;
+const order = Array.from({ length: n }, (_, k) => k).sort((a, b) => hojd[b] - hojd[a]);
+const nbrs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+for (const k of order) {
+  const z = hojd[k];
+  if (z === nod || acc[k] === 0) continue;
+  const i = k % width, j = Math.floor(k / width);
+  let best = -1, bestZ = z;
+  for (const [di, dj] of nbrs) {
+    const zi = at(i + di, j + dj);
+    if (zi !== nod && zi < bestZ) { bestZ = zi; best = (j + dj) * width + (i + di); }
+  }
+  if (best >= 0) acc[best] += acc[k];
+  const s = Math.max(0.5, slope[k]) * Math.PI / 180;
+  twi[k] = Math.log((acc[k] / res) / Math.tan(s));
+}
+await writeRaster("twi_10m.tif", twi, 32, 3);
+await writeRaster("slope_10m.tif", slope, 32, 3);
+
 const clearcutSquare = (lon0, lat0, lon1, lat1) => {
   const pts = [
     [lon0, lat0],
@@ -223,6 +260,8 @@ const manifest = {
     },
     { id: "hojd", file: "hojdmodell_2m.tif", nodata: -9999, band: 1 },
     { id: "alder", file: "skog_alder_10m.tif", nodata: -9999, band: 1 },
+    { id: "twi", file: "twi_10m.tif", nodata: -9999, band: 1 },
+    { id: "slope", file: "slope_10m.tif", nodata: -9999, band: 1 },
   ],
   vectors: [
     { id: "avverkningar", file: "avverkningar_senaste_5ar.geojson", crs: "EPSG:3006" },
