@@ -134,6 +134,7 @@ button:disabled {
   color: #555;
 }
 #map {
+  position: relative;
   flex: 1;
   border-radius: 0.5rem;
   border: 1px solid #ddd;
@@ -200,4 +201,44 @@ button:disabled {
 }
 .species-info {
   white-space: pre-line;
+}
+#inspect {
+  position: absolute;
+  right: 0.6rem;
+  bottom: 0.6rem;
+  z-index: 5;
+  max-width: 320px;
+  max-height: 70%;
+  overflow: auto;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #bbb;
+  border-radius: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  font-size: 0.82rem;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+#inspect table {
+  border-collapse: collapse;
+  margin: 0.3rem 0;
+}
+#inspect td {
+  padding: 0 0.5rem 0 0;
+  vertical-align: top;
+}
+#inspect .insp-note {
+  white-space: pre-line;
+  margin: 0.3rem 0;
+}
+#inspect .insp-warn {
+  background: #fdecea;
+  border: 1px solid #e31a1c;
+  border-radius: 0.3rem;
+  padding: 0.3rem 0.4rem;
+  color: #842029;
+  margin: 0.3rem 0;
+}
+#inspect .insp-small {
+  color: #666;
+  font-size: 0.72rem;
+  margin: 0.3rem 0 0;
 }

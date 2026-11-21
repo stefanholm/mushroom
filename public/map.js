@@ -13,6 +13,7 @@ const basemapButtons = Array.from(document.querySelectorAll(".bm"));
 const metaEl = document.getElementById("meta");
 const speciesInfo = document.getElementById("speciesInfo");
 const savePngBtn = document.getElementById("savePng");
+const inspectEl = document.getElementById("inspect");
 
 const MONTHS = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 const seasonLabel = (s) => `${MONTHS[Math.max(0, Math.ceil(s[0]) - 1)]}–${MONTHS[Math.min(11, Math.ceil(s[1]) - 1)]}`;
@@ -286,6 +287,45 @@ function initMap(maplibregl) {
     updateTrails();
     refreshMeta();
     geolocate.trigger();
+  });
+
+  map.on("click", async (e) => {
+    if (!inspectEl) return;
+    const sp = selectedSpecies()[0];
+    const d = selectedDate();
+    const q = new URLSearchParams({
+      lat: e.lngLat.lat.toFixed(5),
+      lon: e.lngLat.lng.toFixed(5),
+      species: sp,
+    });
+    if (d) q.set("date", d);
+    let j = null;
+    try {
+      const r = await fetch("/api/debug/cell?" + q);
+      if (r.ok) j = await r.json();
+    } catch {}
+    const meta = speciesList?.find((s) => s.id === sp);
+    const rows = j
+      ? [
+          ["Score", String(j.score)],
+          ["Säsong", String(j.seasonFactor)],
+          ["Regn 14 d", j.rain14 === null ? "okänt" : j.rain14.toFixed(1) + " mm"],
+          ["Frost", String(j.frost)],
+          ["Skog", j.inForest ? "ja" : "nej"],
+          ["Vatten/väg/bebyggelse", j.excluded ? "för nära (0)" : "ok"],
+          ["GDD5 (eff.)", j.gddEff ?? "–"],
+        ]
+      : [["Score", "kunde inte beräknas"]];
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    inspectEl.innerHTML =
+      `<button id="inspectClose" type="button" style="float:right">✕</button>` +
+      `<b>${esc(meta?.label ?? sp)}</b> ★${meta?.eatScore ?? "?"} ${meta?.protected ? "🚫 FRIDLYST" : ""}${meta?.expertMode ? "⚠ EXPERT" : ""}` +
+      `<table>${rows.map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join("")}</table>` +
+      (meta?.note ? `<p class="insp-note">${esc(meta.note)}</p>` : "") +
+      (meta?.lookalikes ? `<p class="insp-warn">⚠ Förväxlingsvarning: ${esc(meta.lookalikes)}</p>` : "") +
+      `<p class="insp-small">Habitatkarta — inte en plockningsinstruktion. Ät aldrig svamp du inte är 100 % säker på.</p>`;
+    inspectEl.hidden = false;
+    document.getElementById("inspectClose").addEventListener("click", () => (inspectEl.hidden = true));
   });
 
   window.addEventListener("resize", () => map.resize());

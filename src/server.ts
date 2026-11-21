@@ -1269,6 +1269,7 @@ app.get("/api/meta", async (req, res) => {
     note: species.note,
     protected: !!species.protected,
     expertMode: !!species.expertMode,
+    lookalikes: species.lookalikes ?? null,
     season: [species.seasonStart, species.seasonEnd],
     speciesList: Object.entries(SPECIES).map(([id, s]) => ({
       id,
@@ -1278,6 +1279,7 @@ app.get("/api/meta", async (req, res) => {
       note: s.note,
       protected: !!s.protected,
       expertMode: !!s.expertMode,
+      lookalikes: s.lookalikes ?? null,
     })),
     rain14,
     rainFactor: rain14 === null ? 0.5 : Number(Math.min(1, rain14 / 60).toFixed(3)),

@@ -25,6 +25,7 @@ export type SpeciesProfile = {
   woodHost?: boolean;
   protected?: boolean;
   expertMode?: boolean;
+  lookalikes?: string;
 };
 
 export const SPECIES: Record<string, SpeciesProfile> = {
@@ -1363,6 +1364,35 @@ const DEPTH_IDEAL: Record<string, [number, number]> = {
   granblodriska: [0.8, 6],
   jattemusseron: [0, 100],
 };
+// Dödliga/farliga förväxlingsarter per art — visas som safetyCheck i UI/chatt.
+// Kartan släcker ALDRIG score för förväxlingsarter (de delar biotop med matsvampen);
+// varningen visas i stället på artkort och vid tryck på kartan.
+const LOOKALIKES: Record<string, string> = {
+  kantarell: "Narrkantarell (ofarlig — riktiga tunna skivor). Inga dödligt giftiga dubbelgångare när åsarna syns.",
+  trattkantarell: "Toppig giftspindling (Cortinarius rubellus) — dödligt giftig, tunna skivor (ej åsar), samma mossa.",
+  karljohan: "Gallsopp — besk men ej giftig (mörkt nät vs karljohans vita ådernät, rör vs porer).",
+  "svart-trumpetsvamp": "Inga kända dödligt giftiga dubbelgångare i Sverige.",
+  "blek-taggsvamp": "Inga dödligt giftiga taggsvampar i Sverige.",
+  "rodgul-taggsvamp": "Inga dödligt giftiga taggsvampar i Sverige.",
+  "blek-kantarell": "Narrkantarell (ofarlig). Inga dödligt giftiga dubbelgångare.",
+  "stolt-fjallskivling": "Små fjällskivlingar (Lepiota) — potentiellt dödligt giftiga; kontrollera rörlig dubbelring + vattrad fot.",
+  varskivling: "Bolmörtsskivling (Entoloma sinuatum) — dödligt giftig; giftrödling (Inocybe erubescens). Mjöldoft + täta vita skivor skiljer.",
+  varmusseron: "Bolmörtsskivling (Entoloma sinuatum) — dödligt giftig; giftrödling (Inocybe erubescens). Samma art som vårskivling.",
+  toppmurkla: "Stenmurkla (Gyromitra esculenta) — dödligt giftig (gyromitrin), hjärnlik; murklan måste vara helt ihålig.",
+  "rund-toppmurkla": "Stenmurkla (Gyromitra esculenta) — dödligt giftig (gyromitrin), hjärnlik; murklan måste vara helt ihålig.",
+  sillkremla: "Vissa kremlor är giftiga — smakprov: besk/brännande = kasta.",
+  mandelkremla: "Vissa kremlor är giftiga — smakprov: besk/brännande = kasta.",
+  gronkremla: "Lömsk flugsvamp (Amanita phalloides) — dödligt giftig; kontrollera att det saknas både ring och strumpa.",
+  "rokslojskivling": "Gifthätting (Galerina marginata) — dödligt giftig på samma stubbar; gråaktiga skivor + mild smak skiljer.",
+  vinterskivling: "Gifthätting (Galerina marginata) — dödligt giftig på samma ved; sammetssvart fot + vitt sporpulver skiljer.",
+  honungsskivling: "Gifthätting (Galerina marginata) — dödligt giftig; tydlig vit ring + honungsgul fjällhatt skiljer. Koka och häll av vattnet.",
+  rimskivling: "Toppig giftspindling (Cortinarius rubellus) & praktspindling (C. orellanus) — dödligt giftiga.",
+  "snobolischampinjon": "Vit flugsvamp (Amanita virosa/phalloides) — dödligt giftig, alltid vita skivor + strumpa; karbolchampinjon (gulnar vid tryck).",
+  "rodnande-blacksvamp": "Panterflugsvamp (Amanita pantherina) & lömsk flugsvamp — dödligt giftiga; kött rodnar vid snitt. Alltid tillagad.",
+  svavelticka: "Får ALDRIG plockas från idegran/barrträd (giftig) — endast lövträd, unga mjuka exemplar.",
+  blodriska: "Alla orange mjölksaft-blödande riskor är ätliga — ingen dödligt giftig dubbelgångare.",
+  tallblodriska: "Alla orange mjölksaft-blödande riskor är ätliga — ingen dödligt giftig dubbelgångare.",
+};
 for (const [k, s] of Object.entries(SPECIES)) {
   const sf = SEASON_FROM_OBS[k];
   if (sf) {
@@ -1373,6 +1403,8 @@ for (const [k, s] of Object.entries(SPECIES)) {
   if (g) s.gddEnvelope = g;
   const d = DEPTH_IDEAL[k];
   if (d) s.depthIdeal = d;
+  const lk = LOOKALIKES[k];
+  if (lk) s.lookalikes = lk;
 }
 
 const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
