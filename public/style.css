@@ -339,3 +339,16 @@ button:disabled {
   border-color: #9db8a4;
   cursor: default;
 }
+.shop-img {
+  width: 100%;
+  height: 110px;
+  object-fit: contain;
+  border-radius: 0.35rem;
+  background: #f4f1ea;
+  margin-bottom: 0.4rem;
+}
+#singleSpeciesSelect {
+  margin: 0.4rem 0.5rem 0.4rem 0;
+  padding: 0.3rem;
+  max-width: 320px;
+}

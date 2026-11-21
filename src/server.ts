@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
 import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
-import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
+import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
 
 // Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
 // I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
@@ -25,6 +25,9 @@ function resolveEntitlements(req: express.Request): Set<string> {
     if (e.startsWith("reward:")) {
       const id = e.slice(7);
       if (isValidRewardClaim(id)) out.add(e);
+    } else if (e.startsWith("species:")) {
+      const id = e.slice(8);
+      if (isValidSingleClaim(id)) out.add(e);
     } else {
       out.add(e);
     }
@@ -1836,10 +1839,35 @@ app.get("/api/shop", (_req, res) => {
   res.json({
     packs: Object.values(PACKS)
       .filter((p) => p.forSale)
-      .map((p) => ({ id: p.id, label: p.label, priceSek: p.priceSek, kind: p.kind, species: p.species })),
+      .map((p) => {
+        const top = [...p.species].sort((a, b) => (SPECIES[b]?.eatScore ?? 0) - (SPECIES[a]?.eatScore ?? 0))[0];
+        return {
+          id: p.id,
+          label: p.label,
+          priceSek: p.priceSek,
+          kind: p.kind,
+          species: p.species,
+          image: top ? `/icons/${top}.png` : null,
+          topSpecies: top ?? null,
+        };
+      }),
     reviewRewardSpecies: REVIEW_REWARD_SPECIES,
     freeSpecies: Object.entries(SPECIES).filter(([, s]) => !s.pack).map(([id]) => id),
+    singlePriceSek: SINGLE_PRICE_SEK,
+    soloOnlySpecies: SOLO_ONLY_SPECIES,
+    singles: Object.entries(SPECIES)
+      .filter(([id, s]) => s.pack && isValidSingleClaim(id))
+      .map(([id, s]) => ({ id, label: s.label, eatScore: s.eatScore })),
   });
+});
+
+// Dev-läge: köp enskild svamp (10 kr). I produktion: StoreKit-produkt per art + server-validerat kvitto.
+app.post("/api/single/claim", (req, res) => {
+  const id = String(req.body?.species ?? "");
+  if (!isValidSingleClaim(id)) {
+    return res.status(403).json({ error: "Arten kan inte köpas enskilt (endast via sitt paket).", soloOnly: SOLO_ONLY_SPECIES });
+  }
+  res.json({ ok: true, entitlements: `species:${id}`, unlocked: id, priceSek: SINGLE_PRICE_SEK });
 });
 
 // Vilka arter är upplåsta för dessa entitlements? (klienten kan synka detta efter köp)

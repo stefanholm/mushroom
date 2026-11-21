@@ -560,6 +560,13 @@ window.MushroomBilling = {
         body: JSON.stringify({ species: id.slice(7) }),
       });
       if (!r.ok) throw new Error("Belöningen kunde inte låsas upp (arten är inte i poolen).");
+    } else if (id.startsWith("species:")) {
+      const r = await fetch("/api/single/claim", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ species: id.slice(8) }),
+      });
+      if (!r.ok) throw new Error("Arten kan inte köpas enskilt.");
     }
     addEntitlement(id);
     updateShopBadge();
@@ -594,7 +601,11 @@ async function renderShop() {
     const card = document.createElement("div");
     card.className = "shop-card";
     const names = (p.species ?? []).slice(0, 8).map(labelOf).join(", ") + (p.species.length > 8 ? " …" : "");
+    const imgHtml = p.image
+      ? `<img class="shop-img" src="${p.image}" alt="" loading="lazy" onerror="this.style.display='none'" />`
+      : "";
     card.innerHTML =
+      imgHtml +
       `<h3>${p.label}</h3>` +
       `<div class="shop-price">${p.priceSek} kr${p.kind === "pro" ? " /år" : ""}</div>` +
       `<div class="shop-kind">${p.kind === "mixed" ? "Blandad korg" : p.kind === "regional" ? "Områdespack" : p.kind === "solo" ? "Solo-premium" : p.kind === "pro" ? "Prenumeration" : "Alla arter"} · ${p.species.length} arter</div>` +
@@ -621,6 +632,42 @@ async function renderShop() {
     grid.appendChild(card);
   }
   updateShopBadge();
+
+  // Rullista: köp enskild svamp (10 kr) — alla låsta arter utom solo-only (jattemusseron)
+  const singleWrap = document.createElement("div");
+  singleWrap.className = "shop-card";
+  singleWrap.style.gridColumn = "1 / -1";
+  const sel = document.createElement("select");
+  sel.id = "singleSpeciesSelect";
+  for (const s of shop.singles ?? []) {
+    const opt = document.createElement("option");
+    opt.value = s.id;
+    opt.textContent = `${labelOf(s.id)} ★${s.eatScore}`;
+    sel.appendChild(opt);
+  }
+  const buySingle = document.createElement("button");
+  buySingle.type = "button";
+  buySingle.className = "shop-buy-btn";
+  buySingle.textContent = `Köp enskild svamp — ${shop.singlePriceSek ?? 10} kr`;
+  buySingle.addEventListener("click", async () => {
+    const id = sel.value;
+    if (!id) return;
+    buySingle.disabled = true;
+    try {
+      await window.MushroomBilling.purchase("species:" + id);
+      renderShop();
+      if (speciesList) applySpeciesList(speciesList);
+      rebuildHabitat();
+      refreshMeta();
+    } catch (e) {
+      alert(e.message);
+      buySingle.disabled = false;
+    }
+  });
+  singleWrap.innerHTML = `<h3>Köp en enskild svamp</h3><div class="shop-kind">${(shop.singles ?? []).length} arter à ${shop.singlePriceSek ?? 10} kr — ${shop.soloOnlySpecies?.join(", ") ?? ""} säljs bara via solo-paket</div>`;
+  singleWrap.appendChild(sel);
+  singleWrap.appendChild(buySingle);
+  grid.appendChild(singleWrap);
 }
 
 function closeShop() {

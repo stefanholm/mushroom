@@ -1619,16 +1619,35 @@ export const PACKS: Record<string, PackInfo> = Object.fromEntries(
 );
 
 // true om arten är upplåst med givna entitlements (tomma = gratisversionen).
-// "reward:<id>" gäller bara för arter i REVIEW_REWARD_SPECIES (valideras i server.ts).
+// "reward:<id>" gäller bara REVIEW_REWARD_SPECIES; "species:<id>" gäller alla låsta arter
+// UTOM SOLO_ONLY (valideras i server.ts).
 export function isSpeciesUnlocked(id: string, ents: Set<string>): boolean {
   const s = SPECIES[id];
   if (!s) return false;
   if (!s.pack) return true;
-  return ents.has("pro") || ents.has("all") || ents.has(s.pack) || ents.has("reward:" + id);
+  return (
+    ents.has("pro") ||
+    ents.has("all") ||
+    ents.has(s.pack) ||
+    ents.has("reward:" + id) ||
+    ents.has("species:" + id)
+  );
 }
 
 export function isValidRewardClaim(id: string): boolean {
   return REVIEW_REWARD_SPECIES.includes(id);
+}
+
+// Enskild svamp à detta pris (köp via "species:<id>"); jattemusseron säljs bara via solo-paketet.
+export const SINGLE_PRICE_SEK = 10;
+export const SOLO_ONLY_SPECIES = ["jattemusseron"];
+export function isValidSingleClaim(id: string): boolean {
+  return !!SPECIES[id] && !!SPECIES[id].pack && !SOLO_ONLY_SPECIES.includes(id);
+}
+
+// Alla reward-arter måste ligga i något pack (annars går de bara att få via belöning).
+for (const id of REVIEW_REWARD_SPECIES) {
+  if (!SPECIES_PACK[id]) throw new Error(`Reward-art ${id} saknar pack`);
 }
 
 const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
