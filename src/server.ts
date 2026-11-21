@@ -7,7 +7,28 @@ import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
 import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
-import { SPECIES, effectiveGdd5, hostFallback, seasonalFactor, staticHabitatScore } from "./habitat.js";
+import { SPECIES, PACKS, effectiveGdd5, hostFallback, isSpeciesUnlocked, seasonalFactor, staticHabitatScore } from "./habitat.js";
+
+// Entitlements skickas som ?entitlements=pro,expert (csv). I produktion ska detta INTE
+// litas på från klienten — validera App Store-kvittot server-side (App Store Server API /
+// StoreKit 2) och sätt entitlements där. Här är det dev/test-läge.
+function resolveEntitlements(req: express.Request): Set<string> {
+  return new Set(
+    String(req.query.entitlements ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+}
+
+function gateSpecies(req: express.Request, keys: string[]): string[] {
+  const ents = resolveEntitlements(req);
+  return keys.filter((k) => SPECIES[k] && !isSpeciesUnlocked(k, ents));
+}
+
+function lockedResponse(res: express.Response, locked: string[]) {
+  return res.status(403).json({ error: "Låst innehåll — köp svamppack eller Pro i appen.", locked });
+}
 
 const MODEL = "mistral-small-latest";
 const SYSTEM_PROMPT =
@@ -987,6 +1008,8 @@ app.get("/api/hotspots", async (req, res) => {
     .split(",")
     .map((s) => s.trim())
     .filter((k) => SPECIES[k]);
+  const locked0 = gateSpecies(req, keys);
+  if (locked0.length > 0) return lockedResponse(res, locked0);
   const species = SPECIES[keys[0] ?? ""];
   const bboxParam = String(req.query.bbox ?? "");
   const box = bboxParam
@@ -1089,6 +1112,8 @@ app.get("/api/hotspots", async (req, res) => {
 
 app.get("/api/peaks", async (req, res) => {
   const key = String(req.query.species ?? "");
+  const locked1 = gateSpecies(req, [key]);
+  if (locked1.length > 0) return lockedResponse(res, locked1);
   const species = SPECIES[key];
   const box = ["minLon", "minLat", "maxLon", "maxLat"].map((k) => Number(req.query[k]));
   const minScore = Math.max(0, Math.min(100, Number(req.query.minScore ?? 80) || 80));
@@ -1337,6 +1362,8 @@ app.get("/api/meta", async (req, res) => {
     expertMode: !!species.expertMode,
     lookalikes: species.lookalikes ?? null,
     season: [species.seasonStart, species.seasonEnd],
+    entitlements: [...resolveEntitlements(req)],
+    packs: Object.values(PACKS).map((p) => ({ id: p.id, label: p.label, priceSek: p.priceSek, kind: p.kind, speciesCount: p.species.length })),
     speciesList: Object.entries(SPECIES).map(([id, s]) => ({
       id,
       label: s.label,
@@ -1346,6 +1373,8 @@ app.get("/api/meta", async (req, res) => {
       protected: !!s.protected,
       expertMode: !!s.expertMode,
       lookalikes: s.lookalikes ?? null,
+      pack: s.pack ?? null,
+      locked: !isSpeciesUnlocked(id, resolveEntitlements(req)),
     })),
     rain14,
     rainFactor: rain14 === null ? 0.5 : Number(Math.min(1, rain14 / 60).toFixed(3)),
@@ -1537,6 +1566,8 @@ async function renderHabitatTile(
 app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
   const key = req.params.species;
   if (!SPECIES[key]) return res.status(404).json({ error: "Okänd art." });
+  const lockedT = gateSpecies(req, [key]);
+  if (lockedT.length > 0) return lockedResponse(res, lockedT);
   const z = Number(req.params.z);
   const x = Number(req.params.x);
   const y = Number(req.params.y);
@@ -1561,6 +1592,8 @@ app.get("/api/tiles/multi/:z/:x/:y.png", async (req, res) => {
     .filter((k) => SPECIES[k])
     .slice(0, 6);
   if (keys.length === 0) return res.status(400).json({ error: "Okända arter i species=." });
+  const lockedM = gateSpecies(req, keys);
+  if (lockedM.length > 0) return lockedResponse(res, lockedM);
   const z = Number(req.params.z);
   const x = Number(req.params.x);
   const y = Number(req.params.y);
@@ -1583,6 +1616,8 @@ app.get("/api/debug/cell", async (req, res) => {
   const lat = Number(req.query.lat);
   const lon = Number(req.query.lon);
   const key = String(req.query.species ?? "kantarell");
+  const lockedD = gateSpecies(req, [key]);
+  if (lockedD.length > 0) return lockedResponse(res, lockedD);
   const species = SPECIES[key];
   if (!species || !Number.isFinite(lat) || !Number.isFinite(lon)) {
     return res.status(400).json({ error: "Expected query params: lat, lon, species." });

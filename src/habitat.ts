@@ -31,6 +31,7 @@ export type SpeciesProfile = {
   slopeIdeal?: [number, number];
   waterIdeal?: [number, number];
   structIdeal?: [number, number];
+  pack?: string;
 };
 
 export const SPECIES: Record<string, SpeciesProfile> = {
@@ -1491,6 +1492,37 @@ const SPECIES_MICROCLIMATE: Record<string, { waterIdeal: [number, number]; struc
   streckmusseron: { waterIdeal: [0.1, 0.5], structIdeal: [0.3, 0.85] },
   sommartryffel: { waterIdeal: [0.2, 0.6], structIdeal: [0.4, 0.9] },
 };
+// Teman för icke-expert-arter (fria staple-arter har inget pack).
+const SPECIES_PACK: Record<string, string> = {
+  "blek-kantarell": "kantarell",
+  kruskantarell: "kantarell",
+  "rodbrun-stensopp": "soppar",
+  "finluden-stensopp": "soppar",
+  blodsopp: "soppar",
+  gulsopp: "soppar",
+  blasopp: "soppar",
+  aspsopp: "soppar",
+  tegelsopp: "soppar",
+  tallskrubb: "soppar",
+  grynsopp: "soppar",
+  larksopp: "soppar",
+  mandelriska: "soppar",
+  tallblodriska: "soppar",
+  granblodriska: "soppar",
+  blodriska: "soppar",
+  "zonerad-granblodriska": "soppar",
+  farticka: "ved-tickor",
+  farsticka: "ved-tickor",
+  korallticka: "ved-tickor",
+  svavelticka: "ved-tickor",
+  "rod-svavelticka": "ved-tickor",
+  "blek-ostronmussling": "ved-tickor",
+  honungsskivling: "ved-tickor",
+  "fjallig-blacksvamp": "oppna",
+  "jatteroksvamp": "oppna",
+  "stolt-fjallskivling": "oppna",
+  "snobolischampinjon": "oppna",
+};
 for (const [k, s] of Object.entries(SPECIES)) {
   const sf = SEASON_FROM_OBS[k];
   if (sf) {
@@ -1514,6 +1546,47 @@ for (const [k, s] of Object.entries(SPECIES)) {
     s.waterIdeal = mc.waterIdeal;
     s.structIdeal = mc.structIdeal;
   }
+  // Betalpack: expertarter -> "expert", övriga enligt tema, saknar pack = gratis.
+  s.pack = s.expertMode ? "expert" : SPECIES_PACK[k];
+}
+
+export type PackInfo = {
+  id: string;
+  label: string;
+  priceSek: number;
+  kind: "species" | "all" | "pro";
+  species: string[];
+};
+
+const PACK_DEFS: [string, string, number, "species" | "all" | "pro"][] = [
+  ["kantarell", "Kantarellpaket", 29, "species"],
+  ["soppar", "Soppar & riskor", 39, "species"],
+  ["ved-tickor", "Tickor & ved-svampar", 39, "species"],
+  ["oppna", "Öppna marker & gläntor", 29, "species"],
+  ["expert", "Expertpaket (kontrollista krävs)", 49, "species"],
+  ["all", "Alla arter", 99, "all"],
+  ["pro", "Pro (allt + fläckvarning + offline)", 299, "pro"],
+];
+
+export const PACKS: Record<string, PackInfo> = Object.fromEntries(
+  PACK_DEFS.map(([id, label, priceSek, kind]) => [
+    id,
+    {
+      id,
+      label,
+      priceSek,
+      kind,
+      species: kind === "species" ? Object.entries(SPECIES).filter(([, s]) => s.pack === id).map(([k]) => k) : Object.keys(SPECIES),
+    },
+  ]),
+);
+
+// true om arten är upplåst med givna entitlements (tomma = gratisversionen).
+export function isSpeciesUnlocked(id: string, ents: Set<string>): boolean {
+  const s = SPECIES[id];
+  if (!s) return false;
+  if (!s.pack) return true;
+  return ents.has("pro") || ents.has("all") || ents.has(s.pack);
 }
 
 const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));

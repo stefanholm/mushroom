@@ -40,6 +40,9 @@ npm run typecheck
 - **Expertläge**: arter med dödligt giftiga förväxlingsarter (murklor, champinjoner,
   vårmusseron/vårskivling, kremlor, spindelskivlingar m.fl.) visas bara när Expertläge är
   påslaget, alltid med ⚠-markering och sin varningstext (`expertMode` i `/api/meta`).
+- **Betalning/entitlements (dev-läge)**: `/api/meta` returnerar `packs` + `speciesList[].locked`;
+  tile/hotspot/debug-endpoints svarar 403 för låsta arter. Klient skickar `?entitlements=pro,expert`;
+  i produktion valideras App Store-kvittot server-side (se `docs/PACKS-MONETIZATION.md`).
 - **🚗 Hitta bilen**: sparar bilens position (GPS eller kartens mitt) i localStorage och visar
   avstånd + riktning dit — andra trycket på knappen rensar.
 - **Tryck på kartan** öppnar ett inspektionskort med score-faktorer från `/api/debug/cell`

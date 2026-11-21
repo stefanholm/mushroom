@@ -46,8 +46,16 @@ säkerhet ALLTID är gratis.
 6. StoreKit: consumables (pack) vs non-consumable (region/län) vs subscription — rätt kategorier? Family Sharing på allt?
 7. Gratis trials: 7 dagar Pro — risk för abuse, men branschstandard.
 
-## Tekniskt (när vi bygger)
+## Tekniskt (implementerat, dev-läge)
 
-- Server: `/api/meta` får `entitlements` (från App Store receipt validation server-side, alt. eget konto).
-- Tiles: `/api/tiles/multi/...` låses per pack/region server-side; offline PMTiles per Regionpack.
+- `src/habitat.ts`: varje art har `pack` (gratis-arter saknar pack). `PACKS` katalog +
+  `isSpeciesUnlocked(id, ents)`.
+- `/api/meta` svarar med `entitlements`, `packs` (id/label/priceSek/kind/speciesCount) och
+  `speciesList[].pack/locked`.
+- `/api/tiles/habitat/...`, `/api/tiles/multi/...`, `/api/hotspots`, `/api/peaks`,
+  `/api/debug/cell` svarar **403 `{error, locked:[...]}`** för låsta arter.
+- Entitlements skickas idag som `?entitlements=pro,expert` (csv) — **bara för dev/test**.
+  I produktion: validera App Store-kvittot server-side (App Store Server API / StoreKit 2
+  `verifyReceipt`) och sätt entitlements där; klienten får aldrig bestämma själv.
+- Offline PMTiles per Regionpack är klient-filer (ingen server-gating behövs).
 - Fläckvarning: iOS background location + `/api/hotspots?lat&lon&radius` — se GEMINI-HANDOFF §1.
