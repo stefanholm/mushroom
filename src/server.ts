@@ -1870,6 +1870,8 @@ app.get("/api/shop", (_req, res) => {
     singles: Object.entries(SPECIES)
       .filter(([id, s]) => s.pack && isValidSingleClaim(id))
       .map(([id, s]) => ({ id, label: s.label, eatScore: s.eatScore })),
+    // reward-pool-arter säljs aldrig enskilt (gratis via betyg) — bara via pack eller belöning
+    singlesNote: "Arter i betygspoolen kan inte köpas enskilt; lås upp gratis via betyg/kommentar eller köp deras pack.",
   });
 });
 

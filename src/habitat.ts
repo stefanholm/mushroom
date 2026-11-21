@@ -1638,13 +1638,20 @@ export function isValidRewardClaim(id: string): boolean {
   return REVIEW_REWARD_SPECIES.includes(id);
 }
 
-// Enskild svamp à detta pris (köp via "species:<id>"); jattemusseron säljs bara via solo-paketet.
+// Enskild svamp à detta pris (köp via "species:<id>").
+// UNDANTAG (affärslogik): jattemusseron säljs bara via solo-paketet (SOLO_ONLY), och arter i
+// REVIEW_REWARD_SPECIES säljs ALDRIG enskilt — de går att låsa upp gratis via betyg/kommentar,
+// så ett betalt enskiltköp skulle urholka belöningen. De finns fortfarande i sina vanliga pack.
 export const SINGLE_PRICE_SEK = 10;
 export const SOLO_ONLY_SPECIES = ["jattemusseron"];
 // Topplista i shopen: de 5 mest populära arterna som enskilda köp (gratis eller 10 kr).
+// Får aldrig innehålla reward-pool-arter (valideras nedan).
 export const TOP_PICKS: string[] = ["kantarell", "karljohan", "trattkantarell", "svart-trumpetsvamp", "rodbrun-stensopp"];
+for (const id of TOP_PICKS) {
+  if (REVIEW_REWARD_SPECIES.includes(id)) throw new Error(`Toppliste-art ${id} får inte vara i reward-poolen`);
+}
 export function isValidSingleClaim(id: string): boolean {
-  return !!SPECIES[id] && !!SPECIES[id].pack && !SOLO_ONLY_SPECIES.includes(id);
+  return !!SPECIES[id] && !!SPECIES[id].pack && !SOLO_ONLY_SPECIES.includes(id) && !REVIEW_REWARD_SPECIES.includes(id);
 }
 
 // Alla reward-arter måste ligga i något pack (annars går de bara att få via belöning).
