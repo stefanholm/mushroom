@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
 import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
-import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
+import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, MAX_REWARD_CLAIMS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
 
 // Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
 // I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
@@ -1870,8 +1870,8 @@ app.get("/api/shop", (_req, res) => {
     singles: Object.entries(SPECIES)
       .filter(([id, s]) => s.pack && isValidSingleClaim(id))
       .map(([id, s]) => ({ id, label: s.label, eatScore: s.eatScore })),
-    // reward-pool-arter säljs aldrig enskilt (gratis via betyg) — bara via pack eller belöning
-    singlesNote: "Arter i betygspoolen kan inte köpas enskilt; lås upp gratis via betyg/kommentar eller köp deras pack.",
+    maxRewardClaims: MAX_REWARD_CLAIMS,
+    singlesNote: "Efter att du använt dina gratis-upplåsningar via betyg (max " + MAX_REWARD_CLAIMS + ") kan du köpa vilken låst art som helst enskilt för " + SINGLE_PRICE_SEK + " kr.",
   });
 });
 
@@ -1893,15 +1893,27 @@ app.get("/api/unlocked", (req, res) => {
   });
 });
 
-// Dev-läge: "lås upp 1 svamp mot betyg/kommentar". I produktion verifieras betyget
-// server-side (App Store Server API) innan reward:<id> sätts — här räcker det att arten
-// finns i REVIEW_REWARD_SPECIES.
+// Dev-läge: lås upp upp till MAX_REWARD_CLAIMS arter ur poolen via betyg/kommentar.
+// Klienten skickar sina nuvarande reward-entitlements i body.claimed (csv/array) så servern
+// kan räkna. I produktion: verifiera varje betyg server-side (App Store Server API /
+// eget review-API) innan reward:<id> sätts.
 app.post("/api/reward/claim", (req, res) => {
   const id = String(req.body?.species ?? "");
   if (!isValidRewardClaim(id)) {
     return res.status(403).json({ error: "Arten kan inte lösas ut via betyg/kommentar.", allowed: REVIEW_REWARD_SPECIES });
   }
-  res.json({ ok: true, entitlements: `reward:${id}`, unlocked: id });
+  const claimedRaw = req.body?.claimed;
+  const claimed: string[] = Array.isArray(claimedRaw)
+    ? claimedRaw.map(String)
+    : String(claimedRaw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const rewardClaims = claimed.filter((c) => c.startsWith("reward:"));
+  if (rewardClaims.includes("reward:" + id)) {
+    return res.status(409).json({ error: "Redan upplåst via belöning.", entitlements: "reward:" + id });
+  }
+  if (rewardClaims.length >= MAX_REWARD_CLAIMS) {
+    return res.status(403).json({ error: `Max ${MAX_REWARD_CLAIMS} gratis-upplåsningar via betyg — köp resten.`, maxRewardClaims: MAX_REWARD_CLAIMS });
+  }
+  res.json({ ok: true, entitlements: `reward:${id}`, unlocked: id, rewardClaimsLeft: MAX_REWARD_CLAIMS - rewardClaims.length - 1 });
 });
 
 const port = Number(process.env.PORT ?? 3000);

@@ -766,12 +766,13 @@ function openRewardModal() {
   }
   if (candidates.length > 0) sel.value = candidates[0];
 
+  const left = 3 - claimed.length;
   if (status) {
     status.textContent = claimed.length > 0
-      ? `Redan upplåst belöningsart: ${claimed.join(", ")}`
-      : "Välj en art från de 12 låsta arterna och skicka betyg/kommentar.";
+      ? `Upplåst via belöning: ${claimed.join(", ")} — ${Math.max(0, left)} gratis kvar (max 3), resten köps för 10 kr eller via pack.`
+      : "Välj en art från poolen och skicka betyg/kommentar (max 3 gratis).";
   }
-  if (btn) btn.disabled = claimed.length > 0 || candidates.length === 0;
+  if (btn) btn.disabled = left <= 0 || candidates.length === 0;
   modal.hidden = false;
 }
 
@@ -804,7 +805,16 @@ document.getElementById("claimRewardBtn")?.addEventListener("click", async () =>
     alert("Ogiltig belöningsart.");
     return;
   }
-  await window.MushroomBilling.purchase("reward:" + chosenId);
+  const r = await fetch("/api/reward/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ species: chosenId, claimed: activeEntitlements() }),
+  });
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error(j.error || "Kunde inte låsa upp belöningen.");
+  }
+  addEntitlement("reward:" + chosenId);
   updateShopBadge();
   if (speciesList) applySpeciesList(speciesList);
   rebuildHabitat();
