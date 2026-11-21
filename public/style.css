@@ -352,3 +352,25 @@ button:disabled {
   padding: 0.3rem;
   max-width: 320px;
 }
+.top-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+.top-card {
+  width: 120px;
+  border: 1px solid #ddd;
+  border-radius: 0.45rem;
+  padding: 0.45rem;
+  text-align: center;
+  background: #fff;
+}
+.top-card .shop-img {
+  height: 72px;
+}
+.top-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin: 0.25rem 0;
+}

@@ -596,6 +596,53 @@ async function renderShop() {
   const ents = new Set(activeEntitlements());
   const labelOf = (id) => speciesList?.find((s) => s.id === id)?.label.split(" (")[0] ?? id;
   grid.innerHTML = "";
+
+  // ⭐ Topplista: 5 populära arter som enskilda köp (gratis eller 10 kr)
+  if (Array.isArray(shop.topPicks) && shop.topPicks.length > 0) {
+    const topWrap = document.createElement("div");
+    topWrap.className = "shop-card";
+    topWrap.style.gridColumn = "1 / -1";
+    topWrap.innerHTML = `<h3>⭐ Topp ${shop.topPicks.length} — populäraste svamparna</h3>`;
+    const row = document.createElement("div");
+    row.className = "top-row";
+    for (const t of shop.topPicks) {
+      const owned = !t.free && (ents.has("species:" + t.id) || ents.has("pro") || ents.has("all") || (t.pack && ents.has(t.pack)));
+      const card = document.createElement("div");
+      card.className = "top-card";
+      card.innerHTML =
+        `<img class="shop-img" src="${t.image}" alt="" loading="lazy" onerror="this.style.display='none'" />` +
+        `<div class="top-name">${t.label.split(" (")[0]} ★${t.eatScore}</div>`;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "shop-buy-btn";
+      if (t.free) {
+        btn.textContent = "Ingår gratis ✓";
+        btn.disabled = true;
+      } else if (owned) {
+        btn.textContent = "Ägd ✓";
+        btn.disabled = true;
+      } else {
+        btn.textContent = `${t.priceSek} kr`;
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            await window.MushroomBilling.purchase("species:" + t.id);
+            renderShop();
+            if (speciesList) applySpeciesList(speciesList);
+            rebuildHabitat();
+            refreshMeta();
+          } catch (e) {
+            alert(e.message);
+            btn.disabled = false;
+          }
+        });
+      }
+      card.appendChild(btn);
+      row.appendChild(card);
+    }
+    topWrap.appendChild(row);
+    grid.appendChild(topWrap);
+  }
   for (const p of shop.packs) {
     const owned = ents.has("pro") || ents.has("all") || ents.has(p.id);
     const card = document.createElement("div");

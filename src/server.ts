@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
 import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
-import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
+import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
 
 // Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
 // I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
@@ -1855,6 +1855,18 @@ app.get("/api/shop", (_req, res) => {
     freeSpecies: Object.entries(SPECIES).filter(([, s]) => !s.pack).map(([id]) => id),
     singlePriceSek: SINGLE_PRICE_SEK,
     soloOnlySpecies: SOLO_ONLY_SPECIES,
+    topPicks: TOP_PICKS.map((id) => {
+      const s = SPECIES[id];
+      return {
+        id,
+        label: s.label,
+        eatScore: s.eatScore,
+        image: `/icons/${id}.png`,
+        free: !s.pack,
+        priceSek: s.pack ? SINGLE_PRICE_SEK : 0,
+        pack: s.pack ?? null,
+      };
+    }),
     singles: Object.entries(SPECIES)
       .filter(([id, s]) => s.pack && isValidSingleClaim(id))
       .map(([id, s]) => ({ id, label: s.label, eatScore: s.eatScore })),

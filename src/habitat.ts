@@ -1641,6 +1641,8 @@ export function isValidRewardClaim(id: string): boolean {
 // Enskild svamp à detta pris (köp via "species:<id>"); jattemusseron säljs bara via solo-paketet.
 export const SINGLE_PRICE_SEK = 10;
 export const SOLO_ONLY_SPECIES = ["jattemusseron"];
+// Topplista i shopen: de 5 mest populära arterna som enskilda köp (gratis eller 10 kr).
+export const TOP_PICKS: string[] = ["kantarell", "karljohan", "trattkantarell", "svart-trumpetsvamp", "rodbrun-stensopp"];
 export function isValidSingleClaim(id: string): boolean {
   return !!SPECIES[id] && !!SPECIES[id].pack && !SOLO_ONLY_SPECIES.includes(id);
 }
