@@ -1,0 +1,13 @@
+node_modules/
+.env
+dist/
+.DS_Store
+*.bak
+*.bak[0-9]*
+data/tiles/
+data/layers/*.tif
+data/layers/*.geojson
+data/tile-cache/
+data/osm/
+data/species/
+data/validation/

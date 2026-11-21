@@ -1,0 +1,196 @@
+{
+  "crs": "EPSG:3006",
+  "comment": "Byt ut dessa demofiler mot riktiga nedladdningar (se README). Raster = GeoTIFF i EPSG:3006, band 1.",
+  "rasters": [
+    {
+      "id": "tradhojd",
+      "file": "skog_tradhojd_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "volym",
+      "file": "skog_volym_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "grundyta",
+      "file": "grundyta_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "gran",
+      "file": "skog_gran_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "tall",
+      "file": "skog_tall_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "bjork",
+      "file": "skog_bjork_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "ek",
+      "file": "skog_ek_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "bok",
+      "file": "skog_bok_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "hassel",
+      "file": "skog_hassel_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "asp",
+      "file": "skog_asp_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "sis",
+      "file": "skog_sis_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "gdd5",
+      "file": "smhi_gdd5.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "soildepth",
+      "file": "sgu_soil_depth_10m.tif",
+      "nodata": 255,
+      "band": 1
+    },
+    {
+      "id": "markfuktighet",
+      "file": "markfuktighet_10m.tif",
+      "nodata": 255,
+      "band": 1
+    },
+    {
+      "id": "jordart",
+      "file": "jordart_10m.tif",
+      "nodata": 255,
+      "band": 1,
+      "recode": {
+        "1": "acidic",
+        "2": "calcareous"
+      }
+    },
+    {
+      "id": "hojd",
+      "file": "hojdmodell_2m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "alder",
+      "file": "skog_alder_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "twi",
+      "file": "twi_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "slope",
+      "file": "slope_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "water_rel",
+      "file": "water_rel_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "stand_struct",
+      "file": "stand_struct_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "water_dist",
+      "file": "water_dist_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    },
+    {
+      "id": "dodved",
+      "file": "dodved_10m.tif",
+      "nodata": -9999,
+      "band": 1
+    }
+  ],
+  "vectors": [
+    {
+      "id": "avverkningar",
+      "file": "avverkningar_senaste_5ar.geojson",
+      "crs": "EPSG:3006"
+    },
+    {
+      "id": "nyckelbiotoper",
+      "file": "nyckelbiotoper.geojson",
+      "crs": "EPSG:3006"
+    },
+    {
+      "id": "sumpskogar",
+      "file": "sumpskogar.geojson",
+      "crs": "EPSG:3006"
+    }
+  ],
+  "mask": {
+    "file": "nmd_10m.tif",
+    "forestClasses": [
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      121,
+      122,
+      123,
+      124,
+      125,
+      126,
+      127
+    ],
+    "dilatePx": 3,
+    "dilateClasses": [
+      51,
+      52,
+      53,
+      54
+    ],
+    "waterClasses": [
+      61,
+      62
+    ],
+    "waterBufferM": 50
+  }
+}
