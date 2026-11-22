@@ -1207,23 +1207,12 @@ app.get("/api/hotspots", async (req, res) => {
       }
     }
     all.sort((a, b) => b.score - a.score);
-    // Top-spot cap: utan "topspots"/all/pro filtreras hetaste topparna bort FÖRE thinning.
+    // Top-spot guld: ALLA får alla pins — men bara betalande (topspots:<år>/all/pro) får
+    // score > FREE_CAP_SCORE markerade gold:true (glödande guld-pins). Free ser samma
+    // ställen som helt vanliga pins och kan inte urskilja de bästa områdena.
     const cm = capMeta(req);
-    const aboveCap = cm.capped ? all.filter((p) => p.score > FREE_CAP_SCORE) : [];
-    const hiddenPeaks = aboveCap.length;
-    // Guld-teaser: free-användaren SER de hetaste ställena som låsta guld-pins (max 20),
-    // men får dem inte förrän årskortet är köpt.
-    const lockedHotspots = aboveCap.slice(0, 20).map((p) => ({
-      lat: p.lat,
-      lon: p.lon,
-      species: p.species,
-      label: SPECIES[p.species]?.label ?? p.species,
-      eatScore: SPECIES[p.species]?.eatScore ?? null,
-      score: p.score,
-      locked: true,
-      gold: true,
-    }));
-    const eligible = cm.capped ? all.filter((p) => p.score <= FREE_CAP_SCORE) : all;
+    const goldPeaks = all.filter((p) => p.score > FREE_CAP_SCORE).length;
+    const eligible = all;
     const centerLat = (minLat + maxLat) / 2;
     const mPerDegLat = 111000;
     const mPerDegLon = 111000 * Math.cos((centerLat * Math.PI) / 180);
@@ -1244,25 +1233,18 @@ app.get("/api/hotspots", async (req, res) => {
         label: SPECIES[p.species]?.label ?? p.species,
         eatScore: SPECIES[p.species]?.eatScore ?? null,
         score: p.score,
+        gold: cm.unlocked === true && p.score > FREE_CAP_SCORE,
       })),
-      meta: { count: picked.length, minScore, species: keys, asOf: asOf.toISOString().slice(0, 10), staticOnly, ...cm, hiddenPeaks },
-      lockedHotspots,
+      meta: { count: picked.length, minScore, species: keys, asOf: asOf.toISOString().slice(0, 10), staticOnly, ...cm, goldPeaks },
     });
   }
 
   const key = keys[0];
   const { cells, meta } = await computeCellsCached(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
   const cm = capMeta(req);
-  const visibleCells = cm.capped ? cells.filter((c) => c.score <= FREE_CAP_SCORE) : cells;
-  const lockedCells = cm.capped ? cells.filter((c) => c.score > FREE_CAP_SCORE).sort((a, b) => b.score - a.score).slice(0, 20) : [];
-  const features = visibleCells.map((c) => ({
+  const features = cells.map((c) => ({
     type: "Feature",
-    properties: { score: c.score, heat: c.heat },
-    geometry: { type: "Point", coordinates: [c.lon, c.lat] },
-  }));
-  const lockedFeatures = lockedCells.map((c) => ({
-    type: "Feature",
-    properties: { score: c.score, locked: true, gold: true },
+    properties: { score: c.score, heat: c.heat, gold: cm.unlocked === true && c.score > FREE_CAP_SCORE },
     geometry: { type: "Point", coordinates: [c.lon, c.lat] },
   }));
   res.json({
@@ -1270,8 +1252,7 @@ app.get("/api/hotspots", async (req, res) => {
     meta: {
       ...meta,
       ...cm,
-      hiddenCells: cells.length - visibleCells.length,
-      lockedCount: lockedCells.length,
+      goldCells: cells.filter((c) => c.score > FREE_CAP_SCORE).length,
       layers: [
         "smhi-precip-14d",
         "osm-forest-mask",
@@ -1283,7 +1264,6 @@ app.get("/api/hotspots", async (req, res) => {
       skipped: (res.locals.skipped as string[] | undefined) ?? [],
     },
     features,
-    lockedFeatures,
   });
 });
 
@@ -1329,13 +1309,25 @@ app.get("/api/peaks", async (req, res) => {
     if (isPeak) peaks.push(c);
   }
   const cm = capMeta(req);
-  const visiblePeaks = cm.capped ? peaks.filter((c) => c.score <= FREE_CAP_SCORE) : peaks;
   res.json({
     type: "FeatureCollection",
-    meta: { ...meta, minScore, peakCount: visiblePeaks.length, ...cm, hiddenPeaks: peaks.length - visiblePeaks.length },
-    features: visiblePeaks.map((c) => ({
+    meta: {
+      ...meta,
+      minScore,
+      peakCount: peaks.length,
+      ...cm,
+      goldPeaks: peaks.filter((c) => c.score > FREE_CAP_SCORE).length,
+    },
+    features: peaks.map((c) => ({
       type: "Feature",
-      properties: { score: c.score, heat: c.heat, species: key, label: species.label, eatScore: species.eatScore },
+      properties: {
+        score: c.score,
+        heat: c.heat,
+        species: key,
+        label: species.label,
+        eatScore: species.eatScore,
+        gold: cm.unlocked === true && c.score > FREE_CAP_SCORE,
+      },
       geometry: { type: "Point", coordinates: [c.lon, c.lat] },
     })),
   });

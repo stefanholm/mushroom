@@ -96,21 +96,22 @@ Solo 79 kr motiveras av att jättemusseron är sällsynt + skyddad (foto-uppleve
 
 ## Top-spot cap — "hetaste ställena" bakom Säsongspass (`topspots`)
 
-- Gratisversionen får bara pins/celler med **score ≤ FREE_CAP_SCORE** (default **70**, env).
-  Score 70 = HEAT_BASE, dvs där heat-färgen börjar — free ser fortfarande 50–70-bandet.
-  `/api/hotspots` (båda grenarna) och `/api/peaks` filtrerar bort hetare toppar och svarar
-  med `meta.capped=true, freeCapScore, hiddenPeaks, passId:"topspots", passPriceSek`.
-  `all`/`pro`/`topspots` i ents ser allt. `/api/meta` och `/api/unlocked` exponerar
-  `topSpots {capped, freeCapScore, passId, passPriceSek, unlocked}` så klienten kan visa 🔒.
+- **Alla får alla pins** — capen är *visuell*, inte bortfiltrering: `/api/hotspots` (båda
+  grenarna) och `/api/peaks` returnerar alltid alla toppar, men bara betalande
+  (`topspots:<år>`/`topspots`/`all`/`pro`) får `gold: true` på pins med **score > FREE_CAP_SCORE**
+  (default **70** = HEAT_BASE). Free ser samma ställen som helt vanliga pins och kan inte
+  urskilja de bästa områdena; betalande ser dem glöda i guld.
+  Svaren har `meta.capped` (gold låst), `freeCapScore`, `goldPeaks`/`goldCells` (antal över cap),
+  `passId`, `passLabel`, `passPriceSek`. `/api/meta` och `/api/unlocked` exponerar
+  `topSpots {capped, freeCapScore, passId, passLabel, passPriceSek, unlocked}`.
 - Produkt: **Årskort för innevarande år** — id `topspots:<år>` (t.ex. `topspots:2026`), engångsköp
   `TOP_SPOTS_PRICE_SEK` (default 99 kr, env), exponeras i `/api/shop` som `topSpotsPass`.
   `canSeeTopSpots` accepterar `all`, `pro`, `topspots` (alla år) och `topspots:<aktuellt år>`.
   Redeem-koder/admin kan ge `topspots:2026`. "Säsong" togs bort som begrepp — årskort är tydligare.
-- **Guld-teaser:** free-användare ser de hetaste ställena som **låsta guld-pins**: `/api/hotspots`
-  svarar då med `lockedHotspots: [{lat, lon, species, label, score, locked: true, gold: true}]`
-  (topp 20 över cap; `meta.hiddenPeaks` = totalt antal). Icke-bbox-grenen svarar med
-  `lockedFeatures` (samma form). Klienten renderar dessa i guld med 🔒 — man ser VILKA ställen
-  som är hetast, men får dem inte förrän årskortet är köpt.
+- **Guld för betalande:** endast pins med `gold: true` (score > cap) renderas glödande guld i
+  klienten (iOS: guld-symbol + glow). Free får aldrig `gold: true` — samma koordinater, men
+  som vanliga svamp-pins, så de inte fokuserar på toppområdena. `meta.goldPeaks` ger antalet
+  för ett diskret upsell-meddelande ("🔒 N ställen glöder i guld med Årskort").
 - **Compliance (viktigt):** att "fungera 100 % vid nedladdning och sedan cappas" utan
   tydlig förhandsinformation riskerar att klassas som vilseledande (Marknadsföringslagen /
   EU Omnibus) och App Store-avslag. Gör i stället: capp från första start + 🔒-teaser på
