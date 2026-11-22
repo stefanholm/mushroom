@@ -45,6 +45,26 @@ function lockedResponse(res: express.Response, locked: string[]) {
   return res.status(403).json({ error: "Låst innehåll — köp svamppack eller Pro i appen.", locked });
 }
 
+// --- Top-spot cap: gratisversionen ser bara pins upp till FREE_CAP_SCORE (0–100).
+// Score > cap kräver "topspots" (Säsongspass) eller all/pro. HEAT_BASE är 70 så 70
+// sammanfaller med där heat-färgen börjar — free ser ändå 50–70-bandet.
+const FREE_CAP_SCORE = Math.max(0, Math.min(100, Number(process.env.FREE_CAP_SCORE ?? 70) || 70));
+const TOP_SPOTS_PRICE_SEK = Math.max(0, Number(process.env.TOP_SPOTS_PRICE_SEK ?? 99) || 99);
+function canSeeTopSpots(req: express.Request): boolean {
+  const ents = resolveEntitlements(req);
+  return ents.has("all") || ents.has("pro") || ents.has("topspots");
+}
+function capMeta(req: express.Request) {
+  const seeTop = canSeeTopSpots(req);
+  return {
+    capped: !seeTop && FREE_CAP_SCORE < 100,
+    freeCapScore: FREE_CAP_SCORE,
+    passId: "topspots",
+    passPriceSek: TOP_SPOTS_PRICE_SEK,
+    unlocked: seeTop,
+  };
+}
+
 const MODEL = "mistral-small-latest";
 const SYSTEM_PROMPT =
   "Du är en kritisk och säkerhetsfokuserad assistent för svampplockning i Sverige. Svara alltid på svenska. " +
@@ -1184,12 +1204,16 @@ app.get("/api/hotspots", async (req, res) => {
       }
     }
     all.sort((a, b) => b.score - a.score);
+    // Top-spot cap: utan "topspots"/all/pro filtreras hetaste topparna bort FÖRE thinning.
+    const cm = capMeta(req);
+    const hiddenPeaks = cm.capped ? all.filter((p) => p.score > FREE_CAP_SCORE).length : 0;
+    const eligible = cm.capped ? all.filter((p) => p.score <= FREE_CAP_SCORE) : all;
     const centerLat = (minLat + maxLat) / 2;
     const mPerDegLat = 111000;
     const mPerDegLon = 111000 * Math.cos((centerLat * Math.PI) / 180);
     const spacingDeg = 120 / Math.max(mPerDegLat, mPerDegLon);
     const picked: typeof all = [];
-    for (const p of all) {
+    for (const p of eligible) {
       if (picked.length >= 120) break;
       const tooClose = picked.some(
         (q) => Math.abs(q.lat - p.lat) < spacingDeg && Math.abs(q.lon - p.lon) < spacingDeg,
@@ -1205,13 +1229,15 @@ app.get("/api/hotspots", async (req, res) => {
         eatScore: SPECIES[p.species]?.eatScore ?? null,
         score: p.score,
       })),
-      meta: { count: picked.length, minScore, species: keys, asOf: asOf.toISOString().slice(0, 10), staticOnly },
+      meta: { count: picked.length, minScore, species: keys, asOf: asOf.toISOString().slice(0, 10), staticOnly, ...cm, hiddenPeaks },
     });
   }
 
   const key = keys[0];
   const { cells, meta } = await computeCellsCached(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
-  const features = cells.map((c) => ({
+  const cm = capMeta(req);
+  const visibleCells = cm.capped ? cells.filter((c) => c.score <= FREE_CAP_SCORE) : cells;
+  const features = visibleCells.map((c) => ({
     type: "Feature",
     properties: { score: c.score, heat: c.heat },
     geometry: { type: "Point", coordinates: [c.lon, c.lat] },
@@ -1220,6 +1246,8 @@ app.get("/api/hotspots", async (req, res) => {
     type: "FeatureCollection",
     meta: {
       ...meta,
+      ...cm,
+      hiddenCells: cells.length - visibleCells.length,
       layers: [
         "smhi-precip-14d",
         "osm-forest-mask",
@@ -1275,10 +1303,12 @@ app.get("/api/peaks", async (req, res) => {
     }
     if (isPeak) peaks.push(c);
   }
+  const cm = capMeta(req);
+  const visiblePeaks = cm.capped ? peaks.filter((c) => c.score <= FREE_CAP_SCORE) : peaks;
   res.json({
     type: "FeatureCollection",
-    meta: { ...meta, minScore, peakCount: peaks.length },
-    features: peaks.map((c) => ({
+    meta: { ...meta, minScore, peakCount: visiblePeaks.length, ...cm, hiddenPeaks: peaks.length - visiblePeaks.length },
+    features: visiblePeaks.map((c) => ({
       type: "Feature",
       properties: { score: c.score, heat: c.heat, species: key, label: species.label, eatScore: species.eatScore },
       geometry: { type: "Point", coordinates: [c.lon, c.lat] },
@@ -1492,6 +1522,7 @@ app.get("/api/meta", async (req, res) => {
     lookalikes: species.lookalikes ?? null,
     season: [species.seasonStart, species.seasonEnd],
     entitlements: [...resolveEntitlements(req)],
+    topSpots: capMeta(req),
     reviewRewardSpecies: REVIEW_REWARD_SPECIES,
     packs: Object.values(PACKS).map((p) => ({ id: p.id, label: p.label, priceSek: p.priceSek, kind: p.kind, speciesCount: p.species.length })),
     speciesList: Object.entries(SPECIES).map(([id, s]) => ({
@@ -2059,6 +2090,13 @@ app.get("/api/shop", (_req, res) => {
         };
       }),
     reviewRewardSpecies: REVIEW_REWARD_SPECIES,
+    topSpotsPass: {
+      id: "topspots",
+      label: `Säsongspass — hetaste svampställena (score > ${FREE_CAP_SCORE})`,
+      priceSek: TOP_SPOTS_PRICE_SEK,
+      kind: "season-pass",
+      freeCapScore: FREE_CAP_SCORE,
+    },
     freeSpecies: Object.entries(SPECIES).filter(([, s]) => !s.pack).map(([id]) => id),
     singlePriceSek: SINGLE_PRICE_SEK,
     soloOnlySpecies: SOLO_ONLY_SPECIES,
@@ -2097,6 +2135,7 @@ app.get("/api/unlocked", (req, res) => {
   res.json({
     entitlements: [...ents],
     unlocked: Object.keys(SPECIES).filter((id) => isSpeciesUnlocked(id, ents)),
+    topSpots: ents.has("all") || ents.has("pro") || ents.has("topspots"),
   });
 });
 

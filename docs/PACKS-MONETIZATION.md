@@ -93,3 +93,27 @@ Solo 79 kr motiveras av att jättemusseron är sällsynt + skyddad (foto-uppleve
 - `?entitlements=blandad-korg-6,pro` (csv) är dev-läge; produktion: validera App Store-kvittot
   server-side (App Store Server API) och sätt entitlements där.
 - `/api/tiles/*`, `/api/hotspots`, `/api/peaks`, `/api/debug/cell` → 403 `{error, locked:[...]}` vid låst art.
+
+## Top-spot cap — "hetaste ställena" bakom Säsongspass (`topspots`)
+
+- Gratisversionen får bara pins/celler med **score ≤ FREE_CAP_SCORE** (default **70**, env).
+  Score 70 = HEAT_BASE, dvs där heat-färgen börjar — free ser fortfarande 50–70-bandet.
+  `/api/hotspots` (båda grenarna) och `/api/peaks` filtrerar bort hetare toppar och svarar
+  med `meta.capped=true, freeCapScore, hiddenPeaks, passId:"topspots", passPriceSek`.
+  `all`/`pro`/`topspots` i ents ser allt. `/api/meta` och `/api/unlocked` exponerar
+  `topSpots {capped, freeCapScore, passId, passPriceSek, unlocked}` så klienten kan visa 🔒.
+- Produkt: **Säsongspass** `topspots`, engångsköp `TOP_SPOTS_PRICE_SEK` (default 99 kr, env),
+  exponeras i `/api/shop` som `topSpotsPass`. Köpet ger entitlement `topspots`.
+  (Valt engångsköp för säsongen framför årsprenumeration — svampsäsongen är kort;
+  vill du ha återkommande intäkt ändrar du till prenumeration i StoreKit och sätter samma id.)
+- **Compliance (viktigt):** att "fungera 100 % vid nedladdning och sedan cappas" utan
+  tydlig förhandsinformation riskerar att klassas som vilseledande (Marknadsföringslagen /
+  EU Omnibus) och App Store-avslag. Gör i stället: capp från första start + 🔒-teaser på
+  de hetaste pin-sen i UI + tydlig text i App Store-beskrivningen ("gratis visar ställen
+  upp till nivå 70; Säsongspass låser upp 70–100"). Alternativt en tydligt deklarerad
+  gratisperiod. Aldrig tyst degradering efter användning.
+- Naturvårdssida: jättemusseron (protected) har redan obsPrior=0; capen minskar även
+  tramp på de allra hetaste ställena för gratisanvändare.
+- Rekommendation nivå: **70 absolut är lagom** när pins körs med `static=1` (score =
+  habitat×100, de flesta skogsceller ligger 60–99). Kör du dynamiska pins (väder×säsong)
+  når score sällan över 60 — sänk då FREE_CAP_SCORE till ~50–55 eller byt till static-pins.

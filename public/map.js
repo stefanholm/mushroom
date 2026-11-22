@@ -600,6 +600,42 @@ async function renderShop() {
   const labelOf = (id) => speciesList?.find((s) => s.id === id)?.label.split(" (")[0] ?? id;
   grid.innerHTML = "";
 
+  // 🔥 Säsongspass: gratisversionen cappas på score <= freeCapScore i /api/hotspots
+  if (shop.topSpotsPass) {
+    const pass = shop.topSpotsPass;
+    const ownedPass = ents.has("topspots") || ents.has("all") || ents.has("pro");
+    const card = document.createElement("div");
+    card.className = "shop-card";
+    card.style.gridColumn = "1 / -1";
+    card.innerHTML =
+      `<h3>🔥 ${pass.label}</h3>` +
+      `<div class="shop-price">${pass.priceSek} kr <span class="shop-kind">engångsköp för säsongen</span></div>` +
+      `<div class="shop-sub">Gratisversionen visar svampställen upp till score ${pass.freeCapScore}. ` +
+      `Med passet ser du även de hetaste ställena (score ${pass.freeCapScore + 1}–100) som pins i appen.</div>`;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "shop-buy-btn";
+    if (ownedPass) {
+      btn.textContent = "Ägd ✓";
+      btn.disabled = true;
+    } else {
+      btn.textContent = `${pass.priceSek} kr`;
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await window.MushroomBilling.purchase("topspots");
+          renderShop();
+          updateShopBadge();
+        } catch (e) {
+          alert(e.message);
+          btn.disabled = false;
+        }
+      });
+    }
+    card.appendChild(btn);
+    grid.appendChild(card);
+  }
+
   // ⭐ Topplista: 5 populära arter som enskilda köp (gratis eller 10 kr)
   if (Array.isArray(shop.topPicks) && shop.topPicks.length > 0) {
     const topWrap = document.createElement("div");
