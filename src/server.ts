@@ -50,16 +50,19 @@ function lockedResponse(res: express.Response, locked: string[]) {
 // sammanfaller med där heat-färgen börjar — free ser ändå 50–70-bandet.
 const FREE_CAP_SCORE = Math.max(0, Math.min(100, Number(process.env.FREE_CAP_SCORE ?? 70) || 70));
 const TOP_SPOTS_PRICE_SEK = Math.max(0, Number(process.env.TOP_SPOTS_PRICE_SEK ?? 99) || 99);
+const PASS_YEAR = new Date().getFullYear();
+const PASS_ID = `topspots:${PASS_YEAR}`; // årskort för innevarande år; "topspots" (alla år) funkar också
 function canSeeTopSpots(req: express.Request): boolean {
   const ents = resolveEntitlements(req);
-  return ents.has("all") || ents.has("pro") || ents.has("topspots");
+  return ents.has("all") || ents.has("pro") || ents.has("topspots") || ents.has(PASS_ID);
 }
 function capMeta(req: express.Request) {
   const seeTop = canSeeTopSpots(req);
   return {
     capped: !seeTop && FREE_CAP_SCORE < 100,
     freeCapScore: FREE_CAP_SCORE,
-    passId: "topspots",
+    passId: PASS_ID,
+    passLabel: `Årskort ${PASS_YEAR}`,
     passPriceSek: TOP_SPOTS_PRICE_SEK,
     unlocked: seeTop,
   };
@@ -1206,7 +1209,20 @@ app.get("/api/hotspots", async (req, res) => {
     all.sort((a, b) => b.score - a.score);
     // Top-spot cap: utan "topspots"/all/pro filtreras hetaste topparna bort FÖRE thinning.
     const cm = capMeta(req);
-    const hiddenPeaks = cm.capped ? all.filter((p) => p.score > FREE_CAP_SCORE).length : 0;
+    const aboveCap = cm.capped ? all.filter((p) => p.score > FREE_CAP_SCORE) : [];
+    const hiddenPeaks = aboveCap.length;
+    // Guld-teaser: free-användaren SER de hetaste ställena som låsta guld-pins (max 20),
+    // men får dem inte förrän årskortet är köpt.
+    const lockedHotspots = aboveCap.slice(0, 20).map((p) => ({
+      lat: p.lat,
+      lon: p.lon,
+      species: p.species,
+      label: SPECIES[p.species]?.label ?? p.species,
+      eatScore: SPECIES[p.species]?.eatScore ?? null,
+      score: p.score,
+      locked: true,
+      gold: true,
+    }));
     const eligible = cm.capped ? all.filter((p) => p.score <= FREE_CAP_SCORE) : all;
     const centerLat = (minLat + maxLat) / 2;
     const mPerDegLat = 111000;
@@ -1230,6 +1246,7 @@ app.get("/api/hotspots", async (req, res) => {
         score: p.score,
       })),
       meta: { count: picked.length, minScore, species: keys, asOf: asOf.toISOString().slice(0, 10), staticOnly, ...cm, hiddenPeaks },
+      lockedHotspots,
     });
   }
 
@@ -1237,9 +1254,15 @@ app.get("/api/hotspots", async (req, res) => {
   const { cells, meta } = await computeCellsCached(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
   const cm = capMeta(req);
   const visibleCells = cm.capped ? cells.filter((c) => c.score <= FREE_CAP_SCORE) : cells;
+  const lockedCells = cm.capped ? cells.filter((c) => c.score > FREE_CAP_SCORE).sort((a, b) => b.score - a.score).slice(0, 20) : [];
   const features = visibleCells.map((c) => ({
     type: "Feature",
     properties: { score: c.score, heat: c.heat },
+    geometry: { type: "Point", coordinates: [c.lon, c.lat] },
+  }));
+  const lockedFeatures = lockedCells.map((c) => ({
+    type: "Feature",
+    properties: { score: c.score, locked: true, gold: true },
     geometry: { type: "Point", coordinates: [c.lon, c.lat] },
   }));
   res.json({
@@ -1248,6 +1271,7 @@ app.get("/api/hotspots", async (req, res) => {
       ...meta,
       ...cm,
       hiddenCells: cells.length - visibleCells.length,
+      lockedCount: lockedCells.length,
       layers: [
         "smhi-precip-14d",
         "osm-forest-mask",
@@ -1259,6 +1283,7 @@ app.get("/api/hotspots", async (req, res) => {
       skipped: (res.locals.skipped as string[] | undefined) ?? [],
     },
     features,
+    lockedFeatures,
   });
 });
 
@@ -2091,10 +2116,11 @@ app.get("/api/shop", (_req, res) => {
       }),
     reviewRewardSpecies: REVIEW_REWARD_SPECIES,
     topSpotsPass: {
-      id: "topspots",
-      label: `Säsongspass — hetaste svampställena (score > ${FREE_CAP_SCORE})`,
+      id: PASS_ID,
+      label: `Årskort ${PASS_YEAR} — hetaste svampställena (score > ${FREE_CAP_SCORE})`,
       priceSek: TOP_SPOTS_PRICE_SEK,
-      kind: "season-pass",
+      kind: "year-pass",
+      year: PASS_YEAR,
       freeCapScore: FREE_CAP_SCORE,
     },
     freeSpecies: Object.entries(SPECIES).filter(([, s]) => !s.pack).map(([id]) => id),
@@ -2135,7 +2161,7 @@ app.get("/api/unlocked", (req, res) => {
   res.json({
     entitlements: [...ents],
     unlocked: Object.keys(SPECIES).filter((id) => isSpeciesUnlocked(id, ents)),
-    topSpots: ents.has("all") || ents.has("pro") || ents.has("topspots"),
+    topSpots: ents.has("all") || ents.has("pro") || ents.has("topspots") || ents.has(PASS_ID),
   });
 });
 

@@ -61,6 +61,7 @@ export function validateGrant(grant: string): string | null {
 
 function validateOneGrant(g: string): string | null {
   if (g === "all" || g === "pro") return null;
+  if (g === "topspots" || /^topspots:\d{4}$/.test(g)) return null; // årskort för hetaste ställena
   if (g.startsWith("species:")) {
     const id = g.slice(8);
     if (!SPECIES[id]) return `Okänd art: ${id}`;
@@ -79,6 +80,8 @@ export function grantLabel(grant: string): string {
 function oneLabel(g: string): string {
   if (g === "all") return "Alla arter";
   if (g === "pro") return "Pro";
+  if (g === "topspots") return "Topspots (hetaste ställena, alla år)";
+  if (/^topspots:\d{4}$/.test(g)) return `Årskort ${g.slice(9)} (hetaste ställena)`;
   if (g.startsWith("species:")) return SPECIES[g.slice(8)]?.label ?? g;
   const p = (PACKS as Record<string, { label: string; species: string[] }>)[g];
   return p ? `${p.label} (${p.species.length} arter)` : g;

@@ -102,10 +102,15 @@ Solo 79 kr motiveras av att jättemusseron är sällsynt + skyddad (foto-uppleve
   med `meta.capped=true, freeCapScore, hiddenPeaks, passId:"topspots", passPriceSek`.
   `all`/`pro`/`topspots` i ents ser allt. `/api/meta` och `/api/unlocked` exponerar
   `topSpots {capped, freeCapScore, passId, passPriceSek, unlocked}` så klienten kan visa 🔒.
-- Produkt: **Säsongspass** `topspots`, engångsköp `TOP_SPOTS_PRICE_SEK` (default 99 kr, env),
-  exponeras i `/api/shop` som `topSpotsPass`. Köpet ger entitlement `topspots`.
-  (Valt engångsköp för säsongen framför årsprenumeration — svampsäsongen är kort;
-  vill du ha återkommande intäkt ändrar du till prenumeration i StoreKit och sätter samma id.)
+- Produkt: **Årskort för innevarande år** — id `topspots:<år>` (t.ex. `topspots:2026`), engångsköp
+  `TOP_SPOTS_PRICE_SEK` (default 99 kr, env), exponeras i `/api/shop` som `topSpotsPass`.
+  `canSeeTopSpots` accepterar `all`, `pro`, `topspots` (alla år) och `topspots:<aktuellt år>`.
+  Redeem-koder/admin kan ge `topspots:2026`. "Säsong" togs bort som begrepp — årskort är tydligare.
+- **Guld-teaser:** free-användare ser de hetaste ställena som **låsta guld-pins**: `/api/hotspots`
+  svarar då med `lockedHotspots: [{lat, lon, species, label, score, locked: true, gold: true}]`
+  (topp 20 över cap; `meta.hiddenPeaks` = totalt antal). Icke-bbox-grenen svarar med
+  `lockedFeatures` (samma form). Klienten renderar dessa i guld med 🔒 — man ser VILKA ställen
+  som är hetast, men får dem inte förrän årskortet är köpt.
 - **Compliance (viktigt):** att "fungera 100 % vid nedladdning och sedan cappas" utan
   tydlig förhandsinformation riskerar att klassas som vilseledande (Marknadsföringslagen /
   EU Omnibus) och App Store-avslag. Gör i stället: capp från första start + 🔒-teaser på

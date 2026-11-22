@@ -603,15 +603,15 @@ async function renderShop() {
   // 🔥 Säsongspass: gratisversionen cappas på score <= freeCapScore i /api/hotspots
   if (shop.topSpotsPass) {
     const pass = shop.topSpotsPass;
-    const ownedPass = ents.has("topspots") || ents.has("all") || ents.has("pro");
+    const ownedPass = ents.has(pass.id) || ents.has("topspots") || ents.has("all") || ents.has("pro");
     const card = document.createElement("div");
     card.className = "shop-card";
     card.style.gridColumn = "1 / -1";
     card.innerHTML =
       `<h3>🔥 ${pass.label}</h3>` +
-      `<div class="shop-price">${pass.priceSek} kr <span class="shop-kind">engångsköp för säsongen</span></div>` +
-      `<div class="shop-sub">Gratisversionen visar svampställen upp till score ${pass.freeCapScore}. ` +
-      `Med passet ser du även de hetaste ställena (score ${pass.freeCapScore + 1}–100) som pins i appen.</div>`;
+      `<div class="shop-price">${pass.priceSek} kr <span class="shop-kind">engångsköp, gäller ${pass.year ?? "året"}</span></div>` +
+      `<div class="shop-sub">Gratisversionen visar svampställen upp till score ${pass.freeCapScore} — de hetaste ställena (score ${pass.freeCapScore + 1}–100) visas som guld-glödande 🔒-pins. ` +
+      `Med årskortet låses alla upp.</div>`;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "shop-buy-btn";
@@ -623,7 +623,7 @@ async function renderShop() {
       btn.addEventListener("click", async () => {
         btn.disabled = true;
         try {
-          await window.MushroomBilling.purchase("topspots");
+          await window.MushroomBilling.purchase(pass.id);
           renderShop();
           updateShopBadge();
         } catch (e) {
