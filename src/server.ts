@@ -93,11 +93,28 @@ if (!process.env.MISTRAL_API_KEY) {
 const client = new Mistral({ apiKey: process.env.MISTRAL_API_KEY });
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "5mb" }));
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const noCache = { etag: false, lastModified: false, setHeaders: (res: express.Response) => res.setHeader("Cache-Control", "no-cache") };
 app.use(express.static(path.join(here, "..", "public"), noCache));
+
+// HTTP-cache för GET-API:er så iOS URLCache/HTTP-cache inte frågar igen vid varje pan.
+// URL:en innehåller alltid species/bbox/lat/lon/ents/date, så olika anrop cachen separat.
+app.use((req, res, next) => {
+  if (req.method === "GET" && req.path.startsWith("/api/")) {
+    if (req.path === "/api/debug/cell" || req.path === "/api/chat") {
+      res.setHeader("Cache-Control", "no-cache");
+    } else if (req.path === "/api/shop") {
+      res.setHeader("Cache-Control", "public, max-age=300");
+    } else if (req.path === "/api/hillshade") {
+      res.setHeader("Cache-Control", "public, max-age=3600"); // terräng är statisk
+    } else {
+      res.setHeader("Cache-Control", "public, max-age=60"); // meta/hotspots/peaks/unlocked
+    }
+  }
+  next();
+});
 app.use("/vendor/maplibre", express.static(path.join(here, "..", "node_modules", "maplibre-gl", "dist"), noCache));
 
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
@@ -1071,6 +1088,33 @@ async function computeCells(
   };
 }
 
+// In-memory-cache för computeCells: samma bbox+art+datum begärs ofta flera gånger
+// vid pan/zoom — cachen dedupar även pågående anrop (samma Promise) och kortar svarstiden.
+const cellsCache = new Map<string, { at: number; value: Promise<{ cells: CellScore[]; meta: Record<string, unknown> }> }>();
+const CELLS_CACHE_MAX = 64;
+const CELLS_CACHE_TTL_MS = 10 * 60 * 1000;
+async function computeCellsCached(
+  key: string,
+  minLon: number,
+  minLat: number,
+  maxLon: number,
+  maxLat: number,
+  cell: number,
+  asOf: Date,
+  staticOnly: boolean,
+): Promise<{ cells: CellScore[]; meta: Record<string, unknown> }> {
+  const ck = [key, minLon.toFixed(5), minLat.toFixed(5), maxLon.toFixed(5), maxLat.toFixed(5), cell, asOf.toISOString(), staticOnly ? 1 : 0].join("|");
+  const hit = cellsCache.get(ck);
+  if (hit && Date.now() - hit.at < CELLS_CACHE_TTL_MS) return hit.value;
+  const p = computeCells(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
+  cellsCache.set(ck, { at: Date.now(), value: p });
+  if (cellsCache.size > CELLS_CACHE_MAX) {
+    const first = cellsCache.keys().next().value;
+    if (first !== undefined) cellsCache.delete(first);
+  }
+  return p;
+}
+
 app.get("/api/hotspots", async (req, res) => {
   const keys = String(req.query.species ?? "")
     .split(",")
@@ -1115,7 +1159,7 @@ app.get("/api/hotspots", async (req, res) => {
     // Peak-pocket mode for the iOS symbol/icon layer: local maxima >= minScore,
     // thinned to ~120 m spacing, capped at 120 per viewport, across all checked species.
     const perSpecies = await Promise.all(
-      keys.map((k) => computeCells(k, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly)),
+      keys.map((k) => computeCellsCached(k, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly)),
     );
     const all: { lon: number; lat: number; score: number; species: string }[] = [];
     for (let si = 0; si < perSpecies.length; si++) {
@@ -1165,7 +1209,7 @@ app.get("/api/hotspots", async (req, res) => {
   }
 
   const key = keys[0];
-  const { cells, meta } = await computeCells(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
+  const { cells, meta } = await computeCellsCached(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
   const features = cells.map((c) => ({
     type: "Feature",
     properties: { score: c.score, heat: c.heat },
@@ -1211,7 +1255,7 @@ app.get("/api/peaks", async (req, res) => {
   const asOf = parseAsOf(String(req.query.date ?? ""));
   const span = Math.max(maxLon - minLon, maxLat - minLat);
   const cell = cellForSpan(span);
-  const { cells, meta } = await computeCells(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
+  const { cells, meta } = await computeCellsCached(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
   const grid = new Map<string, CellScore>();
   for (const c of cells) grid.set(`${c.lon.toFixed(6)},${c.lat.toFixed(6)}`, c);
   const peaks: CellScore[] = [];
@@ -1314,7 +1358,7 @@ app.get("/api/hillshade", async (req, res) => {
     }
   }
   res.setHeader("Content-Type", "image/png");
-  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Cache-Control", "public, max-age=3600");
   res.send(PNG.sync.write(png));
 });
 
@@ -1514,10 +1558,10 @@ async function renderHabitatTile(
   const eMaxLat = bbox.maxLat + M * cell;
   let cells: CellScore[];
   if (keys.length === 1) {
-    cells = (await computeCells(keys[0], eMinLon, eMinLat, eMaxLon, eMaxLat, cell, asOf, staticOnly)).cells;
+    cells = (await computeCellsCached(keys[0], eMinLon, eMinLat, eMaxLon, eMaxLat, cell, asOf, staticOnly)).cells;
   } else {
     const parts = await Promise.all(
-      keys.map((k) => computeCells(k, eMinLon, eMinLat, eMaxLon, eMaxLat, cell, asOf, staticOnly)),
+      keys.map((k) => computeCellsCached(k, eMinLon, eMinLat, eMaxLon, eMaxLat, cell, asOf, staticOnly)),
     );
     const merged = new Map<string, CellScore>();
     for (const p of parts) {
@@ -1699,6 +1743,110 @@ app.get("/api/tiles/multi/:z/:x/:y.png", async (req, res) => {
   res.setHeader("Content-Type", "image/png");
   res.setHeader("Cache-Control", cacheControl);
   res.send(buf);
+});
+
+// Batch-variant av /api/debug/cell: många punkter i ett anrop (används av scripts/validate-auc.mjs
+// som annars gör ~200k individuella HTTP-anrop). ents skickas som query param (?ents=all).
+app.post("/api/debug/cells", async (req, res) => {
+  const key = String(req.body?.species ?? "");
+  const species = SPECIES[key];
+  if (!species) return res.status(400).json({ error: "Okänd art." });
+  const lockedB = gateSpecies(req, [key]);
+  if (lockedB.length > 0) return lockedResponse(res, lockedB);
+  const rawPts: unknown = Array.isArray(req.body?.points) ? req.body.points : [];
+  const pts = (rawPts as unknown[])
+    .filter((p): p is unknown[] => Array.isArray(p) && p.length === 2 && p.every((v) => Number.isFinite(Number(v))))
+    .map((p) => [Number(p[0]), Number(p[1])] as [number, number])
+    .slice(0, 20000);
+  const staticOnly = req.body?.static === 1 || req.body?.static === true || req.query.static === "1";
+  const asOf = parseAsOf(String(req.body?.date ?? req.query.date ?? ""));
+  const store = await getLayerStore();
+  const useMask = store.mask !== null;
+  let forestPolys: Poly[] | null = null;
+  let exclusions: Exclusions | null = null;
+  if (!useMask && pts.length > 0) {
+    const lons = pts.map((p) => p[0]);
+    const lats = pts.map((p) => p[1]);
+    const b = [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)];
+    const [fp, ex] = await Promise.all([
+      forestPolygonsForBox(b[0], b[1], b[2], b[3]),
+      exclusionsForBox(b[0], b[1], b[2], b[3]),
+    ]);
+    forestPolys = fp;
+    exclusions = ex;
+  }
+  const ex = exclusions ?? { polys: [] as Poly[], lines: [] as [number, number][][] };
+  const waterPolys = ex.water ?? [];
+  // Väder en gång vid mittpunkten (samma approximation som computeCells).
+  let rainFactor = 0.5;
+  let frost = 1;
+  let flush = 1;
+  if (!staticOnly && pts.length > 0) {
+    const cLat = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+    const cLon = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+    try {
+      const vals = await rainValues(cLat, cLon);
+      const r14 = sumRain(vals, asOf, 14);
+      const r90 = sumRain(vals, asOf, 90);
+      rainFactor =
+        (r14 === null ? 0.5 : 1 - Math.exp(-r14 / 32)) *
+        (r90 === null ? 1 : 0.75 + 0.25 * (1 - Math.exp(-r90 / 120)));
+    } catch {}
+    const [minTemp, coolNights] = await Promise.all([minTempLast48h(cLat, cLon), coolNightsLast7d(cLat, cLon, asOf)]);
+    if (species.frostSensitive && minTemp !== null && minTemp <= -3) frost = 0;
+    flush = flushFactor(coolNights);
+  }
+  const obsIdx = await getObsIndex();
+  const clearcuts = store.vectors.get("avverkningar");
+  const results: Record<string, unknown>[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const [lon, lat] = pts[i];
+    const [e0, n0] = toSWEREF(lon, lat);
+    const inForest = useMask
+      ? store.mask!.has(e0, n0) && store.mask!.allows(e0, n0)
+      : forestPolys !== null && pointInPolys(forestPolys, lon, lat);
+    const nearWater =
+      waterPolys.length > 0 &&
+      (pointInPolys(waterPolys, lon, lat) || distToPolysMeters(waterPolys, lon, lat) < WATER_BUFFER_M);
+    const excluded =
+      nearWater ||
+      (ex.polys.length > 0 &&
+        (pointInPolys(ex.polys, lon, lat) || distToPolysMeters(ex.polys, lon, lat) < EXCLUSION_BUFFER_M));
+    const roadDist = ex.lines.length > 0 ? distToLinesMeters(ex.lines, lon, lat) : Infinity;
+    const roadFactor = roadDist < ROAD_ZERO_M ? 0 : roadDist < ROAD_HALF_M ? 0.5 : 1;
+    const forestEdge =
+      inForest &&
+      forestPolys !== null &&
+      forestPolys.length > 0 &&
+      (!pointInPolys(forestPolys, lon + 0.001, lat) ||
+        !pointInPolys(forestPolys, lon - 0.001, lat) ||
+        !pointInPolys(forestPolys, lon, lat + 0.001) ||
+        !pointInPolys(forestPolys, lon, lat - 0.001));
+    const inClearcut = clearcuts ? clearcuts.contains(e0, n0) : false;
+    const habitat = staticHabitatScore(store, key, lon, lat, {
+      forestOk: inForest,
+      inClearcut,
+      excluded,
+      roadFactor,
+      forestEdge,
+    });
+    const dynamic = staticOnly ? 1 : seasonalFactor(species, lat, asOf) * rainFactor * frost * flush;
+    let prior = obsPrior(obsIdx, key, lon, lat);
+    if (species.protected) prior = 0;
+    const score = Math.min(100, Math.round(100 * habitat * dynamic * (1 + 0.15 * prior)));
+    results.push({
+      lon,
+      lat,
+      score,
+      habitat: Number(habitat.toFixed(4)),
+      inForest,
+      excluded,
+      gddEff: effectiveGdd5(store, lon, lat),
+      obsPrior: Number(prior.toFixed(3)),
+    });
+    if (i % 500 === 499) await new Promise((r) => setImmediate(r));
+  }
+  res.json({ species: key, staticOnly, count: results.length, results });
 });
 
 app.get("/api/debug/cell", async (req, res) => {
