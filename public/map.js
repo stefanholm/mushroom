@@ -211,10 +211,10 @@ function selectedSpecies() {
 function rebuildHabitat() {
   if (!map) return;
   for (const l of map.getStyle().layers ?? []) {
-    if (l.id.startsWith("habitat-")) {
-      if (map.getLayer(l.id)) map.removeLayer(l.id);
-      if (map.getSource(l.id.slice(8))) map.removeSource(l.id.slice(8));
-    }
+    if (l.id.startsWith("habitat-") && map.getLayer(l.id)) map.removeLayer(l.id);
+  }
+  for (const s of Object.keys(map.getStyle().sources ?? {})) {
+    if (s.startsWith("hab-") && map.getSource(s)) map.removeSource(s);
   }
   for (const sp of selectedSpecies()) {
     const srcId = "hab-" + sp;
@@ -810,28 +810,34 @@ document.getElementById("redeemBtn")?.addEventListener("click", async () => {
   }
   if (btn) btn.disabled = true;
   if (status) status.textContent = "Löser in…";
+  let j = null;
+  let ok = false;
   try {
     const r = await fetch("/api/redeem", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ code, device: deviceId() }),
     });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      if (status) status.textContent = j.error ?? "Kunde inte lösa in koden.";
-    } else {
-      addEntitlement(j.entitlement);
-      if (status) status.textContent = "🎉 Upplåst: " + (j.label ?? j.entitlement) + (j.alreadyRedeemed ? " (redan inlöst på denna enhet)" : "");
-      if (input) input.value = "";
+    j = await r.json().catch(() => ({}));
+    ok = r.ok;
+    if (!r.ok && status) status.textContent = j.error ?? "Kunde inte lösa in koden.";
+  } catch (e) {
+    console.error("redeem fetch misslyckades:", e);
+    if (status) status.textContent = "Servern svarar inte just nu. (se konsollen)";
+  }
+  if (ok && j && j.entitlement) {
+    addEntitlement(j.entitlement);
+    if (status) status.textContent = "🎉 Upplåst: " + (j.label ?? j.entitlement) + (j.alreadyRedeemed ? " (redan inlöst på denna enhet)" : "");
+    if (input) input.value = "";
+    try {
       renderShop();
       if (typeof speciesList !== "undefined" && speciesList) applySpeciesList(speciesList);
       if (typeof rebuildHabitat === "function") rebuildHabitat();
       if (typeof refreshMeta === "function") refreshMeta();
       updateShopBadge();
+    } catch (e) {
+      console.error("UI-uppdatering efter redeem misslyckades (entitlement är upplåst ändå):", e);
     }
-  } catch (e) {
-    console.error("redeem fetch misslyckades:", e);
-    if (status) status.textContent = "Servern svarar inte just nu. (se konsollen)";
   }
   if (btn) btn.disabled = false;
 });
