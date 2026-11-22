@@ -195,6 +195,8 @@ for (const [species, feats] of [...bySpecies.entries()].sort()) {
   const obsScores = evalObs.map((r) => r.score);
   const bgScores = bgRes.map((r) => r.score);
   const overall = auc(obsScores, bgScores);
+  // Sekundärt mått: AUC på ALLA fynd (ofiltrerat) så masktäckningseffekten syns bredvid.
+  const aucAll = auc(obsRes.map((r) => r.score), bgScores);
 
   const bands = {};
   for (const r of evalObs) {
@@ -220,6 +222,7 @@ for (const [species, feats] of [...bySpecies.entries()].sort()) {
     inForestPct,
     background: bgScores.length,
     auc: Number(overall.toFixed(3)),
+    aucAllObs: Number(aucAll.toFixed(3)),
     meanObs: Number((obsScores.reduce((a, b) => a + b, 0) / Math.max(1, obsScores.length)).toFixed(1)),
     meanBg: Number((bgScores.reduce((a, b) => a + b, 0) / Math.max(1, bgScores.length)).toFixed(1)),
     byGddBand: byBand,
@@ -227,7 +230,7 @@ for (const [species, feats] of [...bySpecies.entries()].sort()) {
     flag,
   };
   console.log(
-    `${species.padEnd(24)} n=${String(obsInForest.length).padStart(4)}/${String(sample.length).padEnd(4)} (${String(inForestPct).padStart(3)}% skog) AUC=${overall.toFixed(3)} ` +
+    `${species.padEnd(24)} n=${String(obsInForest.length).padStart(4)}/${String(sample.length).padEnd(4)} (${String(inForestPct).padStart(3)}% skog) AUC=${overall.toFixed(3)} AUCall=${aucAll.toFixed(3)} ` +
     `fynd=${report.species[species].meanObs} bg=${report.species[species].meanBg} ${flag}`,
   );
 }
@@ -235,6 +238,8 @@ for (const [species, feats] of [...bySpecies.entries()].sort()) {
 const aucs = Object.values(report.species).map((s) => s.auc).filter(Number.isFinite);
 const meanAuc = aucs.reduce((a, b) => a + b, 0) / Math.max(1, aucs.length);
 report.meanAuc = Number(meanAuc.toFixed(3));
+const aucsAll = Object.values(report.species).map((s) => s.aucAllObs).filter(Number.isFinite);
+report.meanAucAllObs = Number((aucsAll.reduce((a, b) => a + b, 0) / Math.max(1, aucsAll.length)).toFixed(3));
 report.background = "random celler innanför skogsmasken (inForest && !excluded)";
 report.speciesFlagged = Object.entries(report.species).filter(([, s]) => s.flag === "KALIBRERA").map(([id]) => id);
 
