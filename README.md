@@ -51,7 +51,8 @@ npm run typecheck
 - **Spara PNG** exporterar kartvyn som bild.
 - `GET /api/peaks?species=...&minLon=...&minScore=50` — GeoJSON med lokala score-toppar (default minScore=50; med `static=1` är score habitat×100 så använd då högre tröskel, t.ex. 80)
   (för PNG-ikoner/symbol-lager i t.ex. Xcode-appen).
-- **Inlösenkoder (redeem codes)**: admin via `npm run redeem -- create --grant blandad-korg-1 --uses 5 --note "…"`;
+- **Inlösenkoder (redeem codes)**: admin i appen (Inställningar → 🛠 Admin, PIN = `ADMIN_PIN` i `.env`:
+  välj 1 art / 1–3 pack / alla, uses, expires) eller CLI `npm run redeem -- create --grant blandad-korg-1 --uses 5 --note "…"`;
   användare löser in i Affären (webb) eller iOS-shop via `POST /api/redeem {code, device}` → entitlement direkt.
   `GET /api/redeem?device=x` listar enhetens inlösta koder. Koder/logg i `data/redeem-codes.json` +
   `data/redeem-log.json` (git-ignored). Plan: `docs/REDEEM-CODES.md`.

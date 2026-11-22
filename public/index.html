@@ -86,6 +86,40 @@
             <input id="trails" type="checkbox" />
           </label>
         </div>
+
+        <div class="settings-card" id="adminCard">
+          <h3>🛠 Admin — inlösenkoder</h3>
+          <div id="adminLock">
+            <div class="redeem-row">
+              <input id="adminPin" type="password" autocomplete="off" placeholder="Admin-PIN" />
+              <button id="adminUnlockBtn" type="button" class="shop-buy-btn">Lås upp</button>
+            </div>
+            <span id="adminStatus" class="shop-sub"></span>
+          </div>
+          <div id="adminPanel" hidden>
+            <h4>Skapa inlösenkod</h4>
+            <div class="redeem-row">
+              <select id="adminGrantType">
+                <option value="species">🍄 1 art</option>
+                <option value="packs">📦 1–3 pack</option>
+                <option value="all">🌍 Alla arter (all)</option>
+              </select>
+              <input id="adminUses" type="number" min="0" value="1" title="max antal enheter (0 = obegränsat)" style="width:90px" />
+              <input id="adminExpires" type="text" placeholder="YYYY-MM-DD (valfritt)" style="width:160px" />
+              <input id="adminNote" type="text" placeholder="anteckning (t.ex. ärende #123)" style="flex:1;min-width:140px" />
+            </div>
+            <select id="adminSpecies" hidden style="max-width:340px;margin:0.3rem 0"></select>
+            <div id="adminPacks" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin:0.3rem 0"></div>
+            <div class="redeem-row">
+              <button id="adminCreateBtn" type="button" class="shop-buy-btn">Skapa kod</button>
+              <span id="adminNewCode" class="shop-sub"></span>
+            </div>
+            <h4>Existerande koder</h4>
+            <div id="adminCodeList" class="shop-sub"></div>
+            <h4>Referrals &amp; inlösen-logg</h4>
+            <div id="adminOverview" class="shop-sub" style="white-space:pre-wrap;max-height:260px;overflow:auto"></div>
+          </div>
+        </div>
       </section>
 
       <section id="pane-shop" hidden>

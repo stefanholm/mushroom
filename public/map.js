@@ -545,7 +545,10 @@ function activeEntitlements() {
 
 function addEntitlement(e) {
   const ents = new Set(activeEntitlements());
-  ents.add(e);
+  for (const part of String(e).split(",")) {
+    const p = part.trim();
+    if (p) ents.add(p);
+  }
   localStorage.setItem("mushroom-ents", [...ents].join(","));
 }
 
@@ -880,6 +883,7 @@ document.getElementById("claimRewardBtn")?.addEventListener("click", async () =>
   const body = {
     species: chosenId,
     type,
+    device: deviceId(),
     claimed: ents.filter((e) => e.startsWith("reward:")),
     types,
     rating: Number(ratingEl?.value || 0),
@@ -920,3 +924,185 @@ document.getElementById("claimRewardBtn")?.addEventListener("click", async () =>
   refreshMeta();
   closeRewardModal();
 });
+
+// --- Admin-panel (Inställningar) — inlösenkoder via /api/admin/* (PIN i .env ADMIN_PIN) ---
+let adminPin = "";
+try {
+  adminPin = sessionStorage.getItem("mushroom-admin-pin") || "";
+} catch {}
+
+function adminUrl(path) {
+  return path + (path.includes("?") ? "&" : "?") + "pin=" + encodeURIComponent(adminPin);
+}
+
+async function adminFetch(path, opts = {}) {
+  const r = await fetch(adminUrl(path), opts);
+  if (r.status === 403 || r.status === 404 || r.status === 429) {
+    adminPin = "";
+    try {
+      sessionStorage.removeItem("mushroom-admin-pin");
+    } catch {}
+    const lock = document.getElementById("adminLock");
+    const panel = document.getElementById("adminPanel");
+    if (lock) lock.hidden = false;
+    if (panel) panel.hidden = true;
+    const st = document.getElementById("adminStatus");
+    if (st) st.textContent = r.status === 404 ? "Admin är avstängt på servern (ADMIN_PIN saknas i .env)." : "Fel PIN eller för många försök.";
+    throw new Error("admin auth");
+  }
+  return r;
+}
+
+async function refreshAdminPanel() {
+  const r = await adminFetch("/api/admin/overview");
+  if (!r.ok) throw new Error("overview failed");
+  const j = await r.json();
+  const list = document.getElementById("adminCodeList");
+  if (list) {
+    list.innerHTML = "";
+    for (const c of j.codes) {
+      const row = document.createElement("div");
+      row.style.marginBottom = "0.25rem";
+      const state = c.revoked ? "ÅTERKALLAD" : c.expires && c.expires < new Date().toISOString().slice(0, 10) ? "UTGÅNGEN" : "aktiv";
+      row.textContent = `${c.code}  ${state}  ${c.label}  uses ${c.used}/${c.uses === 0 ? "∞" : c.uses}  expires ${c.expires ?? "-"}  ${c.note ?? ""}`;
+      if (!c.revoked) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "shop-buy-btn";
+        btn.style.marginLeft = "0.5rem";
+        btn.textContent = "Återkalla";
+        btn.addEventListener("click", async () => {
+          await adminFetch("/api/admin/redeem/revoke", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ pin: adminPin, code: c.code }),
+          });
+          refreshAdminPanel();
+        });
+        row.appendChild(btn);
+      }
+      list.appendChild(row);
+    }
+    if (j.codes.length === 0) list.textContent = "Inga koder än.";
+  }
+  const ov = document.getElementById("adminOverview");
+  if (ov) {
+    const lines = [];
+    lines.push(`referral-koder utfärdade: ${j.referrals.codesIssued}`);
+    lines.push("inlösta per enhet: " + JSON.stringify(j.referrals.redeemedBy));
+    lines.push("förtjänade per ägare: " + JSON.stringify(j.referrals.earnedBy));
+    lines.push("reward-claims: " + JSON.stringify(j.referrals.rewardClaims));
+    lines.push("--- senaste inlösen (logg) ---");
+    for (const l of j.log.slice(-15)) lines.push(typeof l === "string" ? l : `${l.at} ${l.code} ${l.device} -> ${l.grant} ${l.note ?? ""}`);
+    ov.textContent = lines.join("\n");
+  }
+}
+
+function populateAdminForm() {
+  const sel = document.getElementById("adminSpecies");
+  if (sel && typeof speciesList !== "undefined" && speciesList) {
+    sel.innerHTML = "";
+    for (const s of speciesList) {
+      if (s.pack) {
+        const o = document.createElement("option");
+        o.value = s.id;
+        o.textContent = s.label.split(" (")[0];
+        sel.appendChild(o);
+      }
+    }
+  }
+  const packsDiv = document.getElementById("adminPacks");
+  if (packsDiv) {
+    packsDiv.innerHTML = "";
+    fetch("/api/shop")
+      .then((r) => r.json())
+      .then((shop) => {
+        for (const p of shop.packs ?? []) {
+          if (p.kind === "pro") continue;
+          const lab = document.createElement("label");
+          lab.style.cssText = "display:flex;gap:0.3rem;align-items:center;border:1px solid #cbd5e1;border-radius:6px;padding:0.15rem 0.4rem;font-size:0.8rem";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.value = p.id;
+          lab.appendChild(cb);
+          lab.appendChild(document.createTextNode(p.label.split("—")[0].trim()));
+          packsDiv.appendChild(lab);
+        }
+      })
+      .catch(() => {});
+  }
+}
+
+function setupAdmin() {
+  const unlockBtn = document.getElementById("adminUnlockBtn");
+  const pinInput = document.getElementById("adminPin");
+  const panel = document.getElementById("adminPanel");
+  const lock = document.getElementById("adminLock");
+  const typeSel = document.getElementById("adminGrantType");
+  const speciesSel = document.getElementById("adminSpecies");
+  const packsDiv = document.getElementById("adminPacks");
+
+  function syncGrantType() {
+    const t = typeSel?.value;
+    if (speciesSel) speciesSel.hidden = t !== "species";
+    if (packsDiv) packsDiv.hidden = t !== "packs";
+  }
+  typeSel?.addEventListener("change", syncGrantType);
+
+  unlockBtn?.addEventListener("click", async () => {
+    adminPin = (pinInput?.value ?? "").trim();
+    if (!adminPin) return;
+    try {
+      await adminFetch("/api/admin/overview");
+      try {
+        sessionStorage.setItem("mushroom-admin-pin", adminPin);
+      } catch {}
+      if (lock) lock.hidden = true;
+      if (panel) panel.hidden = false;
+      populateAdminForm();
+      syncGrantType();
+      refreshAdminPanel();
+    } catch {}
+  });
+
+  if (adminPin && lock && panel) {
+    lock.hidden = true;
+    panel.hidden = false;
+    populateAdminForm();
+    syncGrantType();
+    refreshAdminPanel().catch(() => {});
+  }
+
+  document.getElementById("adminCreateBtn")?.addEventListener("click", async () => {
+    const out = document.getElementById("adminNewCode");
+    const t = typeSel?.value ?? "all";
+    let grant = "";
+    if (t === "all") grant = "all";
+    else if (t === "species") grant = "species:" + (speciesSel?.value ?? "");
+    else {
+      const picked = Array.from(packsDiv?.querySelectorAll("input:checked") ?? []).map((c) => c.value);
+      if (picked.length === 0) {
+        if (out) out.textContent = "Välj minst 1 pack.";
+        return;
+      }
+      if (picked.length > 3) {
+        if (out) out.textContent = "Max 3 pack per kod.";
+        return;
+      }
+      grant = picked.join(",");
+    }
+    const uses = Number(document.getElementById("adminUses")?.value ?? 1);
+    const expires = (document.getElementById("adminExpires")?.value ?? "").trim();
+    const note = (document.getElementById("adminNote")?.value ?? "").trim();
+    const r = await adminFetch("/api/admin/redeem", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pin: adminPin, grant, uses, expires, note }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (out) out.textContent = r.ok ? `✅ ${j.code} — ger ${j.label}` : "❌ " + (j.error ?? "kunde inte skapa");
+    if (r.ok) refreshAdminPanel();
+  });
+}
+
+setupAdmin();

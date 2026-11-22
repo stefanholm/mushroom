@@ -8,7 +8,7 @@ import { Mistral } from "@mistralai/mistralai";
 import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
 import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, MAX_REWARD_CLAIMS, MAX_REVIEW_CLAIMS, MAX_REFERRAL_CLAIMS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
-import { normalizeCode, checksumOk, loadCodes, saveCodes, appendLog, grantLabel } from "./redeem.js";
+import { normalizeCode, checksumOk, loadCodes, saveCodes, appendLog, grantLabel, makeCode, validateGrant, LOG_FILE } from "./redeem.js";
 
 // Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
 // I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
@@ -2104,27 +2104,51 @@ app.get("/api/unlocked", (req, res) => {
 // POST /api/referral/create {device} -> {code}  (användaren delar koden)
 // POST /api/referral/redeem {code, device} -> 200 om giltig, ej egen, ej använd; då får
 //   enheten ett referral-claim (max MAX_REFERRAL_CLAIMS st).
-const referralCodes = new Map<string, { owner: string; usedBy: string | null }>();
-const redeemedByDevice = new Map<string, number>();
+// --- Referrals: persistenta i data/referrals.json (överlever omstarter) ---
+interface ReferralState {
+  codes: Record<string, { owner: string; usedBy: string | null }>;
+  redeemedBy: Record<string, number>; // device -> inlösta referral-koder
+  earnedBy: Record<string, number>; // ägare -> inbjudna vänner (förtjänade claims)
+  rewardClaims: Record<string, { id: string; type: string; at: string }[]>; // device -> claims
+}
+const REFERRALS_FILE = path.join(here, "..", "data", "referrals.json");
+function loadReferrals(): ReferralState {
+  try {
+    return { codes: {}, redeemedBy: {}, earnedBy: {}, rewardClaims: {}, ...JSON.parse(fs.readFileSync(REFERRALS_FILE, "utf8")) };
+  } catch {
+    return { codes: {}, redeemedBy: {}, earnedBy: {}, rewardClaims: {} };
+  }
+}
+function saveReferrals(s: ReferralState): void {
+  fs.mkdirSync(path.dirname(REFERRALS_FILE), { recursive: true });
+  const tmp = REFERRALS_FILE + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(s, null, 2) + "\n");
+  fs.renameSync(tmp, REFERRALS_FILE);
+}
 function newCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 app.post("/api/referral/create", (req, res) => {
   const device = String(req.body?.device ?? "anon");
   const code = newCode();
-  referralCodes.set(code, { owner: device, usedBy: null });
-  res.json({ code, shareText: `SvampRadar: prova appen! Använd min kod ${code} så får vi båda en gratis svamp-art.` });
+  const st = loadReferrals();
+  st.codes[code] = { owner: device, usedBy: null };
+  saveReferrals(st);
+  res.json({ code, earned: st.earnedBy[device] ?? 0, shareText: `SvampRadar: prova appen! Använd min kod ${code} så får vi båda en gratis svamp-art.` });
 });
 app.post("/api/referral/redeem", (req, res) => {
   const code = String(req.body?.code ?? "").toUpperCase();
   const device = String(req.body?.device ?? "anon");
-  const entry = referralCodes.get(code);
+  const st = loadReferrals();
+  const entry = st.codes[code];
   if (!entry) return res.status(404).json({ error: "Ogiltig kod." });
   if (entry.owner === device) return res.status(403).json({ error: "Kan inte lösa in sin egen kod." });
   if (entry.usedBy) return res.status(409).json({ error: "Koden är redan använd." });
   entry.usedBy = device;
-  redeemedByDevice.set(device, (redeemedByDevice.get(device) ?? 0) + 1);
-  res.json({ ok: true, referralClaims: Math.min(redeemedByDevice.get(device) ?? 1, MAX_REFERRAL_CLAIMS), maxReferralClaims: MAX_REFERRAL_CLAIMS });
+  st.redeemedBy[device] = (st.redeemedBy[device] ?? 0) + 1;
+  st.earnedBy[entry.owner] = (st.earnedBy[entry.owner] ?? 0) + 1; // ägaren får också en referral-credit
+  saveReferrals(st);
+  res.json({ ok: true, referralClaims: Math.min(st.redeemedBy[device] ?? 1, MAX_REFERRAL_CLAIMS), earned: st.earnedBy[entry.owner] ?? 0, maxReferralClaims: MAX_REFERRAL_CLAIMS });
 });
 
 // --- Inlösenkoder (redeem codes) — admin skapar via `npm run redeem`, fil data/redeem-codes.json ---
@@ -2181,26 +2205,22 @@ app.get("/api/redeem", (req, res) => {
 //       "referral" (max MAX_REFERRAL_CLAIMS, kräver att enheten löst in en kod —
 //       här godkänns body.types från klienten; i produktion kollas referralCodes/redeemedByDevice i DB).
 app.post("/api/reward/claim", (req, res) => {
+  const device = String(req.body?.device ?? "anon");
   const id = String(req.body?.species ?? "");
   const type = String(req.body?.type ?? "review");
   if (!isValidRewardClaim(id)) {
     return res.status(403).json({ error: "Arten kan inte lösas ut via belöning.", allowed: REVIEW_REWARD_SPECIES });
   }
-  const claimedRaw = req.body?.claimed;
-  const claimed: string[] = Array.isArray(claimedRaw)
-    ? claimedRaw.map(String)
-    : String(claimedRaw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  if (claimed.includes("reward:" + id)) {
+  const st = loadReferrals();
+  const claims = st.rewardClaims[device] ?? [];
+  if (claims.some((c) => c.id === id)) {
     return res.status(409).json({ error: "Redan upplåst via belöning.", entitlements: "reward:" + id });
   }
-  const typesRaw = req.body?.types;
-  const types: string[] = Array.isArray(typesRaw) ? typesRaw.map(String) : String(typesRaw ?? "").split(",").filter(Boolean);
-  const nReview = types.filter((t) => t === "review").length;
-  const nRef = types.filter((t) => t === "referral").length;
-  if (claimed.filter((c) => c.startsWith("reward:")).length >= MAX_REWARD_CLAIMS) {
+  if (claims.length >= MAX_REWARD_CLAIMS) {
     return res.status(403).json({ error: `Max ${MAX_REWARD_CLAIMS} gratis-arter (1 recension + ${MAX_REFERRAL_CLAIMS} referrals) — köp resten för 10 kr.`, maxRewardClaims: MAX_REWARD_CLAIMS });
   }
   if (type === "review") {
+    const nReview = claims.filter((c) => c.type === "review").length;
     const rating = Number(req.body?.rating ?? 0);
     const comment = String(req.body?.comment ?? "").trim();
     if (nReview >= MAX_REVIEW_CLAIMS) return res.status(403).json({ error: "App-recensionen är redan använd (max 1)." });
@@ -2208,11 +2228,108 @@ app.post("/api/reward/claim", (req, res) => {
       return res.status(400).json({ error: "Ange betyg 1–5 eller en kommentar." });
     }
   } else if (type === "referral") {
+    const nRef = claims.filter((c) => c.type === "referral").length;
     if (nRef >= MAX_REFERRAL_CLAIMS) return res.status(403).json({ error: `Max ${MAX_REFERRAL_CLAIMS} referral-belöningar.`, maxReferralClaims: MAX_REFERRAL_CLAIMS });
+    if ((st.redeemedBy[device] ?? 0) <= nRef) {
+      return res.status(403).json({ error: "Lös in en referral-kod från en vän först (kontrolleras server-side).", maxReferralClaims: MAX_REFERRAL_CLAIMS });
+    }
   } else {
     return res.status(400).json({ error: "Ogiltig belöningstyp (review|referral)." });
   }
-  res.json({ ok: true, type, entitlements: `reward:${id}`, unlocked: id, rewardClaimsLeft: MAX_REWARD_CLAIMS - claimed.filter((c) => c.startsWith("reward:")).length - 1 });
+  claims.push({ id, type, at: new Date().toISOString() });
+  st.rewardClaims[device] = claims;
+  saveReferrals(st);
+  res.json({ ok: true, type, entitlements: `reward:${id}`, unlocked: id, rewardClaimsLeft: MAX_REWARD_CLAIMS - claims.length, referralClaims: Math.min(st.redeemedBy[device] ?? 0, MAX_REFERRAL_CLAIMS), maxReferralClaims: MAX_REFERRAL_CLAIMS });
+});
+
+// --- Admin-API (PIN från .env ADMIN_PIN) — skapa/återkalla inlösenkoder inifrån appen ---
+const ADMIN_PIN = process.env.ADMIN_PIN ?? "";
+const adminAttempts = new Map<string, number[]>();
+function adminGuard(req: express.Request, res: express.Response): boolean {
+  if (!ADMIN_PIN) {
+    res.status(404).json({ error: "Admin avstängt — sätt ADMIN_PIN i .env." });
+    return false;
+  }
+  const now = Date.now();
+  const key = req.ip ?? "x";
+  const arr = (adminAttempts.get(key) ?? []).filter((t) => now - t < 10 * 60_000);
+  adminAttempts.set(key, arr);
+  arr.push(now);
+  if (arr.length > 10) {
+    res.status(429).json({ error: "För många admin-försök." });
+    return false;
+  }
+  const pin = String(req.query.pin ?? req.body?.pin ?? "");
+  if (pin !== ADMIN_PIN) {
+    res.status(403).json({ error: "Fel PIN." });
+    return false;
+  }
+  return true;
+}
+
+app.post("/api/admin/redeem", (req, res) => {
+  if (!adminGuard(req, res)) return;
+  const grant = String(req.body?.grant ?? "");
+  const err = validateGrant(grant);
+  if (err) return res.status(400).json({ error: err });
+  const uses = Math.max(0, Math.min(100000, Math.floor(Number(req.body?.uses ?? 1)) || 1));
+  const expiresRaw = String(req.body?.expires ?? "").trim();
+  const expires = expiresRaw || null;
+  if (expires && !/^\d{4}-\d{2}-\d{2}$/.test(expires)) return res.status(400).json({ error: "expires ska vara YYYY-MM-DD" });
+  const note = String(req.body?.note ?? "").slice(0, 200);
+  const code = makeCode();
+  const codes = loadCodes();
+  codes[code] = { grant, uses, expires, note, createdAt: new Date().toISOString(), revoked: false, redeemedBy: [] };
+  saveCodes(codes);
+  appendLog({ at: new Date().toISOString(), code, device: "admin", grant, note, via: "admin-api" });
+  res.json({ ok: true, code, grant, label: grantLabel(grant), uses, expires, note });
+});
+
+app.post("/api/admin/redeem/revoke", (req, res) => {
+  if (!adminGuard(req, res)) return;
+  const code = normalizeCode(String(req.body?.code ?? ""));
+  const codes = loadCodes();
+  const e = codes[code];
+  if (!e) return res.status(404).json({ error: "Hittades inte." });
+  e.revoked = true;
+  saveCodes(codes);
+  res.json({ ok: true, code, revoked: true });
+});
+
+app.get("/api/admin/overview", (req, res) => {
+  if (!adminGuard(req, res)) return;
+  const codes = Object.entries(loadCodes()).map(([code, e]) => ({
+    code,
+    grant: e.grant,
+    label: grantLabel(e.grant),
+    uses: e.uses,
+    used: e.redeemedBy.length,
+    expires: e.expires,
+    revoked: e.revoked,
+    note: e.note,
+    createdAt: e.createdAt,
+  }));
+  let log: unknown[] = [];
+  try {
+    log = fs.readFileSync(LOG_FILE, "utf8").trim().split("\n").slice(-100).map((l) => {
+      try {
+        return JSON.parse(l);
+      } catch {
+        return l;
+      }
+    });
+  } catch {}
+  const st = loadReferrals();
+  res.json({
+    codes,
+    log,
+    referrals: {
+      codesIssued: Object.keys(st.codes).length,
+      redeemedBy: st.redeemedBy,
+      earnedBy: st.earnedBy,
+      rewardClaims: Object.fromEntries(Object.entries(st.rewardClaims).map(([d, c]) => [d, c.map((x) => `${x.id}:${x.type}`)])),
+    },
+  });
 });
 
 const port = Number(process.env.PORT ?? 3000);

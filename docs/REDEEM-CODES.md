@@ -20,7 +20,24 @@ stavfel → "Ogiltig kod" direkt.
 | `<packId>` | ett helt pack, t.ex. `blandad-korg-1`, `goliatmusseron-solo` |
 | `species:<id>` | en enskild art (ej solo-only — ge då solo-packet) |
 
-## Administration (CLI, ingen webb-admin än)
+## Administration — inifrån appen (admin-panel) ELLER CLI
+
+Sätt först `ADMIN_PIN=hemlig-pin` i `.env` (git-ignored). Admin är avstängt tills PIN är satt.
+
+**I appen:** Inställningar → 🛠 Admin — inlösenkoder → lås upp med PIN. Där kan du välja vad
+koden ska ge:
+- 🍄 **1 art** (dropdown över icke-fria arter)
+- 📦 **1–3 pack** (checkboxar, max 3 per kod → grant blir t.ex. `blandad-korg-1,blandad-korg-2`)
+- 🌍 **Alla arter** (`all`)
+plus uses (max enheter, 0 = obegränsat), valfritt expires-datum och anteckning.
+Koden visas direkt med kopiera-knapp. Panelen listar alla koder (med Återkalla-knapp) samt
+referral-statistik och inlösen-loggen.
+
+**Via API:** `POST /api/admin/redeem {pin, grant, uses, expires, note}`,
+`POST /api/admin/redeem/revoke {pin, code}`, `GET /api/admin/overview?pin=`.
+Rate limit 10 försök/10 min per IP. Fel PIN → 403.
+
+**Via CLI (samma sak):**
 
 ```
 npm run redeem -- create --grant blandad-korg-1 --uses 5 --note "kompis” --expires 2027-06-30
@@ -56,12 +73,27 @@ npm run redeem -- revoke SVAMP-XXXX-XXXX-XXXX
 3. iOS: samma POST till `/api/redeem`, device = appens UUID (Keychain). Samma UI-kort i
    shop-vyn.
 
-## Relation till referral/reward
+## Relation till referral/reward (nu server-side och persistenta)
 
-- **Referral-koder** (användare delar sin egen kod, `POST /api/referral/create`) är kvar
-  oförändrade — de ger referral-claims i reward-poolen (max 2, totalt max 3 gratisarter).
-- **Inlösenkoder** är admin-utfärdade och ger direkt entitlement — de räknas INTE mot
-  reward-poolen och kan även låsa upp solo/all/pro (admins val).
+- **Referral-koder** (`POST /api/referral/create` → dela kod → vän löser in via
+  `POST /api/referral/redeem`) är nu **persistenta** i `data/referrals.json`. Både den som
+  löser in och kodägaren får +1 referral-credit (`redeemedBy` / `earnedBy`).
+- `POST /api/reward/claim` kontrollerar nu **server-side** per enhet (`device` i body):
+  max 1 review-claim (kräver betyg 1–5 eller kommentar) + max 2 referral-claims, och en
+  referral-claim kräver att enheten faktiskt löst in en referral-kod (`redeemedBy[device]`),
+  totalt max 3 reward-arter. Claims sparas i `referrals.json` — överlever omstarter och
+  går inte att fuska via klientens ents.
+- **Inlösenkoder** är admin-utfärdade och ger direkt entitlement (även csv av flera pack)
+  — de räknas INTE mot reward-poolen och kan även låsa upp solo/all/pro (admins val).
+
+### Viktigt om Apple (ärlighet)
+- **Köp verifieras i produktion via App Store Server API** (JWS-kvitton från StoreKit 2
+  valideras server-side → ents sätts där, inte av klienten). Detta är "självspelande pianot"
+  för intäkterna.
+- **Recensioner går INTE att verifiera via något Apple-API** — det finns ingen publik metod
+  att kontrollera att en användare lämnat betyg/kommentar. Därför är review-claim
+  klient-påstådd här (i prod: visa `SKStoreReviewController` först + rimlighetslogg;
+  acceptera att någon fåtal fuskar — det kostar en 10-kr-art).
 
 ## Anti-abuse
 

@@ -47,24 +47,41 @@ export function checksumOk(code: string): boolean {
   return checksum(body.slice(0, 12)) === body.slice(12);
 }
 
+// grant kan vara flera entitlements kommaseparerade: "blandad-korg-1,blandad-korg-2" eller "species:bjorksopp,all"
 export function validateGrant(grant: string): string | null {
-  if (grant === "all" || grant === "pro") return null;
-  if (grant.startsWith("species:")) {
-    const id = grant.slice(8);
+  const parts = grant.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) return "Tomt grant";
+  if (parts.length > 1 && (parts.includes("all") || parts.includes("pro"))) return "all/pro kan inte kombineras med annat";
+  for (const g of parts) {
+    const err = validateOneGrant(g);
+    if (err) return err;
+  }
+  return null;
+}
+
+function validateOneGrant(g: string): string | null {
+  if (g === "all" || g === "pro") return null;
+  if (g.startsWith("species:")) {
+    const id = g.slice(8);
     if (!SPECIES[id]) return `Okänd art: ${id}`;
-    if (SOLO_ONLY_SPECIES.includes(id)) return `${id} är solo-only — ge pack ${PACKS["goliatmusseron-solo"] ? "goliatmusseron-solo" : "<solo-pack>"} istället`;
+    if (SOLO_ONLY_SPECIES.includes(id)) return `${id} är solo-only — ge pack goliatmusseron-solo istället`;
     return null;
   }
-  if (PACKS[grant]) return null;
-  return `Okänt grant "${grant}" — använd all | pro | <packId> | species:<id>`;
+  if ((PACKS as Record<string, unknown>)[g]) return null;
+  return `Okänt grant "${g}" — använd all | pro | <packId> | species:<id>`;
 }
 
 export function grantLabel(grant: string): string {
-  if (grant === "all") return "Alla arter";
-  if (grant === "pro") return "Pro";
-  if (grant.startsWith("species:")) return SPECIES[grant.slice(8)]?.label ?? grant;
-  const p = PACKS[grant];
-  return p ? `${p.label} (${p.species.length} arter)` : grant;
+  const parts = grant.split(",").map((s) => s.trim()).filter(Boolean);
+  return parts.map(oneLabel).join(" + ");
+}
+
+function oneLabel(g: string): string {
+  if (g === "all") return "Alla arter";
+  if (g === "pro") return "Pro";
+  if (g.startsWith("species:")) return SPECIES[g.slice(8)]?.label ?? g;
+  const p = (PACKS as Record<string, { label: string; species: string[] }>)[g];
+  return p ? `${p.label} (${p.species.length} arter)` : g;
 }
 
 export function loadCodes(): Record<string, RedeemCode> {
