@@ -600,7 +600,8 @@ async function renderShop() {
   const labelOf = (id) => speciesList?.find((s) => s.id === id)?.label.split(" (")[0] ?? id;
   grid.innerHTML = "";
 
-  // 🔥 Säsongspass: gratisversionen cappas på score <= freeCapScore i /api/hotspots
+  // 🔥 Årskort: efter provperiod göms topp-~30 % av pins för free; med årskortet kommer
+  // de tillbaka och glöder i guld (gold:true).
   if (shop.topSpotsPass) {
     const pass = shop.topSpotsPass;
     const ownedPass = ents.has(pass.id) || ents.has("topspots") || ents.has("all") || ents.has("pro");
@@ -610,8 +611,7 @@ async function renderShop() {
     card.innerHTML =
       `<h3>🔥 ${pass.label}</h3>` +
       `<div class="shop-price">${pass.priceSek} kr <span class="shop-kind">engångsköp, gäller ${pass.year ?? "året"}</span></div>` +
-      `<div class="shop-sub">Alla svampställen visas som vanliga pins — men med årskortet glöder de hetaste (score ${pass.freeCapScore + 1}–100) i <b>guld</b> så du direkt ser var det är som hetast. ` +
-      `Gratisversionen kan inte urskilja toppställena.</div>`;
+      `<div class="shop-sub">Under provperioden ser du alla ställen som vanliga pins. Efter den göms de hetaste ~${Math.round((pass.topHiddenFraction ?? 0.3) * 100)} % för gratisversionen — med årskortet kommer de tillbaka och glöder i <b>guld</b>, så du direkt ser var det är som hetast.</div>`;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "shop-buy-btn";

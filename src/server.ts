@@ -45,10 +45,11 @@ function lockedResponse(res: express.Response, locked: string[]) {
   return res.status(403).json({ error: "Låst innehåll — köp svamppack eller Pro i appen.", locked });
 }
 
-// --- Top-spot cap: gratisversionen ser bara pins upp till FREE_CAP_SCORE (0–100).
-// Score > cap kräver "topspots" (Säsongspass) eller all/pro. HEAT_BASE är 70 så 70
-// sammanfaller med där heat-färgen börjar — free ser ändå 50–70-bandet.
-const FREE_CAP_SCORE = Math.max(0, Math.min(100, Number(process.env.FREE_CAP_SCORE ?? 70) || 70));
+// --- Top-spot fraktion: free efter provperiod ser bara botten (1-frac) av topparna;
+// de översta frac (default 30 %) försvinner. Med årskort (topspots:<år>/all/pro) kommer
+// alla tillbaka och topp-frac får gold:true (glödande guld). Under provperiod (trial):
+// alla pins, inget guld.
+const FREE_HIDE_FRACTION = Math.max(0, Math.min(0.95, Number(process.env.FREE_HIDE_FRACTION ?? 0.3) || 0.3));
 const TOP_SPOTS_PRICE_SEK = Math.max(0, Number(process.env.TOP_SPOTS_PRICE_SEK ?? 99) || 99);
 const PASS_YEAR = new Date().getFullYear();
 const PASS_ID = `topspots:${PASS_YEAR}`; // årskort för innevarande år; "topspots" (alla år) funkar också
@@ -65,9 +66,9 @@ function capMeta(req: express.Request) {
   const paid = canSeeTopSpots(req);
   const trial = isTrial(req);
   return {
-    capped: !paid && !trial && FREE_CAP_SCORE < 100, // free efter provperiod: topparna bort
+    capped: !paid && !trial, // free efter provperiod: topp-fraktionen försvinner
     trial,
-    freeCapScore: FREE_CAP_SCORE,
+    topHiddenFraction: FREE_HIDE_FRACTION,
     passId: PASS_ID,
     passLabel: `Årskort ${PASS_YEAR}`,
     passPriceSek: TOP_SPOTS_PRICE_SEK,
@@ -1214,44 +1215,48 @@ app.get("/api/hotspots", async (req, res) => {
       }
     }
     all.sort((a, b) => b.score - a.score);
-    // Tre lägen: trial → alla pins, inget guld; free efter trial → bara ≤ cap; betalat →
-    // alla pins och score > cap får gold:true (glödande guld-pins, bara betalande ser dem).
     const cm = capMeta(req);
-    const goldPeaks = all.filter((p) => p.score > FREE_CAP_SCORE).length;
-    const eligible = cm.capped ? all.filter((p) => p.score <= FREE_CAP_SCORE) : all;
     const centerLat = (minLat + maxLat) / 2;
     const mPerDegLat = 111000;
     const mPerDegLon = 111000 * Math.cos((centerLat * Math.PI) / 180);
     const spacingDeg = 120 / Math.max(mPerDegLat, mPerDegLon);
     const picked: typeof all = [];
-    for (const p of eligible) {
+    for (const p of all) {
       if (picked.length >= 120) break;
       const tooClose = picked.some(
         (q) => Math.abs(q.lat - p.lat) < spacingDeg && Math.abs(q.lon - p.lon) < spacingDeg,
       );
       if (!tooClose) picked.push(p);
     }
+    // Top-fraktion på den färdiga pin-listan: free efter trial ser bara botten (1-frac),
+    // betalat ser alla och topp-frac får gold:true.
+    const goldN = picked.length > 0 ? Math.max(1, Math.round(picked.length * FREE_HIDE_FRACTION)) : 0;
+    const goldSet = new Set(picked.slice(0, goldN));
+    const visible = cm.capped ? picked.slice(goldN) : picked;
     return res.json({
-      hotspots: picked.map((p) => ({
+      hotspots: visible.map((p) => ({
         lat: p.lat,
         lon: p.lon,
         species: p.species,
         label: SPECIES[p.species]?.label ?? p.species,
         eatScore: SPECIES[p.species]?.eatScore ?? null,
         score: p.score,
-        gold: cm.unlocked === true && p.score > FREE_CAP_SCORE,
+        gold: cm.unlocked === true && goldSet.has(p),
       })),
-      meta: { count: picked.length, minScore, species: keys, asOf: asOf.toISOString().slice(0, 10), staticOnly, ...cm, goldPeaks },
+      meta: { count: visible.length, minScore, species: keys, asOf: asOf.toISOString().slice(0, 10), staticOnly, ...cm, goldPeaks: goldN },
     });
   }
 
   const key = keys[0];
   const { cells, meta } = await computeCellsCached(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
   const cm = capMeta(req);
-  const visibleCells = cm.capped ? cells.filter((c) => c.score <= FREE_CAP_SCORE) : cells;
+  const sorted = [...cells].sort((a, b) => b.score - a.score);
+  const goldN = sorted.length > 0 ? Math.max(1, Math.round(sorted.length * FREE_HIDE_FRACTION)) : 0;
+  const goldSet = new Set(sorted.slice(0, goldN));
+  const visibleCells = cm.capped ? sorted.slice(goldN) : sorted;
   const features = visibleCells.map((c) => ({
     type: "Feature",
-    properties: { score: c.score, heat: c.heat, gold: cm.unlocked === true && c.score > FREE_CAP_SCORE },
+    properties: { score: c.score, heat: c.heat, gold: cm.unlocked === true && goldSet.has(c) },
     geometry: { type: "Point", coordinates: [c.lon, c.lat] },
   }));
   res.json({
@@ -1259,7 +1264,7 @@ app.get("/api/hotspots", async (req, res) => {
     meta: {
       ...meta,
       ...cm,
-      goldCells: cells.filter((c) => c.score > FREE_CAP_SCORE).length,
+      goldCells: goldN,
       layers: [
         "smhi-precip-14d",
         "osm-forest-mask",
@@ -1316,7 +1321,10 @@ app.get("/api/peaks", async (req, res) => {
     if (isPeak) peaks.push(c);
   }
   const cm = capMeta(req);
-  const visiblePeaks = cm.capped ? peaks.filter((c) => c.score <= FREE_CAP_SCORE) : peaks;
+  const sortedPeaks = [...peaks].sort((a, b) => b.score - a.score);
+  const goldN = sortedPeaks.length > 0 ? Math.max(1, Math.round(sortedPeaks.length * FREE_HIDE_FRACTION)) : 0;
+  const goldSet = new Set(sortedPeaks.slice(0, goldN));
+  const visiblePeaks = cm.capped ? sortedPeaks.slice(goldN) : sortedPeaks;
   res.json({
     type: "FeatureCollection",
     meta: {
@@ -1324,7 +1332,7 @@ app.get("/api/peaks", async (req, res) => {
       minScore,
       peakCount: visiblePeaks.length,
       ...cm,
-      goldPeaks: peaks.filter((c) => c.score > FREE_CAP_SCORE).length,
+      goldPeaks: goldN,
     },
     features: visiblePeaks.map((c) => ({
       type: "Feature",
@@ -1334,7 +1342,7 @@ app.get("/api/peaks", async (req, res) => {
         species: key,
         label: species.label,
         eatScore: species.eatScore,
-        gold: cm.unlocked === true && c.score > FREE_CAP_SCORE,
+        gold: cm.unlocked === true && goldSet.has(c),
       },
       geometry: { type: "Point", coordinates: [c.lon, c.lat] },
     })),
@@ -2117,11 +2125,11 @@ app.get("/api/shop", (_req, res) => {
     reviewRewardSpecies: REVIEW_REWARD_SPECIES,
     topSpotsPass: {
       id: PASS_ID,
-      label: `Årskort ${PASS_YEAR} — hetaste svampställena (score > ${FREE_CAP_SCORE})`,
+      label: `Årskort ${PASS_YEAR} — de hetaste ~${Math.round(FREE_HIDE_FRACTION * 100)} % av ställena glöder i guld`,
       priceSek: TOP_SPOTS_PRICE_SEK,
       kind: "year-pass",
       year: PASS_YEAR,
-      freeCapScore: FREE_CAP_SCORE,
+      topHiddenFraction: FREE_HIDE_FRACTION,
     },
     freeSpecies: Object.entries(SPECIES).filter(([, s]) => !s.pack).map(([id]) => id),
     singlePriceSek: SINGLE_PRICE_SEK,

@@ -94,36 +94,38 @@ Solo 79 kr motiveras av att jättemusseron är sällsynt + skyddad (foto-uppleve
   server-side (App Store Server API) och sätt entitlements där.
 - `/api/tiles/*`, `/api/hotspots`, `/api/peaks`, `/api/debug/cell` → 403 `{error, locked:[...]}` vid låst art.
 
-## Top-spot cap — "hetaste ställena" bakom Säsongspass (`topspots`)
+## Top-spot fraktion — "hetaste ställena" bakom Årskort (`topspots:<år>`)
 
-- **Tre lägen** (tröskel **FREE_CAP_SCORE**, default **70** = HEAT_BASE):
+- **Tre lägen** (fraktion **FREE_HIDE_FRACTION**, default **0.30** — rankat efter score):
   1. **Provperiod** (`?trial=1` eller ent `trial`; i prod från StoreKit/App Store Server API
      `is_trial_period`): alla pins, **inget guld** — full upplevelse som smakprov.
-  2. **Free efter provperiod**: pins över cap **försvinner helt** (`meta.capped=true`).
+  2. **Free efter provperiod**: topp-**30 %** av pinsen **försvinner helt** (`meta.capped=true`) —
+     free ser alltså ~**70 %** av ställena, men alltid utan de absolut hetaste.
   3. **Betalat årskort** (`topspots:<år>`/`topspots`/`all`/`pro`): alla pins tillbaka och
-     score > cap får **`gold: true`** → glödande guld-pins som bara betalande ser.
+     topp-fraktionen får **`gold: true`** → glödande guld-pins som bara betalande ser.
   `/api/hotspots` (båda grenarna) och `/api/peaks` följer detta; svaren har `meta.capped`,
-  `meta.trial`, `goldPeaks`/`goldCells` (antal över cap), `passId`, `passLabel`, `passPriceSek`.
-  `/api/meta` och `/api/unlocked` exponerar `topSpots {capped, trial, freeCapScore, passId,
-  passLabel, passPriceSek, unlocked}`. Packköp låser arter oberoende av årskortet.
+  `meta.trial`, `goldPeaks`/`goldCells` (antal i topp-fraktionen), `passId`, `passLabel`,
+  `passPriceSek`. `/api/meta` och `/api/unlocked` exponerar `topSpots {capped, trial,
+  topHiddenFraction, passId, passLabel, passPriceSek, unlocked}`. Packköp låser arter
+  oberoende av årskortet.
   OBS compliance: provperioden måste vara tydligt deklarerad (App Store listar den för
   prenumerationer; för egen trial — beskriv i app-beskrivningen).
 - Produkt: **Årskort för innevarande år** — id `topspots:<år>` (t.ex. `topspots:2026`), engångsköp
   `TOP_SPOTS_PRICE_SEK` (default 99 kr, env), exponeras i `/api/shop` som `topSpotsPass`.
   `canSeeTopSpots` accepterar `all`, `pro`, `topspots` (alla år) och `topspots:<aktuellt år>`.
   Redeem-koder/admin kan ge `topspots:2026`. "Säsong" togs bort som begrepp — årskort är tydligare.
-- **Guld för betalande:** endast pins med `gold: true` (score > cap, bara när årskortet är
-  köpt — aldrig under trial) renderas glödande guld i klienten (iOS: guld-symbol + glow).
+- **Guld för betalande:** endast pins i topp-fraktionen med `gold: true` (bara när årskortet
+  är köpt — aldrig under trial) renderas glödande guld i klienten (iOS: guld-symbol + glow).
   Free efter provperiod får inga sådana pins alls; `meta.goldPeaks` ger antalet för
   upsell-meddelandet ("🔒 N av ställena glöder i guld med Årskort 2026").
 - **Compliance (viktigt):** att "fungera 100 % vid nedladdning och sedan cappas" utan
   tydlig förhandsinformation riskerar att klassas som vilseledande (Marknadsföringslagen /
-  EU Omnibus) och App Store-avslag. Gör i stället: capp från första start + 🔒-teaser på
-  de hetaste pin-sen i UI + tydlig text i App Store-beskrivningen ("gratis visar ställen
-  upp till nivå 70; Säsongspass låser upp 70–100"). Alternativt en tydligt deklarerad
-  gratisperiod. Aldrig tyst degradering efter användning.
+  EU Omnibus) och App Store-avslag. Gör i stället: provperiod tydligt deklarerad (eller
+  cap från första start) + 🔒-teaser + tydlig text i App Store-beskrivningen ("gratis visar
+  ~70 % av ställena; Årskort låser upp de hetaste 30 % som glöder i guld"). Aldrig tyst
+  degradering efter användning.
 - Naturvårdssida: jättemusseron (protected) har redan obsPrior=0; capen minskar även
   tramp på de allra hetaste ställena för gratisanvändare.
-- Rekommendation nivå: **70 absolut är lagom** när pins körs med `static=1` (score =
-  habitat×100, de flesta skogsceller ligger 60–99). Kör du dynamiska pins (väder×säsong)
-  når score sällan över 60 — sänk då FREE_CAP_SCORE till ~50–55 eller byt till static-pins.
+- Rekommendation nivå: fraktion **0.30 är lagom** — free ser ~70 % av ställena i varje vy
+  men missar alltid de absolut hetaste. Testa A/B 0.20 / 0.30 / 0.40 mot konvertering till
+  årskort (`FREE_HIDE_FRACTION` i .env).
