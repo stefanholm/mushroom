@@ -187,12 +187,17 @@ for (const [species, feats] of [...bySpecies.entries()].sort()) {
   const obsRes = await scoreBatch(species, sample.map((f) => f.geometry.coordinates));
   const bgRes = await bgPoints(rnd, species, bgCount);
 
-  const obsScores = obsRes.map((r) => r.score);
+  // Jämför skogsfynd mot skogsbakgrund (inForest && !excluded) så NMD-masken inte ger falska 0:or
+  const obsInForest = obsRes.filter((r) => r.inForest && !r.excluded);
+  const inForestPct = Math.round((obsInForest.length / Math.max(1, obsRes.length)) * 100);
+  const evalObs = obsInForest.length > 0 ? obsInForest : obsRes;
+
+  const obsScores = evalObs.map((r) => r.score);
   const bgScores = bgRes.map((r) => r.score);
   const overall = auc(obsScores, bgScores);
 
   const bands = {};
-  for (const r of obsRes) {
+  for (const r of evalObs) {
     const b = gddBand(r.gddEff);
     (bands[b] ??= []).push(r.score);
   }
@@ -211,6 +216,8 @@ for (const [species, feats] of [...bySpecies.entries()].sort()) {
         : "ok";
   report.species[species] = {
     observations: sample.length,
+    observationsInForest: obsInForest.length,
+    inForestPct,
     background: bgScores.length,
     auc: Number(overall.toFixed(3)),
     meanObs: Number((obsScores.reduce((a, b) => a + b, 0) / Math.max(1, obsScores.length)).toFixed(1)),
@@ -220,8 +227,8 @@ for (const [species, feats] of [...bySpecies.entries()].sort()) {
     flag,
   };
   console.log(
-    `${species.padEnd(24)} n=${String(sample.length).padStart(5)} AUC=${overall.toFixed(3)} ` +
-    `medel fynd=${report.species[species].meanObs} bg=${report.species[species].meanBg} ${flag}`,
+    `${species.padEnd(24)} n=${String(obsInForest.length).padStart(4)}/${String(sample.length).padEnd(4)} (${String(inForestPct).padStart(3)}% skog) AUC=${overall.toFixed(3)} ` +
+    `fynd=${report.species[species].meanObs} bg=${report.species[species].meanBg} ${flag}`,
   );
 }
 

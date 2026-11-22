@@ -55,7 +55,7 @@ const PASS_YEAR = new Date().getFullYear();
 const PASS_ID = `topspots:${PASS_YEAR}`; // årskort för innevarande år; "topspots" (alla år) funkar också
 function canSeeTopSpots(req: express.Request): boolean {
   const ents = resolveEntitlements(req);
-  return ents.has("all") || ents.has("pro") || ents.has("topspots") || ents.has(PASS_ID);
+  return ents.has("pro") || ents.has("topspots") || ents.has(PASS_ID);
 }
 // Provperiod: klient skickar ?trial=1 (i prod: från StoreKit/App Store Server API is_trial_period).
 // Under trial: alla pins, INGET guld. Efter trial utan årskort: topparna över cap försvinner helt.
