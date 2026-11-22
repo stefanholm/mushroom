@@ -98,6 +98,23 @@ app.use(express.json());
 const here = path.dirname(fileURLToPath(import.meta.url));
 const noCache = { etag: false, lastModified: false, setHeaders: (res: express.Response) => res.setHeader("Cache-Control", "no-cache") };
 app.use(express.static(path.join(here, "..", "public"), noCache));
+
+// HTTP-cache för GET-API:er så iOS URLCache/HTTP-cache inte frågar igen vid varje pan.
+// URL:en innehåller alltid species/bbox/lat/lon/ents/date, så olika anrop cachen separat.
+app.use((req, res, next) => {
+  if (req.method === "GET" && req.path.startsWith("/api/")) {
+    if (req.path === "/api/debug/cell" || req.path === "/api/chat") {
+      res.setHeader("Cache-Control", "no-cache");
+    } else if (req.path === "/api/shop") {
+      res.setHeader("Cache-Control", "public, max-age=300");
+    } else if (req.path === "/api/hillshade") {
+      res.setHeader("Cache-Control", "public, max-age=3600"); // terräng är statisk
+    } else {
+      res.setHeader("Cache-Control", "public, max-age=60"); // meta/hotspots/peaks/unlocked
+    }
+  }
+  next();
+});
 app.use("/vendor/maplibre", express.static(path.join(here, "..", "node_modules", "maplibre-gl", "dist"), noCache));
 
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
@@ -1043,6 +1060,33 @@ async function computeCells(
   };
 }
 
+// In-memory-cache för computeCells: samma bbox+art+datum begärs ofta flera gånger
+// vid pan/zoom — cachen dedupar även pågående anrop (samma Promise) och kortar svarstiden.
+const cellsCache = new Map<string, { at: number; value: Promise<{ cells: CellScore[]; meta: Record<string, unknown> }> }>();
+const CELLS_CACHE_MAX = 64;
+const CELLS_CACHE_TTL_MS = 10 * 60 * 1000;
+async function computeCellsCached(
+  key: string,
+  minLon: number,
+  minLat: number,
+  maxLon: number,
+  maxLat: number,
+  cell: number,
+  asOf: Date,
+  staticOnly: boolean,
+): Promise<{ cells: CellScore[]; meta: Record<string, unknown> }> {
+  const ck = [key, minLon.toFixed(5), minLat.toFixed(5), maxLon.toFixed(5), maxLat.toFixed(5), cell, asOf.toISOString(), staticOnly ? 1 : 0].join("|");
+  const hit = cellsCache.get(ck);
+  if (hit && Date.now() - hit.at < CELLS_CACHE_TTL_MS) return hit.value;
+  const p = computeCells(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
+  cellsCache.set(ck, { at: Date.now(), value: p });
+  if (cellsCache.size > CELLS_CACHE_MAX) {
+    const first = cellsCache.keys().next().value;
+    if (first !== undefined) cellsCache.delete(first);
+  }
+  return p;
+}
+
 app.get("/api/hotspots", async (req, res) => {
   const keys = String(req.query.species ?? "")
     .split(",")
@@ -1085,7 +1129,7 @@ app.get("/api/hotspots", async (req, res) => {
     // Peak-pocket mode for the iOS symbol/icon layer: local maxima >= minScore,
     // thinned to ~120 m spacing, capped at 120 per viewport, across all checked species.
     const perSpecies = await Promise.all(
-      keys.map((k) => computeCells(k, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly)),
+      keys.map((k) => computeCellsCached(k, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly)),
     );
     const all: { lon: number; lat: number; score: number; species: string }[] = [];
     for (let si = 0; si < perSpecies.length; si++) {
@@ -1135,7 +1179,7 @@ app.get("/api/hotspots", async (req, res) => {
   }
 
   const key = keys[0];
-  const { cells, meta } = await computeCells(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
+  const { cells, meta } = await computeCellsCached(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
   const features = cells.map((c) => ({
     type: "Feature",
     properties: { score: c.score, heat: c.heat },
@@ -1181,7 +1225,7 @@ app.get("/api/peaks", async (req, res) => {
   const asOf = parseAsOf(String(req.query.date ?? ""));
   const span = Math.max(maxLon - minLon, maxLat - minLat);
   const cell = cellForSpan(span);
-  const { cells, meta } = await computeCells(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
+  const { cells, meta } = await computeCellsCached(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
   const grid = new Map<string, CellScore>();
   for (const c of cells) grid.set(`${c.lon.toFixed(6)},${c.lat.toFixed(6)}`, c);
   const peaks: CellScore[] = [];
@@ -1284,7 +1328,7 @@ app.get("/api/hillshade", async (req, res) => {
     }
   }
   res.setHeader("Content-Type", "image/png");
-  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Cache-Control", "public, max-age=3600");
   res.send(PNG.sync.write(png));
 });
 
@@ -1484,10 +1528,10 @@ async function renderHabitatTile(
   const eMaxLat = bbox.maxLat + M * cell;
   let cells: CellScore[];
   if (keys.length === 1) {
-    cells = (await computeCells(keys[0], eMinLon, eMinLat, eMaxLon, eMaxLat, cell, asOf, staticOnly)).cells;
+    cells = (await computeCellsCached(keys[0], eMinLon, eMinLat, eMaxLon, eMaxLat, cell, asOf, staticOnly)).cells;
   } else {
     const parts = await Promise.all(
-      keys.map((k) => computeCells(k, eMinLon, eMinLat, eMaxLon, eMaxLat, cell, asOf, staticOnly)),
+      keys.map((k) => computeCellsCached(k, eMinLon, eMinLat, eMaxLon, eMaxLat, cell, asOf, staticOnly)),
     );
     const merged = new Map<string, CellScore>();
     for (const p of parts) {
