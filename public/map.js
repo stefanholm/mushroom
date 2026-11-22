@@ -829,8 +829,9 @@ document.getElementById("redeemBtn")?.addEventListener("click", async () => {
       if (typeof refreshMeta === "function") refreshMeta();
       updateShopBadge();
     }
-  } catch {
-    if (status) status.textContent = "Servern svarar inte just nu.";
+  } catch (e) {
+    console.error("redeem fetch misslyckades:", e);
+    if (status) status.textContent = "Servern svarar inte just nu. (se konsollen)";
   }
   if (btn) btn.disabled = false;
 });
