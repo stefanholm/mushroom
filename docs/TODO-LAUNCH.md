@@ -87,6 +87,13 @@ Baka med `npm run bake-tiles` (finns redan), parallellisera, och synka med t.ex.
 **Hotspots/pins:** håll on-demand först (LRU-cachad, billig); alternativt daglig batch till
 statiska JSON per art/region (~15 KB per region-art, gzip ~4 KB).
 
+**Hillshade — visuellt eller svampdata? Både och:** själva hillshade-PNG-lagret är bara visuellt
+(kan skippas helt, eller bakas bara på låga zoom — sparar ~2 GB). Men **DEM + slope används i
+själva scoringen**: `fTerrain` får `+0.3·species.sun·cos(aspect−180°)` (sydsluttningar gynnas av
+arter med `sun=1`, nordsluttningar av `sun=-1`), svackor får bonus via `species.depression`,
+och lutning via slope-rasteret (`fSlope`). Så DEM/slope måste finnas på servern för att räkna
+score — de behöver bara inte renderas som tiles.
+
 ## 4. Vad som MÅSTE ligga på en server alls
 
 - `/api/chat` (Mistral) — finns kvar för webb/dev; iOS använder on-device istället (docs/CHAT-ONDEVICE.md)
