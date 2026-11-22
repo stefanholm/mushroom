@@ -2125,7 +2125,12 @@ app.get("/api/tiles/hillshade/:z/:x/:y.png", async (req, res) => {
 });
 
 // Affärs-katalog för StoreKit-vyn (ingen species-param behövs).
-app.get("/api/shop", (_req, res) => {
+app.get("/api/shop", (req, res) => {
+  // ägande beräknas från ?ents= (i prod: från server-validerat kvitto) — stycklistan/topplistan
+  // visar då bara arter användaren INTE redan har. Utan ents = free-tier (alla låsta syns).
+  const ents = resolveEntitlements(req);
+  const owned = (id: string) => isSpeciesUnlocked(id, ents);
+  const allSingles = Object.entries(SPECIES).filter(([id, s]) => s.pack && isValidSingleClaim(id));
   res.json({
     packs: Object.values(PACKS)
       .filter((p) => p.forSale)
@@ -2139,6 +2144,7 @@ app.get("/api/shop", (_req, res) => {
           species: p.species,
           image: top ? `/icons/${top}.png` : null,
           topSpecies: top ?? null,
+          owned: ents.has("all") || ents.has("pro") || ents.has(p.id),
         };
       }),
     reviewRewardSpecies: REVIEW_REWARD_SPECIES,
@@ -2164,10 +2170,13 @@ app.get("/api/shop", (_req, res) => {
         priceSek: s.pack ? SINGLE_PRICE_SEK : 0,
         pack: s.pack ?? null,
       };
-    }),
-    singles: Object.entries(SPECIES)
-      .filter(([id, s]) => s.pack && isValidSingleClaim(id))
-      .map(([id, s]) => ({ id, label: s.label, eatScore: s.eatScore })),
+    }).filter((t) => !owned(t.id)),
+    // Stycklista: bara arter användaren saknar. jattemusseron/goliatmusseron är solo-only
+    // (SOLO_ONLY_SPECIES) och finns bara som eget paket goliatmusseron-solo (79 kr) — aldrig här.
+    singles: allSingles
+      .filter(([id]) => !owned(id))
+      .map(([id, s]) => ({ id, label: s.label, eatScore: s.eatScore, image: `/icons/${id}.png`, priceSek: SINGLE_PRICE_SEK })),
+    singlesTotal: allSingles.length,
     maxRewardClaims: MAX_REWARD_CLAIMS,
     singlesNote: "Efter att du använt dina gratis-upplåsningar via betyg (max " + MAX_REWARD_CLAIMS + ") kan du köpa vilken låst art som helst enskilt för " + SINGLE_PRICE_SEK + " kr.",
   });

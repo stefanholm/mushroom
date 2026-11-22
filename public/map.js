@@ -587,7 +587,8 @@ async function renderShop() {
   if (!grid) return;
   let shop = null;
   try {
-    const r = await fetch("/api/shop");
+    const entsCsv = activeEntitlements().join(",");
+    const r = await fetch("/api/shop" + (entsCsv ? "?ents=" + encodeURIComponent(entsCsv) : ""));
     if (r.ok) shop = await r.json();
   } catch {}
   if (!shop) {
@@ -750,7 +751,9 @@ async function renderShop() {
       buySingle.disabled = false;
     }
   });
-  singleWrap.innerHTML = `<h3>Köp en enskild svamp</h3><div class="shop-kind">${(shop.singles ?? []).length} arter à ${shop.singlePriceSek ?? 10} kr — ${shop.soloOnlySpecies?.join(", ") ?? ""} säljs bara via solo-paket</div>`;
+  const nLeft = (shop.singles ?? []).length;
+  const nTot = shop.singlesTotal ?? nLeft;
+  singleWrap.innerHTML = `<h3>Köp en enskild svamp</h3><div class="shop-kind">${nLeft === 0 ? "Alla arter redan upplåsta" : `${nLeft} av ${nTot} arter kvar à ${shop.singlePriceSek ?? 10} kr`} — ${shop.soloOnlySpecies?.join(", ") ?? ""} säljs bara via solo-paket</div>`;
   singleWrap.appendChild(sel);
   singleWrap.appendChild(buySingle);
   grid.appendChild(singleWrap);

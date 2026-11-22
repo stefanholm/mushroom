@@ -43,6 +43,11 @@ git stash drop
 - [ ] StoreKit 2-produkter: 13 pack + `goliatmusseron-solo` (79 kr) + enskilda arter (10 kr) +
       årskort `topspots:2026` (99 kr, från `/api/shop` `topSpotsPass`); i prod validera kvitton
       server-side via App Store Server API (ersätter dev-lägets `ents=`-trust)
+- [ ] **Stycklistan (enskilda 10 kr) ska bara visa arter användaren saknar** — `/api/shop?ents=...`
+      filtrerar server-side (`singles` = bara icke-ägda, `topPicks` likaså, pack får `owned:true`);
+      skicka alltid med klientens ents när shopen hämtas. **Goliatmusseron/jättemusseron är
+      solo-only** (`SOLO_ONLY_SPECIES`) — syns aldrig i stycklistan, bara som paketet
+      `goliatmusseron-solo` 79 kr (`/api/single/claim` ger 403 för den)
 - [ ] Reward-UI: betyg 1–5 eller kommentar → 1 art från poolen; 2 referral-koder → +2 arter
       (`POST /api/reward/claim`, `/api/referral/create|redeem`; pool = `meta.reviewRewardSpecies`)
 - [ ] Redeem-kod i shoppen (`POST /api/redeem`)
