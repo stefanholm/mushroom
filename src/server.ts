@@ -291,8 +291,8 @@ async function rainLastNDays(lat: number, lon: number, asOf: Date, days: number)
 const TEMP_PARAMETER = "1";
 const tempCache = new Map<string, { at: number; min48: number | null }>();
 
-async function minTempLast48h(lat: number, lon: number): Promise<number | null> {
-  const key = `${lat.toFixed(1)},${lon.toFixed(1)}`;
+async function minTempLast48h(lat: number, lon: number, asOf: Date): Promise<number | null> {
+  const key = `${lat.toFixed(1)},${lon.toFixed(1)},${asOf.toISOString().slice(0, 10)}`;
   const cached = tempCache.get(key);
   if (cached && Date.now() - cached.at < 6 * 3600 * 1000) return cached.min48;
   try {
@@ -320,8 +320,9 @@ async function minTempLast48h(lat: number, lon: number): Promise<number | null> 
       .map((v) => ({ to: Number(v.to ?? v.date), value: v.value }))
       .filter((v) => Number.isFinite(v.to) && typeof v.value === "string")
       .sort((a, b) => a.to - b.to);
-    const cutoff = Date.now() - 48 * 3600 * 1000;
-    const recent = values.filter((v) => v.to >= cutoff).map((v) => Number(v.value));
+    const end = asOf.getTime();
+    const cutoff = end - 48 * 3600 * 1000;
+    const recent = values.filter((v) => v.to >= cutoff && v.to <= end).map((v) => Number(v.value));
     const min48 = recent.length > 0 ? Math.min(...recent) : null;
     tempCache.set(key, { at: Date.now(), min48 });
     return min48;
@@ -1006,7 +1007,7 @@ async function computeCells(
   let flush = 1;
   if (!staticOnly) {
     [minTemp, coolNights] = await Promise.all([
-      minTempLast48h(centerLat, centerLon),
+      minTempLast48h(centerLat, centerLon, asOf),
       coolNightsLast7d(centerLat, centerLon, asOf),
     ]);
     if (species.frostSensitive && minTemp !== null && minTemp <= -3) frost = 0;
@@ -1129,6 +1130,7 @@ async function computeCells(
       maskUsed: useMask,
       excludedAreas: ex.polys.length,
       layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
+      layersTooBig: [...store.rasters.values()].filter((r) => r.tooBig).map((r) => r.id),
     },
   };
 }
@@ -1546,7 +1548,7 @@ app.get("/api/meta", async (req, res) => {
           console.error("SMHI fetch failed:", err);
           return null;
         }),
-        minTempLast48h(mLat, mLon),
+        minTempLast48h(mLat, mLon, asOf),
         coolNightsLast7d(mLat, mLon, asOf),
       ]);
   const [f, x] =
@@ -1597,6 +1599,7 @@ app.get("/api/meta", async (req, res) => {
     hostFallback: hostFallback(store),
     asOf: asOf.toISOString().slice(0, 10),
     layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
+    layersTooBig: [...store.rasters.values()].filter((r) => r.tooBig).map((r) => r.id),
     tileVersion: path.basename(TILES_DIR),
     forestAreas: f && f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
     forestKnown: store.mask !== null || (f !== null && f.status === "fulfilled" && f.value !== null),
@@ -1872,7 +1875,7 @@ app.post("/api/debug/cells", async (req, res) => {
         (r14 === null ? 0.5 : 1 - Math.exp(-r14 / 32)) *
         (r90 === null ? 1 : 0.75 + 0.25 * (1 - Math.exp(-r90 / 120)));
     } catch {}
-    const [minTemp, coolNights] = await Promise.all([minTempLast48h(cLat, cLon), coolNightsLast7d(cLat, cLon, asOf)]);
+    const [minTemp, coolNights] = await Promise.all([minTempLast48h(cLat, cLon, asOf), coolNightsLast7d(cLat, cLon, asOf)]);
     if (species.frostSensitive && minTemp !== null && minTemp <= -3) frost = 0;
     flush = flushFactor(coolNights);
   }
@@ -1996,7 +1999,7 @@ app.get("/api/debug/cell", async (req, res) => {
     (rain90 === null ? 1 : 0.75 + 0.25 * (1 - Math.exp(-rain90 / 120)));
   const [minTemp, coolNights] = staticOnly
     ? [null, null]
-    : await Promise.all([minTempLast48h(lat, lon), coolNightsLast7d(lat, lon, asOf)]);
+    : await Promise.all([minTempLast48h(lat, lon, asOf), coolNightsLast7d(lat, lon, asOf)]);
   const frost = species.frostSensitive && minTemp !== null && minTemp <= -3 ? 0 : 1;
   const flush = flushFactor(coolNights);
   const dynamic = staticOnly ? 1 : seasonalFactor(species, lat, asOf) * rainFactor * frost * flush;
@@ -2029,6 +2032,7 @@ app.get("/api/debug/cell", async (req, res) => {
     flush,
     score: Math.min(100, Math.round(100 * habitat * dynamic * (1 + 0.15 * prior))),
     layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
+    layersTooBig: [...store.rasters.values()].filter((r) => r.tooBig).map((r) => r.id),
   });
 });
 
@@ -2475,7 +2479,7 @@ async function prewarmWeather(): Promise<void> {
     await rainLast14Days(lat, lon, new Date()).catch(() => {});
     await getLayerStore().catch(() => {}); // förvärm raster så första riktiga anropet är snabbt
     await getObsIndex().catch(() => {});
-    await minTempLast48h(lat, lon);
+    await minTempLast48h(lat, lon, new Date());
   }
 }
 

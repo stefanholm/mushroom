@@ -1757,8 +1757,13 @@ export function staticHabitatScore(
   if (dem && dem.has(easting, northing)) {
     const elev = dem.sampleSync(easting, northing);
     if (dbg) dbg.elev = elev;
-    if (elev === null || elev < 0.5) return 0;
-    covered = true;
+    if (elev === null) {
+      // null pga nodata/utanför → hårt 0, men null pga för stort raster (ej cacheat) → hoppa över höjd-gaten
+      if (dem.cached) return 0;
+    } else {
+      if (elev < 0.5) return 0;
+      covered = true;
+    }
   }
   if (store.mask && store.mask.has(easting, northing) && !store.mask.allows(easting, northing)) {
     if (dbg) dbg.maskVeto = true;

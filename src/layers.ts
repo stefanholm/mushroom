@@ -39,6 +39,9 @@ export type Manifest = {
 
 export class MaskLayer {
   private allowed: Uint8Array | null = null;
+  private block = 1; // >1 = masken är nedprovad till block (hela Sverige får inte plats i minnet annars)
+  private gridW = 0;
+  private gridH = 0;
   constructor(
     private image: GeoTIFFImage,
     readonly originX: number,
@@ -50,7 +53,10 @@ export class MaskLayer {
     private dilateClasses: Set<number>,
     private waterClasses: Set<number>,
     private waterBufferM: number,
-  ) {}
+  ) {
+    this.gridW = this.width;
+    this.gridH = this.height;
+  }
 
   static async load(
     file: string,
@@ -90,10 +96,70 @@ export class MaskLayer {
     if (this.allowed) return;
     const w = this.width;
     const h = this.height;
+    const pxM = Math.abs(this.pixelX) || 10;
+    // Hela Sverige vid 10 m blir miljarder px — läs då i remsor och nedprova till block
+    // så att rutnätet håller sig ≤ ~120M celler (annars fail-closed tom karta live).
     if (w * h > 128_000_000) {
-      console.warn(
-        `VARNING: NMD-mask ${w}x${h} px (${w * h} > 128M) — masken byggs inte och blir fail-closed (tom karta). Klipp ett mindre område, max ~12 800 km² vid 10 m.`,
-      );
+      const block = Math.ceil(Math.sqrt((w * h) / 120_000_000));
+      const bw = Math.ceil(w / block);
+      const bh = Math.ceil(h / block);
+      const forest = new Uint8Array(bw * bh);
+      const blocked0 = new Uint8Array(bw * bh);
+      const water0 = new Uint8Array(bw * bh);
+      const stripRows = Math.max(1, Math.floor(32_000_000 / w));
+      for (let y0 = 0; y0 < h; y0 += stripRows) {
+        const rows = Math.min(stripRows, h - y0);
+        // geotiff-fönster är hörn-till-hörn [x0, y0, x1, y1] — INTE [x, y, w, h]
+        const data = (await this.image.readRasters({ window: [0, y0, w, y0 + rows], interleave: true })) as ArrayLike<number>;
+        for (let y = 0; y < rows; y++) {
+          const by = Math.floor((y0 + y) / block);
+          const rowBase = y * w;
+          const brow = by * bw;
+          for (let x = 0; x < w; x++) {
+            const v = data[rowBase + x];
+            if (typeof v !== "number") continue;
+            const c = Math.round(v);
+            const k = brow + Math.floor(x / block);
+            if (this.forestClasses.has(c)) forest[k] = 1;
+            if (this.dilateClasses.has(c)) blocked0[k] = 1;
+            if (this.waterClasses.has(c)) water0[k] = 1;
+          }
+        }
+      }
+      const dilateB = (src: Uint8Array, r: number): Uint8Array => {
+        const out = new Uint8Array(bw * bh);
+        const tmp = new Uint8Array(bw * bh);
+        for (let y = 0; y < bh; y++) {
+          for (let x = 0; x < bw; x++) {
+            let m = 0;
+            for (let dx = -r; dx <= r && !m; dx++) {
+              const xx = x + dx;
+              if (xx >= 0 && xx < bw && src[y * bw + xx]) m = 1;
+            }
+            tmp[y * bw + x] = m;
+          }
+        }
+        for (let x = 0; x < bw; x++) {
+          for (let y = 0; y < bh; y++) {
+            let m = 0;
+            for (let dy = -r; dy <= r && !m; dy++) {
+              const yy = y + dy;
+              if (yy >= 0 && yy < bh && tmp[yy * bw + x]) m = 1;
+            }
+            out[y * bw + x] = m;
+          }
+        }
+        return out;
+      };
+      const blockM = pxM * block;
+      const blocked = dilateB(blocked0, Math.max(1, Math.round((this.dilatePx * pxM) / blockM)));
+      const water = dilateB(water0, Math.max(1, Math.round(this.waterBufferM / blockM)));
+      this.allowed = new Uint8Array(bw * bh);
+      for (let k = 0; k < bw * bh; k++) this.allowed[k] = forest[k] && !blocked[k] && !water[k] ? 1 : 0;
+      this.block = block;
+      this.gridW = bw;
+      this.gridH = bh;
+      console.warn(`NMD-mask nedprovad ${block}x (${bw}x${bh} block, ~${Math.round(blockM)} m/cell) — hel-Sverige-mask`);
       return;
     }
     const data = (await this.image.readRasters({ interleave: true })) as ArrayLike<number>;
@@ -134,24 +200,26 @@ export class MaskLayer {
       if (this.waterClasses.has(c)) water0[k] = 1;
     }
     const blocked = dilate(blocked0, Math.max(1, this.dilatePx));
-    const pxM = Math.abs(this.pixelX) || 10;
     const water = dilate(water0, Math.max(1, Math.round(this.waterBufferM / pxM)));
     this.allowed = new Uint8Array(w * h);
     for (let k = 0; k < w * h; k++) this.allowed[k] = forest[k] && !blocked[k] && !water[k] ? 1 : 0;
+    this.gridW = w;
+    this.gridH = h;
   }
 
   has(easting: number, northing: number): boolean {
-    const px = Math.floor((easting - this.originX) / this.pixelX);
-    const py = Math.floor((northing - this.originY) / this.pixelY);
-    return px >= 0 && py >= 0 && px < this.width && py < this.height;
+    const s = this.pixelX * this.block;
+    const px = Math.floor((easting - this.originX) / s);
+    const py = Math.floor((northing - this.originY) / this.pixelY / this.block);
+    return px >= 0 && py >= 0 && px < this.gridW && py < this.gridH;
   }
 
   allows(easting: number, northing: number): boolean {
     if (!this.allowed) return false;
-    const px = Math.floor((easting - this.originX) / this.pixelX);
-    const py = Math.floor((northing - this.originY) / this.pixelY);
-    if (px < 0 || py < 0 || px >= this.width || py >= this.height) return false;
-    return this.allowed[py * this.width + px] === 1;
+    const px = Math.floor((easting - this.originX) / (this.pixelX * this.block));
+    const py = Math.floor((northing - this.originY) / (this.pixelY * this.block));
+    if (px < 0 || py < 0 || px >= this.gridW || py >= this.gridH) return false;
+    return this.allowed[py * this.gridW + px] === 1;
   }
 }
 
@@ -204,11 +272,21 @@ export class RasterLayer {
     if (this.width * this.height * this.bands() <= 128_000_000) {
       const rasters = await this.image.readRasters({ interleave: true });
       this.data = rasters as ArrayLike<number>;
+    } else {
+      // För stort för hel-cachen (t.ex. hela Sverige vid 10 m): sampleSync ger då null.
+      // Proppa ner filen med gdalwarp till ~50–100 m eller klipp region — annars blir kartan tom.
+      console.warn(
+        `VARNING: raster "${this.id}" är ${this.width}x${this.height} (${this.width * this.height * this.bands()} px) — för stort för minnet, sampleSync ger null. Nedprova med gdalwarp -tr 50 50 (alt. klipp region).`,
+      );
     }
   }
 
   get cached(): boolean {
     return this.data !== null;
+  }
+
+  get tooBig(): boolean {
+    return this.width * this.height * this.bands() > 128_000_000;
   }
 
   sampleSync(easting: number, northing: number): number | null {
