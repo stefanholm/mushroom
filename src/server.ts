@@ -56,15 +56,22 @@ function canSeeTopSpots(req: express.Request): boolean {
   const ents = resolveEntitlements(req);
   return ents.has("all") || ents.has("pro") || ents.has("topspots") || ents.has(PASS_ID);
 }
+// Provperiod: klient skickar ?trial=1 (i prod: från StoreKit/App Store Server API is_trial_period).
+// Under trial: alla pins, INGET guld. Efter trial utan årskort: topparna över cap försvinner helt.
+function isTrial(req: express.Request): boolean {
+  return String(req.query.trial ?? "") === "1" || resolveEntitlements(req).has("trial");
+}
 function capMeta(req: express.Request) {
-  const seeTop = canSeeTopSpots(req);
+  const paid = canSeeTopSpots(req);
+  const trial = isTrial(req);
   return {
-    capped: !seeTop && FREE_CAP_SCORE < 100,
+    capped: !paid && !trial && FREE_CAP_SCORE < 100, // free efter provperiod: topparna bort
+    trial,
     freeCapScore: FREE_CAP_SCORE,
     passId: PASS_ID,
     passLabel: `Årskort ${PASS_YEAR}`,
     passPriceSek: TOP_SPOTS_PRICE_SEK,
-    unlocked: seeTop,
+    unlocked: paid, // gold visas BARA för betalande, aldrig under trial
   };
 }
 
@@ -1207,12 +1214,11 @@ app.get("/api/hotspots", async (req, res) => {
       }
     }
     all.sort((a, b) => b.score - a.score);
-    // Top-spot guld: ALLA får alla pins — men bara betalande (topspots:<år>/all/pro) får
-    // score > FREE_CAP_SCORE markerade gold:true (glödande guld-pins). Free ser samma
-    // ställen som helt vanliga pins och kan inte urskilja de bästa områdena.
+    // Tre lägen: trial → alla pins, inget guld; free efter trial → bara ≤ cap; betalat →
+    // alla pins och score > cap får gold:true (glödande guld-pins, bara betalande ser dem).
     const cm = capMeta(req);
     const goldPeaks = all.filter((p) => p.score > FREE_CAP_SCORE).length;
-    const eligible = all;
+    const eligible = cm.capped ? all.filter((p) => p.score <= FREE_CAP_SCORE) : all;
     const centerLat = (minLat + maxLat) / 2;
     const mPerDegLat = 111000;
     const mPerDegLon = 111000 * Math.cos((centerLat * Math.PI) / 180);
@@ -1242,7 +1248,8 @@ app.get("/api/hotspots", async (req, res) => {
   const key = keys[0];
   const { cells, meta } = await computeCellsCached(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
   const cm = capMeta(req);
-  const features = cells.map((c) => ({
+  const visibleCells = cm.capped ? cells.filter((c) => c.score <= FREE_CAP_SCORE) : cells;
+  const features = visibleCells.map((c) => ({
     type: "Feature",
     properties: { score: c.score, heat: c.heat, gold: cm.unlocked === true && c.score > FREE_CAP_SCORE },
     geometry: { type: "Point", coordinates: [c.lon, c.lat] },
@@ -1309,16 +1316,17 @@ app.get("/api/peaks", async (req, res) => {
     if (isPeak) peaks.push(c);
   }
   const cm = capMeta(req);
+  const visiblePeaks = cm.capped ? peaks.filter((c) => c.score <= FREE_CAP_SCORE) : peaks;
   res.json({
     type: "FeatureCollection",
     meta: {
       ...meta,
       minScore,
-      peakCount: peaks.length,
+      peakCount: visiblePeaks.length,
       ...cm,
       goldPeaks: peaks.filter((c) => c.score > FREE_CAP_SCORE).length,
     },
-    features: peaks.map((c) => ({
+    features: visiblePeaks.map((c) => ({
       type: "Feature",
       properties: {
         score: c.score,

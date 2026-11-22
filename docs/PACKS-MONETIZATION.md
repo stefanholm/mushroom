@@ -96,22 +96,26 @@ Solo 79 kr motiveras av att jättemusseron är sällsynt + skyddad (foto-uppleve
 
 ## Top-spot cap — "hetaste ställena" bakom Säsongspass (`topspots`)
 
-- **Alla får alla pins** — capen är *visuell*, inte bortfiltrering: `/api/hotspots` (båda
-  grenarna) och `/api/peaks` returnerar alltid alla toppar, men bara betalande
-  (`topspots:<år>`/`topspots`/`all`/`pro`) får `gold: true` på pins med **score > FREE_CAP_SCORE**
-  (default **70** = HEAT_BASE). Free ser samma ställen som helt vanliga pins och kan inte
-  urskilja de bästa områdena; betalande ser dem glöda i guld.
-  Svaren har `meta.capped` (gold låst), `freeCapScore`, `goldPeaks`/`goldCells` (antal över cap),
-  `passId`, `passLabel`, `passPriceSek`. `/api/meta` och `/api/unlocked` exponerar
-  `topSpots {capped, freeCapScore, passId, passLabel, passPriceSek, unlocked}`.
+- **Tre lägen** (tröskel **FREE_CAP_SCORE**, default **70** = HEAT_BASE):
+  1. **Provperiod** (`?trial=1` eller ent `trial`; i prod från StoreKit/App Store Server API
+     `is_trial_period`): alla pins, **inget guld** — full upplevelse som smakprov.
+  2. **Free efter provperiod**: pins över cap **försvinner helt** (`meta.capped=true`).
+  3. **Betalat årskort** (`topspots:<år>`/`topspots`/`all`/`pro`): alla pins tillbaka och
+     score > cap får **`gold: true`** → glödande guld-pins som bara betalande ser.
+  `/api/hotspots` (båda grenarna) och `/api/peaks` följer detta; svaren har `meta.capped`,
+  `meta.trial`, `goldPeaks`/`goldCells` (antal över cap), `passId`, `passLabel`, `passPriceSek`.
+  `/api/meta` och `/api/unlocked` exponerar `topSpots {capped, trial, freeCapScore, passId,
+  passLabel, passPriceSek, unlocked}`. Packköp låser arter oberoende av årskortet.
+  OBS compliance: provperioden måste vara tydligt deklarerad (App Store listar den för
+  prenumerationer; för egen trial — beskriv i app-beskrivningen).
 - Produkt: **Årskort för innevarande år** — id `topspots:<år>` (t.ex. `topspots:2026`), engångsköp
   `TOP_SPOTS_PRICE_SEK` (default 99 kr, env), exponeras i `/api/shop` som `topSpotsPass`.
   `canSeeTopSpots` accepterar `all`, `pro`, `topspots` (alla år) och `topspots:<aktuellt år>`.
   Redeem-koder/admin kan ge `topspots:2026`. "Säsong" togs bort som begrepp — årskort är tydligare.
-- **Guld för betalande:** endast pins med `gold: true` (score > cap) renderas glödande guld i
-  klienten (iOS: guld-symbol + glow). Free får aldrig `gold: true` — samma koordinater, men
-  som vanliga svamp-pins, så de inte fokuserar på toppområdena. `meta.goldPeaks` ger antalet
-  för ett diskret upsell-meddelande ("🔒 N ställen glöder i guld med Årskort").
+- **Guld för betalande:** endast pins med `gold: true` (score > cap, bara när årskortet är
+  köpt — aldrig under trial) renderas glödande guld i klienten (iOS: guld-symbol + glow).
+  Free efter provperiod får inga sådana pins alls; `meta.goldPeaks` ger antalet för
+  upsell-meddelandet ("🔒 N av ställena glöder i guld med Årskort 2026").
 - **Compliance (viktigt):** att "fungera 100 % vid nedladdning och sedan cappas" utan
   tydlig förhandsinformation riskerar att klassas som vilseledande (Marknadsföringslagen /
   EU Omnibus) och App Store-avslag. Gör i stället: capp från första start + 🔒-teaser på
