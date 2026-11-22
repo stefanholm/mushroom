@@ -7,6 +7,8 @@
 // Usage:
 //   npm run validate
 //   npm run validate -- --species kantarell,karljohan --limit 1500 --bg 2000
+// Scoring sker i batch via POST /api/debug/cells (400 punkter/anrop) — mycket snabbare
+// än ett /api/debug/cell-anrop per punkt.
 //
 // Env: VALIDATE_PORT (default 3998).
 
@@ -98,33 +100,43 @@ console.log(`server up på port ${port}; ${features.length} observationer, bbox 
 const meta = await (await fetch(base + "/api/meta?species=kantarell")).json();
 const protectedIds = new Set((meta.speciesList ?? []).filter((s) => s.protected).map((s) => s.id));
 
-async function scorePoint(lon, lat, species) {
-  const url = `${base}/api/debug/cell?lat=${lat}&lon=${lon}&species=${encodeURIComponent(species)}&static=1`;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const r = await fetch(url);
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const j = await r.json();
-      return { score: Number(j.score ?? 0), gddEff: Number(j.gddEff ?? NaN), inForest: !!j.inForest, excluded: !!j.excluded };
-    } catch (e) {
-      if (attempt === 1) return { score: 0, gddEff: NaN, inForest: false, excluded: false, error: e.message };
-      await new Promise((r2) => setTimeout(r2, 500));
+let done = 0;
+// Batch-scoring: POST /api/debug/cells?ents=all med upp till 400 punkter per anrop.
+// ents=all så även låsta arter valideras (validate ska mäta modellen, inte köpet).
+async function scoreBatch(species, pts) {
+  const out = [];
+  for (let i = 0; i < pts.length; i += 400) {
+    const chunk = pts.slice(i, i + 400);
+    let res = null;
+    for (let attempt = 0; attempt < 3 && !res; attempt++) {
+      try {
+        const r = await fetch(`${base}/api/debug/cells?ents=all`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ species, static: 1, points: chunk }),
+        });
+        if (r.ok) res = (await r.json()).results;
+      } catch {}
+      if (!res) await new Promise((r2) => setTimeout(r2, 500));
     }
+    if (!res) res = chunk.map(() => ({ score: 0, gddEff: NaN, inForest: false, excluded: false, error: "batch misslyckades" }));
+    out.push(...res);
+    done += chunk.length;
+    if (done % 2000 < 400) console.log(`  ${done} punkter scorade…`);
   }
+  return out;
 }
 
 // Background = random cells INSIDE the forest mask (available habitat), not the raw bbox —
 // otherwise urban/water/road zeros depress AUC and the metric says nothing about habitat.
-async function bgPoint(rnd, species) {
-  for (let tries = 0; tries < 25; tries++) {
-    const lon = minLon + rnd() * (maxLon - minLon);
-    const lat = minLat + rnd() * (maxLat - minLat);
-    const r = await scorePoint(lon, lat, species);
-    if (r.inForest && !r.excluded) return r;
-  }
-  const lon = minLon + rnd() * (maxLon - minLon);
-  const lat = minLat + rnd() * (maxLat - minLat);
-  return scorePoint(lon, lat, species);
+async function bgPoints(rnd, species, count) {
+  const cand = Array.from({ length: count * 4 }, () => [
+    minLon + rnd() * (maxLon - minLon),
+    minLat + rnd() * (maxLat - minLat),
+  ]);
+  const res = await scoreBatch(species, cand);
+  const inForest = res.filter((r) => r.inForest && !r.excluded);
+  return inForest.length >= count ? inForest.slice(0, count) : res.slice(0, count);
 }
 
 async function mapPool(items, fn, concurrency = 8) {
@@ -167,20 +179,13 @@ const gddBand = (g) => (!Number.isFinite(g) ? "okänd" : g < 1000 ? "norr <1000"
 
 const report = { generatedAt: new Date().toISOString(), bbox: [minLon, minLat, maxLon, maxLat], species: {} };
 const t0 = Date.now();
-let done = 0;
 
 for (const [species, feats] of [...bySpecies.entries()].sort()) {
   const sample = feats.slice(0, limit);
   const rnd = mulberry32(42);
 
-  const obsRes = await mapPool(sample, async (f) => {
-    const [lon, lat] = f.geometry.coordinates;
-    const r = await scorePoint(lon, lat, species);
-    done++;
-    if (done % 500 === 0) console.log(`  ${done} punkter scorade…`);
-    return r;
-  });
-  const bgRes = await mapPool(Array.from({ length: bgCount }), async () => bgPoint(rnd, species));
+  const obsRes = await scoreBatch(species, sample.map((f) => f.geometry.coordinates));
+  const bgRes = await bgPoints(rnd, species, bgCount);
 
   const obsScores = obsRes.map((r) => r.score);
   const bgScores = bgRes.map((r) => r.score);
