@@ -897,10 +897,38 @@ async function computeCells(
   let rain30: number | null = null;
   let rain90: number | null = null;
   try {
-    const vals = await rainValues(centerLat, centerLon);
-    rain14 = sumRain(vals, asOf, 14);
-    rain30 = sumRain(vals, asOf, 30);
-    rain90 = sumRain(vals, asOf, 90);
+    const latSpan = maxLat - minLat;
+    const lonSpan = maxLon - minLon;
+    // Vid utzoomade bboxes (> 0.15°): sampla 5 punkter parallellt (centrum + 4 kvadranter)
+    if (latSpan > 0.15 || lonSpan > 0.15) {
+      const qLat = latSpan * 0.25;
+      const qLon = lonSpan * 0.25;
+      const pts: Array<[number, number]> = [
+        [centerLat, centerLon],
+        [centerLat - qLat, centerLon - qLon],
+        [centerLat - qLat, centerLon + qLon],
+        [centerLat + qLat, centerLon - qLon],
+        [centerLat + qLat, centerLon + qLon],
+      ];
+      const settled = await Promise.allSettled(pts.map(([la, lo]) => rainValues(la, lo)));
+      const ok = settled
+        .filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof rainValues>>> => r.status === "fulfilled")
+        .map((r) => r.value);
+      if (ok.length > 0) {
+        const avg = (days: number): number | null => {
+          const nums = ok.map((v) => sumRain(v, asOf, days)).filter((n): n is number => n !== null);
+          return nums.length > 0 ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+        };
+        rain14 = avg(14);
+        rain30 = avg(30);
+        rain90 = avg(90);
+      }
+    } else {
+      const vals = await rainValues(centerLat, centerLon);
+      rain14 = sumRain(vals, asOf, 14);
+      rain30 = sumRain(vals, asOf, 30);
+      rain90 = sumRain(vals, asOf, 90);
+    }
   } catch (err) {
     console.error("SMHI fetch failed:", err);
   }
@@ -1079,7 +1107,9 @@ app.get("/api/hotspots", async (req, res) => {
   const minScore = Math.max(0, Math.min(100, Number(req.query.minScore ?? 50) || 50));
 
   const span = Math.max(maxLon - minLon, maxLat - minLat);
-  const cell = cellForSpan(span);
+  // Lås rutnätet till en fast koordinatupplösning vid inzoomning (span <= 0.06°)
+  // så att svamparna står helt stilla på exakt samma punkt när man zoomar in/ut.
+  const cell = span <= 0.06 ? 0.0004 : cellForSpan(span);
 
   if (bboxParam) {
     // Peak-pocket mode for the iOS symbol/icon layer: local maxima >= minScore,

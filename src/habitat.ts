@@ -1516,10 +1516,10 @@ const WATER_DIST_IDEAL: Record<string, [number, number]> = {
 // #1–#8 är tvärblandade "blandade korgar" (olika svampgrupper/miljöer per pack),
 // #9–#11 är ärligt geografiska/nischade områdespack. "all"/"pro" är helhetsköp.
 // Gratisarter = arterna UTAN pack nedan (kantarell, blek-taggsvamp, brunsopp, sandsopp,
-// smorsopp, stolt-fjallskivling). Fail-fast: modulen kastar fel om någon art saknas/dubbleras.
+// frostvaxing, stolt-fjallskivling). Fail-fast: modulen kastar fel om någon art saknas/dubbleras.
 const PACK_DEFS: [string, string, number, "mixed" | "regional" | "solo" | "all" | "pro", string[]][] = [
   ["blandad-korg-1", "Blandad korg #1 — Skog & sensommar", 39, "mixed", ["trattkantarell", "karljohan", "mandelkremla", "ostronmussling", "varmusseron"]],
-  ["blandad-korg-2", "Blandad korg #2 — Kust, tall & höst", 39, "mixed", ["rodbrun-stensopp", "granblodriska", "snobolischampinjon", "vinterskivling", "frostvaxing"]],
+  ["blandad-korg-2", "Blandad korg #2 — Kust, tall & höst", 39, "mixed", ["rodbrun-stensopp", "granblodriska", "snobolischampinjon", "vinterskivling", "smorsopp"]],
   ["blandad-korg-3", "Blandad korg #3 — Björk, mosse & skörd", 29, "mixed", ["bjorksopp", "rodgul-trumpetsvamp", "sillkremla", "honungsskivling", "blamusseron"]],
   ["blandad-korg-4", "Blandad korg #4 — Blandad skog & övergång", 29, "mixed", ["aspsopp", "gronkremla", "mandelriska", "svavelticka", "varskivling"]],
   ["blandad-korg-5", "Blandad korg #5 — Sand, glänta & senhöst", 29, "mixed", ["tegelsopp", "grynsopp", "citronslemskivling", "blek-ostronmussling", "rokslojskivling"]],
@@ -1544,7 +1544,7 @@ for (const [pid, , , kind, list] of PACK_DEFS) {
   }
 }
 for (const sid of Object.keys(SPECIES)) {
-  if (!SPECIES_PACK[sid] && sid !== "kantarell" && sid !== "blek-taggsvamp" && sid !== "brunsopp" && sid !== "sandsopp" && sid !== "smorsopp" && sid !== "stolt-fjallskivling") {
+  if (!SPECIES_PACK[sid] && sid !== "kantarell" && sid !== "blek-taggsvamp" && sid !== "brunsopp" && sid !== "sandsopp" && sid !== "frostvaxing" && sid !== "stolt-fjallskivling") {
     throw new Error(`Art ${sid} saknar pack (och är inte gratisart)`);
   }
 }
