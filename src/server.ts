@@ -8,6 +8,7 @@ import { Mistral } from "@mistralai/mistralai";
 import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
 import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, MAX_REWARD_CLAIMS, MAX_REVIEW_CLAIMS, MAX_REFERRAL_CLAIMS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
+import { normalizeCode, checksumOk, loadCodes, saveCodes, appendLog, grantLabel } from "./redeem.js";
 
 // Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
 // I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
@@ -2094,6 +2095,55 @@ app.post("/api/referral/redeem", (req, res) => {
   entry.usedBy = device;
   redeemedByDevice.set(device, (redeemedByDevice.get(device) ?? 0) + 1);
   res.json({ ok: true, referralClaims: Math.min(redeemedByDevice.get(device) ?? 1, MAX_REFERRAL_CLAIMS), maxReferralClaims: MAX_REFERRAL_CLAIMS });
+});
+
+// --- Inlösenkoder (redeem codes) — admin skapar via `npm run redeem`, fil data/redeem-codes.json ---
+// POST /api/redeem {code, device} -> 200 {ok, entitlement, label, alreadyRedeemed}
+// GET  /api/redeem?device=x -> vilka koder enheten redan löst in (återställning efter ominstallation)
+const redeemAttempts = new Map<string, number[]>();
+function redeemRateLimited(key: string): boolean {
+  const now = Date.now();
+  const arr = (redeemAttempts.get(key) ?? []).filter((t) => now - t < 10 * 60_000);
+  redeemAttempts.set(key, arr);
+  if (arr.length >= 20) return true;
+  arr.push(now);
+  return false;
+}
+
+app.post("/api/redeem", (req, res) => {
+  const device = String(req.body?.device ?? "anon");
+  const code = normalizeCode(String(req.body?.code ?? ""));
+  if (redeemRateLimited(device + "|" + (req.ip ?? ""))) {
+    return res.status(429).json({ error: "För många försök — vänta några minuter." });
+  }
+  if (!code) return res.status(400).json({ error: "Ange en kod (SVAMP-XXXX-XXXX-XXXX)." });
+  const codes = loadCodes(); // läses per anrop så CLI-ändringar gäller direkt utan omstart
+  const entry = codes[code];
+  if (!entry || !checksumOk(code)) return res.status(404).json({ error: "Ogiltig kod (kontrollera stavningen)." });
+  if (entry.revoked) return res.status(410).json({ error: "Koden är återkallad." });
+  if (entry.expires && entry.expires < new Date().toISOString().slice(0, 10)) {
+    return res.status(410).json({ error: "Koden har gått ut." });
+  }
+  const already = entry.redeemedBy.includes(device);
+  if (!already) {
+    if (entry.uses > 0 && entry.redeemedBy.length >= entry.uses) {
+      return res.status(409).json({ error: "Koden är förbrukad (max antal enheter nått)." });
+    }
+    entry.redeemedBy.push(device);
+    codes[code] = entry;
+    saveCodes(codes);
+    appendLog({ at: new Date().toISOString(), code, device, grant: entry.grant, note: entry.note });
+  }
+  res.json({ ok: true, code, grant: entry.grant, entitlement: entry.grant, label: grantLabel(entry.grant), alreadyRedeemed: already });
+});
+
+app.get("/api/redeem", (req, res) => {
+  const device = String(req.query.device ?? "");
+  const codes = loadCodes();
+  const redeemed = Object.entries(codes)
+    .filter(([, e]) => e.redeemedBy.includes(device))
+    .map(([code, e]) => ({ code, grant: e.grant, label: grantLabel(e.grant) }));
+  res.json({ device, redeemed });
 });
 
 // Dev-läge: lås upp en pool-art via verifierad belöning.

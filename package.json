@@ -16,7 +16,8 @@
     "validate": "node scripts/validate-auc.mjs",
     "twi": "node scripts/compute-twi.mjs",
     "microclimate": "node scripts/make-microclimate-structure-layers.mjs",
-    "water-dist": "node scripts/compute-water-dist.mjs"
+    "water-dist": "node scripts/compute-water-dist.mjs",
+    "redeem": "tsx scripts/redeem.mjs"
   },
   "dependencies": {
     "@mistralai/mistralai": "^3.5.0",

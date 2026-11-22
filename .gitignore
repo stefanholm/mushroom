@@ -11,3 +11,5 @@ data/tile-cache/
 data/osm/
 data/species/
 data/validation/
+data/redeem-codes.json
+data/redeem-log.json

@@ -785,6 +785,55 @@ document.getElementById("openRewardBtn")?.addEventListener("click", () => {
   closeShop();
   openRewardModal();
 });
+
+function deviceId() {
+  try {
+    let d = localStorage.getItem("mushroom-device");
+    if (!d) {
+      d = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "web-" + Math.random().toString(36).slice(2);
+      localStorage.setItem("mushroom-device", d);
+    }
+    return d;
+  } catch {
+    return "anon";
+  }
+}
+
+document.getElementById("redeemBtn")?.addEventListener("click", async () => {
+  const input = document.getElementById("redeemInput");
+  const status = document.getElementById("redeemStatus");
+  const btn = document.getElementById("redeemBtn");
+  const code = (input?.value ?? "").trim();
+  if (!code) {
+    if (status) status.textContent = "Skriv in en kod först.";
+    return;
+  }
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = "Löser in…";
+  try {
+    const r = await fetch("/api/redeem", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code, device: deviceId() }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (status) status.textContent = j.error ?? "Kunde inte lösa in koden.";
+    } else {
+      addEntitlement(j.entitlement);
+      if (status) status.textContent = "🎉 Upplåst: " + (j.label ?? j.entitlement) + (j.alreadyRedeemed ? " (redan inlöst på denna enhet)" : "");
+      if (input) input.value = "";
+      renderShop();
+      if (typeof speciesList !== "undefined" && speciesList) applySpeciesList(speciesList);
+      if (typeof rebuildHabitat === "function") rebuildHabitat();
+      if (typeof refreshMeta === "function") refreshMeta();
+      updateShopBadge();
+    }
+  } catch {
+    if (status) status.textContent = "Servern svarar inte just nu.";
+  }
+  if (btn) btn.disabled = false;
+});
 document.getElementById("closeRewardBtn")?.addEventListener("click", closeRewardModal);
 document.getElementById("reviewRewardModal")?.addEventListener("click", (e) => {
   if (e.target.id === "reviewRewardModal") closeRewardModal();
