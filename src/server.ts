@@ -160,7 +160,20 @@ function isChatMessage(m: unknown): m is ChatMessage {
   );
 }
 
+// Enkel per-IP rate limit för dyra/tunga endpoints (chat kostar Mistral-anrop, debug/cells är tungt).
+const heavyAttempts = new Map<string, number[]>();
+function heavyRateLimited(req: express.Request, maxPer10min: number): boolean {
+  const now = Date.now();
+  const key = (req.ip ?? "x") + "|" + req.path;
+  const arr = (heavyAttempts.get(key) ?? []).filter((t) => now - t < 10 * 60_000);
+  heavyAttempts.set(key, arr);
+  if (arr.length >= maxPer10min) return true;
+  arr.push(now);
+  return false;
+}
+
 app.post("/api/chat", async (req, res) => {
+  if (heavyRateLimited(req, 20)) return res.status(429).json({ error: "För många frågor — vänta en stund." });
   const raw: unknown[] = Array.isArray(req.body?.messages) ? req.body.messages : [];
   const messages: ChatMessage[] = raw.filter(isChatMessage);
 
@@ -1139,6 +1152,7 @@ async function computeCellsCached(
   const hit = cellsCache.get(ck);
   if (hit && Date.now() - hit.at < CELLS_CACHE_TTL_MS) return hit.value;
   const p = computeCells(key, minLon, minLat, maxLon, maxLat, cell, asOf, staticOnly);
+  p.catch(() => cellsCache.delete(ck)); // cacha inte misslyckade beräkningar
   cellsCache.set(ck, { at: Date.now(), value: p });
   if (cellsCache.size > CELLS_CACHE_MAX) {
     const first = cellsCache.keys().next().value;
@@ -1813,6 +1827,7 @@ app.get("/api/tiles/multi/:z/:x/:y.png", async (req, res) => {
 // Batch-variant av /api/debug/cell: många punkter i ett anrop (används av scripts/validate-auc.mjs
 // som annars gör ~200k individuella HTTP-anrop). ents skickas som query param (?ents=all).
 app.post("/api/debug/cells", async (req, res) => {
+  if (heavyRateLimited(req, 10)) return res.status(429).json({ error: "För många batch-anrop — vänta en stund." });
   const key = String(req.body?.species ?? "");
   const species = SPECIES[key];
   if (!species) return res.status(400).json({ error: "Okänd art." });
@@ -2303,8 +2318,9 @@ app.post("/api/reward/claim", (req, res) => {
   } else if (type === "referral") {
     const nRef = claims.filter((c) => c.type === "referral").length;
     if (nRef >= MAX_REFERRAL_CLAIMS) return res.status(403).json({ error: `Max ${MAX_REFERRAL_CLAIMS} referral-belöningar.`, maxReferralClaims: MAX_REFERRAL_CLAIMS });
-    if ((st.redeemedBy[device] ?? 0) <= nRef) {
-      return res.status(403).json({ error: "Lös in en referral-kod från en vän först (kontrolleras server-side).", maxReferralClaims: MAX_REFERRAL_CLAIMS });
+    // både egna inlösta koder OCH inbjudna vänner (earnedBy) ger referral-credit
+    if ((st.redeemedBy[device] ?? 0) + (st.earnedBy[device] ?? 0) <= nRef) {
+      return res.status(403).json({ error: "Lös in en referral-kod (eller få en vän att lösa in din) först — kontrolleras server-side.", maxReferralClaims: MAX_REFERRAL_CLAIMS });
     }
   } else {
     return res.status(400).json({ error: "Ogiltig belöningstyp (review|referral)." });
@@ -2312,7 +2328,7 @@ app.post("/api/reward/claim", (req, res) => {
   claims.push({ id, type, at: new Date().toISOString() });
   st.rewardClaims[device] = claims;
   saveReferrals(st);
-  res.json({ ok: true, type, entitlements: `reward:${id}`, unlocked: id, rewardClaimsLeft: MAX_REWARD_CLAIMS - claims.length, referralClaims: Math.min(st.redeemedBy[device] ?? 0, MAX_REFERRAL_CLAIMS), maxReferralClaims: MAX_REFERRAL_CLAIMS });
+  res.json({ ok: true, type, entitlements: `reward:${id}`, unlocked: id, rewardClaimsLeft: MAX_REWARD_CLAIMS - claims.length, referralClaims: Math.min((st.redeemedBy[device] ?? 0) + (st.earnedBy[device] ?? 0), MAX_REFERRAL_CLAIMS), maxReferralClaims: MAX_REFERRAL_CLAIMS });
 });
 
 // --- Admin-API (PIN från .env ADMIN_PIN) — skapa/återkalla inlösenkoder inifrån appen ---
