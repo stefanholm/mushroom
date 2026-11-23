@@ -29,7 +29,7 @@ säkerhetschecklista i chatt), Stigar, Terrängskugga, Spara PNG, Hitta bilen, t
 | Pack | Namn | Pris | Arter |
 | --- | --- | --- | --- |
 | syd-adellov-kalk | Syd- & ädellöv / kalkmark | 29 kr | blek-kantarell, kruskantarell, finluden-stensopp, sommartryffel, judasora |
-| nordlig-fuktig-profil | Nordlig & fuktig skogsprofil | 29 kr | zonerad-granblodriska, sotvaxing, bla-taggsvamp, rod-svavelticka, farsticka |
+| nordlig-fuktig-profil | Nordlig & fuktig skogsprofil | 29 kr | zonerad-granblodriska, sotvaxing, bla-taggsvamp, rod-svavelticka, brodticka |
 | varme-lov-specialsoppar | Värme- & lövpräglade specialsoppar | 29 kr | blodsopp, gulsopp, jattemusseron, tallskrubb, blodriska |
 
 Totalt: 6 gratis + 11×5 = 61 arter, 0 överlapp (fail-fast-validering i modulen kastar fel vid dubblett/saknad).

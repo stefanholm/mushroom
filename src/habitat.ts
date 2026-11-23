@@ -1160,8 +1160,8 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     ageIdeal: [30, 130],
     sisIdeal: [12, 26],
   },
-  farsticka: {
-    label: "Fårsticka (Albatrellus confluens)",
+  brodticka: {
+    label: "Brödticka (Albatrellus confluens)",
     seasonStart: 8,
     seasonEnd: 10,
     hosts: { gran: 0.8, tall: 0.6, bjork: 0.4 },
@@ -1354,7 +1354,7 @@ const GDD_ENVELOPE: Record<string, [number, number, number, number]> = {
   varmusseron: [1000, 1200, 1900, 2150],
   gulsopp: [700, 900, 1850, 2050],
   blasopp: [900, 1100, 1850, 2050],
-  farsticka: [640, 820, 1400, 1750],
+  brodticka: [640, 820, 1400, 1750],
   "bla-taggsvamp": [600, 800, 1820, 2050],
   "blek-ostronmussling": [900, 1100, 1850, 2050],
   "rod-svavelticka": [1150, 1350, 1900, 2100],
@@ -1527,7 +1527,7 @@ const PACK_DEFS: [string, string, number, "mixed" | "regional" | "solo" | "all" 
   ["blandad-korg-7", "Blandad korg #7 — Fält, skog & samlarfynd", 29, "mixed", ["rund-toppmurkla", "farticka", "korallticka", "rimskivling", "blasopp"]],
   ["blandad-korg-8", "Blandad korg #8 — Tagg, löv & extra fynd", 29, "mixed", ["rodgul-taggsvamp", "larksopp", "jatteroksvamp", "fjallig-blacksvamp", "tallblodriska"]],
   ["syd-adellov-kalk", "Syd- & ädellöv / kalkmark", 29, "regional", ["blek-kantarell", "kruskantarell", "finluden-stensopp", "sommartryffel", "judasora"]],
-  ["nordlig-fuktig-profil", "Nordlig & fuktig skogsprofil", 29, "regional", ["zonerad-granblodriska", "sotvaxing", "bla-taggsvamp", "rod-svavelticka", "farsticka"]],
+  ["nordlig-fuktig-profil", "Nordlig & fuktig skogsprofil", 29, "regional", ["zonerad-granblodriska", "sotvaxing", "bla-taggsvamp", "rod-svavelticka", "brodticka"]],
   ["varme-lov-specialsoppar", "Värme- & lövpräglade specialsoppar", 29, "regional", ["blodsopp", "gulsopp", "tallskrubb", "blodriska"]],
   ["goliatmusseron-solo", "Goliatmusseron — specialutgåva (FRIDLYST: karta/foto, aldrig plocktips)", 79, "solo", ["jattemusseron"]],
   ["all", "Alla 61 arter", 149, "all", []],

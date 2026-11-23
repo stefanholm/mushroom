@@ -90,7 +90,7 @@ const SPECIES = [
   ["varmusseron", "Calocybe gambosa"],
   ["gulsopp", "Xerocomus subtomentosus"],
   ["blasopp", "Gyroporus cyanescens"],
-  ["farsticka", "Albatrellus confluens"],
+  ["brodticka", "Albatrellus confluens"],
   ["bla-taggsvamp", "Hydnellum caeruleum"],
   ["blek-ostronmussling", "Pleurotus pulmonarius"],
   ["rod-svavelticka", "Laetiporus cincinnatus"],
