@@ -9,6 +9,7 @@ import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
 import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, MAX_REWARD_CLAIMS, MAX_REVIEW_CLAIMS, MAX_REFERRAL_CLAIMS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
 import { normalizeCode, checksumOk, loadCodes, saveCodes, appendLog, grantLabel, makeCode, validateGrant, LOG_FILE } from "./redeem.js";
+import { reportSignal, leaderboard, myScore, nearbyFinds, haversineKm, aliasFor } from "./signals.js";
 
 // Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
 // I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
@@ -883,6 +884,9 @@ function parseAsOf(dateParam: string): Date {
 // Läser data/validation/observations.geojson (git-ignored, från `npm run artfakta`).
 type ObsIndex = Map<string, Map<string, [number, number][]>>;
 let obsIndexCache: ObsIndex | null = null;
+// Samma observationer men med datum (för "färska fynd" i nearbyActivity): art -> [{lon, lat, date}]
+type ObsDated = Map<string, { lon: number; lat: number; date: number }[]>;
+let obsDatedCache: ObsDated | null = null;
 async function getObsIndex(): Promise<ObsIndex> {
   if (obsIndexCache) return obsIndexCache;
   const idx: ObsIndex = new Map();
@@ -890,6 +894,7 @@ async function getObsIndex(): Promise<ObsIndex> {
     const p = path.join(here, "..", "data", "validation", "observations.geojson");
     if (fs.existsSync(p)) {
       const j = JSON.parse(await fsp.readFile(p, "utf8"));
+      const dated: ObsDated = new Map();
       for (const f of j.features ?? []) {
         const sp = f.properties?.species;
         const c = f.geometry?.coordinates;
@@ -909,7 +914,18 @@ async function getObsIndex(): Promise<ObsIndex> {
           m.set(key, arr);
         }
         arr.push([lon, lat]);
+        const ev = f.properties?.eventDate;
+        const t = typeof ev === "string" ? Date.parse(ev) : NaN;
+        if (Number.isFinite(t)) {
+          let d = dated.get(sp);
+          if (!d) {
+            d = [];
+            dated.set(sp, d);
+          }
+          d.push({ lon, lat, date: t });
+        }
       }
+      obsDatedCache = dated;
       console.log(`Observationslager: ${idx.size} arter från observations.geojson`);
     }
   } catch (e) {
@@ -942,6 +958,128 @@ function obsPrior(index: ObsIndex, species: string, lon: number, lat: number): n
   }
   return best;
 }
+
+// --- Anonyma fynd + topplista + nearbyActivity (persistent SQLite, se src/signals.ts) ---
+
+async function getObsDated(): Promise<Map<string, { lon: number; lat: number; date: number }[]>> {
+  await getObsIndex();
+  return obsDatedCache ?? new Map();
+}
+
+// Kombinerad områdessignal: anonyma medlemsfynd (14 d, 5×5 km-rutor) + Artportalen (30 d),
+// filtrerat på arter i säsong med bra lokalt habitat. Nivåstyrd: free döljer arterna.
+async function buildNearbyActivity(
+  lat: number,
+  lon: number,
+  req: express.Request,
+  cm: { capped: boolean; trial: boolean; unlocked: boolean },
+) {
+  const ents = resolveEntitlements(req);
+  const now = Date.now();
+  const member = nearbyFinds(lat, lon, 7, now - 14 * 86400000, now);
+  const dated = await getObsDated();
+  const artRows: { species: string; at: number }[] = [];
+  for (const [sp, arr] of dated) {
+    for (const o of arr) {
+      if (o.date >= now - 30 * 86400000 && haversineKm(lat, lon, o.lat, o.lon) <= 7) artRows.push({ species: sp, at: o.date });
+    }
+  }
+  const bySp = new Map<string, { count: number; sources: Set<string> }>();
+  for (const f of member) {
+    const g = bySp.get(f.species) ?? { count: 0, sources: new Set<string>() };
+    g.count++;
+    g.sources.add("member");
+    bySp.set(f.species, g);
+  }
+  for (const a of artRows) {
+    const g = bySp.get(a.species) ?? { count: 0, sources: new Set<string>() };
+    g.count++;
+    g.sources.add("artportalen");
+    bySp.set(a.species, g);
+  }
+  const store = await getLayerStore();
+  const nowDate = new Date(now);
+  const highlights: Record<string, unknown>[] = [];
+  for (const [sp, g] of bySp) {
+    const s = SPECIES[sp];
+    if (!s) continue;
+    if (seasonalFactor(s, lat, nowDate) <= 0) continue; // bara arter i säsong just nu
+    const [e, n] = toSWEREF(lon, lat);
+    const maskOk = store.mask ? store.mask.has(e, n) && store.mask.allows(e, n) : true;
+    const hab = staticHabitatScore(store, sp, lon, lat, {
+      forestOk: maskOk,
+      inClearcut: false,
+      excluded: false,
+      roadFactor: 1,
+      forestEdge: false,
+    });
+    if (hab < 0.6) continue; // bara bra lokalt habitat
+    highlights.push({
+      species: sp,
+      findCount: g.count,
+      sources: [...g.sources],
+      habitatScore: Math.round(hab * 100),
+      isUnlocked: isSpeciesUnlocked(sp, ents),
+      packId: s.pack ?? null,
+    });
+  }
+  highlights.sort((a, b) => (b.findCount as number) - (a.findCount as number) || (b.habitatScore as number) - (a.habitatScore as number));
+  const top = highlights.slice(0, 5);
+  const total = member.length + artRows.length;
+  const tierMode = cm.trial ? "trial" : cm.unlocked ? "annual" : "free";
+  const full = tierMode !== "free";
+  let ctaType = "none";
+  if (tierMode === "free") ctaType = "upgrade_annual_pass";
+  else if (tierMode === "trial") ctaType = "trial_upsell";
+  else if (top.some((h) => h.isUnlocked === false)) ctaType = "buy_species_or_pack";
+  const sources = [...new Set([...(member.length > 0 ? ["member"] : []), ...(artRows.length > 0 ? ["artportalen"] : [])])];
+  return {
+    hasRecentFinds: total > 0,
+    totalRecentFinds: total,
+    sources,
+    tierMode,
+    ctaType,
+    // free efter provperiod: dölj vilka arter — bara att fynd gjorts i området
+    highlights: full ? top : [],
+  };
+}
+
+app.post("/api/report-signal", async (req, res) => {
+  if (heavyRateLimited(req, 30)) return res.status(429).json({ error: "För många fynd — vänta en stund." });
+  const device = String(req.body?.device ?? "");
+  const species = String(req.body?.species ?? "");
+  const lat = Number(req.body?.lat);
+  const lon = Number(req.body?.lon);
+  if (!device) return res.status(400).json({ error: "device krävs" });
+  if (!SPECIES[species]) return res.status(400).json({ error: "Okänd art." });
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return res.status(400).json({ error: "lat/lon krävs" });
+  const store = await getLayerStore();
+  const [e, n] = toSWEREF(lon, lat);
+  const maskOk = store.mask ? store.mask.has(e, n) && store.mask.allows(e, n) : true;
+  const hab = staticHabitatScore(store, species, lon, lat, {
+    forestOk: maskOk,
+    inClearcut: false,
+    excluded: false,
+    roadFactor: 1,
+    forestEdge: false,
+  });
+  const sf = seasonalFactor(SPECIES[species], lat, new Date());
+  const result = reportSignal({ device, species, lat, lon, habitatScore: hab, seasonFactor: sf });
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  res.json(result);
+});
+
+app.get("/api/leaderboard", (req, res) => {
+  const days = Math.max(1, Math.min(30, Number(req.query.days ?? 5) || 5));
+  res.json({ days, leaderboard: leaderboard(days, 10) });
+});
+
+app.get("/api/leaderboard/score", (req, res) => {
+  const device = String(req.query.device ?? "");
+  if (!device) return res.status(400).json({ error: "device krävs" });
+  const days = Math.max(1, Math.min(30, Number(req.query.days ?? 5) || 5));
+  res.json({ days, alias: aliasFor(device), ...myScore(device, days) });
+});
 
 async function computeCells(
   key: string,
@@ -1259,7 +1397,16 @@ app.get("/api/hotspots", async (req, res) => {
         score: p.score,
         gold: cm.unlocked === true && goldSet.has(p),
       })),
-      meta: { count: visible.length, minScore, species: keys, asOf: asOf.toISOString().slice(0, 10), staticOnly, ...cm, goldPeaks: goldN },
+      meta: {
+        count: visible.length,
+        minScore,
+        species: keys,
+        asOf: asOf.toISOString().slice(0, 10),
+        staticOnly,
+        ...cm,
+        goldPeaks: goldN,
+        nearbyActivity: await buildNearbyActivity(centerLat, (minLon + maxLon) / 2, req, cm),
+      },
     });
   }
 
@@ -1290,6 +1437,7 @@ app.get("/api/hotspots", async (req, res) => {
       ],
       generatedAt: new Date().toISOString(),
       skipped: (res.locals.skipped as string[] | undefined) ?? [],
+      nearbyActivity: await buildNearbyActivity((minLat + maxLat) / 2, (minLon + maxLon) / 2, req, cm),
     },
     features,
   });
@@ -1561,7 +1709,9 @@ app.get("/api/meta", async (req, res) => {
   const frost = species.frostSensitive && minTemp !== null && minTemp <= -3 ? 0 : 1;
   const flush = flushFactor(coolNights);
   const gdd5 = effectiveGdd5(store, mLon, mLat);
+  const nearbyActivity = await buildNearbyActivity(mLat, mLon, req, capMeta(req));
   res.json({
+    nearbyActivity,
     species: key,
     label: species.label,
     eatScore: species.eatScore,
@@ -2144,7 +2294,7 @@ app.get("/api/shop", (req, res) => {
           species: p.species,
           image: top ? `/icons/${top}.png` : null,
           topSpecies: top ?? null,
-          owned: ents.has("all") || ents.has("pro") || ents.has(p.id),
+          owned: ents.has("all") || ents.has(p.id), // pro/årskort låser inte paket
         };
       }),
     reviewRewardSpecies: REVIEW_REWARD_SPECIES,
@@ -2197,7 +2347,7 @@ app.get("/api/unlocked", (req, res) => {
   res.json({
     entitlements: [...ents],
     unlocked: Object.keys(SPECIES).filter((id) => isSpeciesUnlocked(id, ents)),
-    topSpots: ents.has("all") || ents.has("pro") || ents.has("topspots") || ents.has(PASS_ID),
+    topSpots: canSeeTopSpots(req),
   });
 });
 

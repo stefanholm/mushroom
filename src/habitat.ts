@@ -1621,12 +1621,13 @@ export const PACKS: Record<string, PackInfo> = Object.fromEntries(
 // true om arten är upplåst med givna entitlements (tomma = gratisversionen).
 // "reward:<id>" gäller bara REVIEW_REWARD_SPECIES; "species:<id>" gäller alla låsta arter
 // UTOM SOLO_ONLY (valideras i server.ts).
+// OBS: "pro"/"topspots:<år>" (Årskort) låser INTE upp arter/paket — bara 100 % av träffarna
+// (ingen 70 %-cap, guld på topparna). Endast all/paket-ID/species:<id>/reward:<id> låser arter.
 export function isSpeciesUnlocked(id: string, ents: Set<string>): boolean {
   const s = SPECIES[id];
   if (!s) return false;
   if (!s.pack) return true;
   return (
-    ents.has("pro") ||
     ents.has("all") ||
     ents.has(s.pack) ||
     ents.has("reward:" + id) ||
