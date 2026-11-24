@@ -9,7 +9,7 @@ import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
 import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, MAX_REWARD_CLAIMS, MAX_REVIEW_CLAIMS, MAX_REFERRAL_CLAIMS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
 import { normalizeCode, checksumOk, loadCodes, saveCodes, appendLog, grantLabel, makeCode, validateGrant, LOG_FILE } from "./redeem.js";
-import { reportSignal, leaderboard, myScore, nearbyFinds, allFinds, haversineKm, aliasFor } from "./signals.js";
+import { reportSignal, leaderboard, myScore, nearbyFinds, allFinds, haversineKm, aliasFor, deleteDeviceData } from "./signals.js";
 
 // Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
 // I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
@@ -1218,6 +1218,54 @@ app.get("/api/leaderboard/score", (req, res) => {
   if (!device) return res.status(400).json({ error: "device krävs" });
   const days = Math.max(1, Math.min(30, Number(req.query.days ?? 5) || 5));
   res.json({ days, alias: aliasFor(device), ...myScore(device, days) });
+});
+
+// --- GDPR / App Store 5.1.1(v): radera ALL enhetsdata (idempotent — alltid 200 om device giltig) ---
+// Raderar från signals.db (fynd/poäng/alias/restids-meta), referrals.json (codes/redeemedBy/
+// earnedBy/rewardClaims), redeem-codes.json (usedBy) och redeem-log.json. Aggregerade fynd från
+// andra enheter ligger kvar (de är redan anonyma 0.05°-celler utan GPS).
+app.delete("/api/privacy/delete", (req, res) => {
+  if (heavyRateLimited(req, 10)) return res.status(429).json({ ok: false, deleted: false, error: "För många anrop — vänta en stund." });
+  const device = String(req.query.device ?? "").trim();
+  if (!device || device.length > 128) {
+    return res.status(400).json({ ok: false, deleted: false, error: "device krävs (icke-tom sträng)" });
+  }
+  const dbCounts = deleteDeviceData(device);
+  // referrals.json
+  const st = loadReferrals();
+  delete st.redeemedBy[device];
+  delete st.earnedBy[device];
+  delete st.rewardClaims[device];
+  for (const c of Object.values(st.codes)) {
+    if (c.owner === device) c.owner = "[raderad]";
+    if (c.usedBy === device) c.usedBy = null;
+  }
+  saveReferrals(st);
+  // redeem-codes.json: ta bort device från usedBy-listor
+  const codes = loadCodes();
+  let codesChanged = false;
+  for (const c of Object.values(codes)) {
+    if (c.redeemedBy?.includes(device)) {
+      c.redeemedBy = c.redeemedBy.filter((d) => d !== device);
+      codesChanged = true;
+    }
+  }
+  if (codesChanged) saveCodes(codes);
+  // redeem-log.json (JSONL): skriv om utan rader för device
+  let logRemoved = 0;
+  try {
+    const lines = fs.readFileSync(LOG_FILE, "utf8").split("\n").filter(Boolean);
+    const kept = lines.filter((l) => {
+      try {
+        return JSON.parse(l).device !== device;
+      } catch {
+        return true;
+      }
+    });
+    logRemoved = lines.length - kept.length;
+    if (logRemoved > 0) fs.writeFileSync(LOG_FILE, kept.length > 0 ? kept.join("\n") + "\n" : "");
+  } catch {}
+  res.json({ ok: true, deleted: true, details: { ...dbCounts, logRemoved } });
 });
 
 async function computeCells(

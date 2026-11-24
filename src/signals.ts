@@ -223,3 +223,12 @@ export function allFinds(sinceMs: number, limit = 20000): NearbyFind[] {
     .prepare("SELECT species, at, points, cellLat, cellLon FROM signals WHERE at >= ? ORDER BY at DESC LIMIT ?")
     .all(sinceMs, limit) as NearbyFind[];
 }
+
+// GDPR-radering: ta bort ALLT som är kopplat till en enhet (fynd, poäng, alias, restids-meta).
+// Kvarvarande fynd från andra enheter är redan aggregerade/anonyma (0.05° celler, inget GPS).
+export function deleteDeviceData(dev: string): { signals: number; devmeta: number } {
+  const database = getDb();
+  const s = database.prepare("DELETE FROM signals WHERE dev = ?").run(dev);
+  const m = database.prepare("DELETE FROM devmeta WHERE dev = ?").run(dev);
+  return { signals: Number(s.changes ?? 0), devmeta: Number(m.changes ?? 0) };
+}

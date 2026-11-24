@@ -23,8 +23,10 @@ Redan gjort i denna commit (`a712407+`): `express.json` strypt till 256 kb, säk
 - [ ] **SQL:** bara prepared statements (node:sqlite/D1 gör detta) — redan så i `signals.ts`.
 - [ ] **Hemligheter:** endast som Worker-secrets / lokalt `.env` (git-ignored). Rotera `ADMIN_PIN`.
 - [ ] **Logga aldrig GPS/device-id i klartext i prod**; `report-signal` lagrar bara 0.05°-celler.
-- [ ] **GDPR:** pseudonymt device-id, publiserad privacy policy, `/api/privacy/delete?device=`
-      (raderar enhetens signals/referrals/reward/ents), D1 med EU-jurisdiction om möjligt.
+- [x] **GDPR:** pseudonymt device-id + publiserad privacy policy. `DELETE /api/privacy/delete?device=<uuid>`
+      raderar ALL enhetsdata (signals.db fynd/poäng/alias/devmeta, referrals.json, redeem-koder usedBy,
+      redeem-logg) och svarar idempotent `200 {ok:true,deleted:true}` även när enheten redan är borta;
+      400 vid tomt/ogiltigt device. Testad 2026-11-24. D1 EU-jurisdiction vid port.
 - [ ] **Backup:** D1 point-in-time recovery; R2 versioning på tile-bucketen; alla JSON-lager
       (redeem/referrals) portar till D1 — Workers har ingen lokal disk.
 - [ ] **Observability:** 5xx-rate + p95-latens (Workers Analytics / Logpush), Sentry i iOS-appen,
