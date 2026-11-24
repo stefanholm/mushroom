@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
 import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
-import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SVENSKA_KLASSIKER_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, MAX_REWARD_CLAIMS, MAX_REVIEW_CLAIMS, MAX_REFERRAL_CLAIMS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
+import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SVENSKA_KLASSIKER_SPECIES, FREE_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, MAX_REWARD_CLAIMS, MAX_REVIEW_CLAIMS, MAX_REFERRAL_CLAIMS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isSpeciesPermanentlyOwned, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
 import { normalizeCode, checksumOk, loadCodes, saveCodes, appendLog, grantLabel, makeCode, validateGrant, LOG_FILE } from "./redeem.js";
 import { reportSignal, leaderboard, myScore, nearbyFinds, allFinds, haversineKm, aliasFor, deleteDeviceData } from "./signals.js";
 
@@ -2487,9 +2487,11 @@ app.get("/api/tiles/hillshade/:z/:x/:y.png", async (req, res) => {
 // Affärs-katalog för StoreKit-vyn (ingen species-param behövs).
 app.get("/api/shop", (req, res) => {
   // ägande beräknas från ?ents= (i prod: från server-validerat kvitto) — stycklistan/topplistan
-  // visar då bara arter användaren INTE redan har. Utan ents = free-tier (alla låsta syns).
+  // visar då bara arter användaren INTE redan har PERMANENT. Årskortets Svenska Klassiker är
+  // temporära, så t.ex. kantarell syns fortfarande i singel-listan för årskort-användare
+  // (köp = permanent). Utan ents = free-tier (alla låsta syns).
   const ents = resolveEntitlements(req);
-  const owned = (id: string) => isSpeciesUnlocked(id, ents);
+  const owned = (id: string) => isSpeciesPermanentlyOwned(id, ents);
   const allSingles = Object.entries(SPECIES).filter(([id, s]) => s.pack && isValidSingleClaim(id));
   res.json({
     packs: Object.values(PACKS)
@@ -2518,7 +2520,7 @@ app.get("/api/shop", (req, res) => {
       year: PASS_YEAR,
       topHiddenFraction: FREE_HIDE_FRACTION,
     },
-    freeSpecies: Object.entries(SPECIES).filter(([, s]) => !s.pack).map(([id]) => id),
+    freeSpecies: FREE_SPECIES,
     singlePriceSek: SINGLE_PRICE_SEK,
     soloOnlySpecies: SOLO_ONLY_SPECIES,
     topPicks: TOP_PICKS.map((id) => {
@@ -2528,7 +2530,7 @@ app.get("/api/shop", (req, res) => {
         label: s.label,
         eatScore: s.eatScore,
         image: `/icons/${id}.png`,
-        free: !s.pack,
+        free: FREE_SPECIES.includes(id),
         priceSek: s.pack ? SINGLE_PRICE_SEK : 0,
         pack: s.pack ?? null,
       };
