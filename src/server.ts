@@ -1181,10 +1181,11 @@ async function buildNearbyActivity(
 
 app.post("/api/report-signal", async (req, res) => {
   if (heavyRateLimited(req, 30)) return res.status(429).json({ error: "För många fynd — vänta en stund." });
-  const device = String(req.body?.device ?? "");
+  const device = String(req.body?.device ?? req.body?.gridDevice ?? "");
   const species = String(req.body?.species ?? "");
-  const lat = Number(req.body?.lat);
-  const lon = Number(req.body?.lon);
+  // bakåtkompat: äldre klienter skickar gridLat/gridLon
+  const lat = Number(req.body?.lat ?? req.body?.gridLat);
+  const lon = Number(req.body?.lon ?? req.body?.gridLon);
   if (!device) return res.status(400).json({ error: "device krävs" });
   if (!SPECIES[species]) return res.status(400).json({ error: "Okänd art." });
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return res.status(400).json({ error: "lat/lon krävs" });
@@ -1201,7 +1202,10 @@ app.post("/api/report-signal", async (req, res) => {
   const sf = seasonalFactor(SPECIES[species], lat, new Date());
   const result = reportSignal({ device, species, lat, lon, habitatScore: hab, seasonFactor: sf });
   if (!result.ok) return res.status(result.status).json({ error: result.error });
-  res.json(result);
+  // bakåtkompat: recentAreaReports = antal fynd samma art+cell senaste 14 d (inkl. detta)
+  const recentAreaReports = nearbyFinds(result.cellLat + 0.025, result.cellLon + 0.025, 3, Date.now() - 14 * 86400000)
+    .filter((f) => f.species === species).length;
+  res.json({ ...result, recentAreaReports });
 });
 
 app.get("/api/leaderboard", (req, res) => {
