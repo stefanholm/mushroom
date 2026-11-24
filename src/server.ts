@@ -23,7 +23,9 @@ function resolveEntitlements(req: express.Request): Set<string> {
     .map((s) => s.trim())
     .filter(Boolean);
   const out = new Set<string>();
-  for (const e of raw) {
+  for (let e of raw) {
+    // StoreKit produkt-ID använder punkt (topspots.2026); backend internt kolon (topspots:2026) — normalisera.
+    if (/^topspots\.\d{4}$/.test(e)) e = "topspots:" + e.slice("topspots.".length);
     if (e.startsWith("reward:")) {
       const id = e.slice(7);
       if (isValidRewardClaim(id)) out.add(e);
@@ -1592,7 +1594,14 @@ app.get("/api/hotspots", async (req, res) => {
         staticOnly,
         ...cm,
         goldPeaks: goldN,
-        nearbyActivity: await buildNearbyActivity(centerLat, (minLon + maxLon) / 2, req, cm),
+        // nearbyActivity utgår från användarens riktiga GPS när klienten skickar lat/lon,
+        // annars från kartkamerans mittpunkt.
+        nearbyActivity: await buildNearbyActivity(
+          Number.isFinite(Number(req.query.lat)) ? Number(req.query.lat) : centerLat,
+          Number.isFinite(Number(req.query.lon)) ? Number(req.query.lon) : (minLon + maxLon) / 2,
+          req,
+          cm,
+        ),
       },
     });
   }
@@ -1624,7 +1633,12 @@ app.get("/api/hotspots", async (req, res) => {
       ],
       generatedAt: new Date().toISOString(),
       skipped: (res.locals.skipped as string[] | undefined) ?? [],
-      nearbyActivity: await buildNearbyActivity((minLat + maxLat) / 2, (minLon + maxLon) / 2, req, cm),
+      nearbyActivity: await buildNearbyActivity(
+        Number.isFinite(Number(req.query.lat)) ? Number(req.query.lat) : (minLat + maxLat) / 2,
+        Number.isFinite(Number(req.query.lon)) ? Number(req.query.lon) : (minLon + maxLon) / 2,
+        req,
+        cm,
+      ),
     },
     features,
   });
