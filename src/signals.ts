@@ -216,3 +216,10 @@ export function nearbyFinds(lat: number, lon: number, radiusKm: number, sinceMs:
     .all(sinceMs, lat - dLat, lat + dLat, lon - dLon, lon + dLon) as NearbyFind[];
   return rows.filter((r) => haversineKm(lat, lon, r.cellLat + CELL_DEG / 2, r.cellLon + CELL_DEG / 2) <= radiusKm + 3);
 }
+
+// Alla fynd sedan sinceMs (för progressiva scope: area/part/sweden), senaste först, max limit.
+export function allFinds(sinceMs: number, limit = 20000): NearbyFind[] {
+  return getDb()
+    .prepare("SELECT species, at, points, cellLat, cellLon FROM signals WHERE at >= ? ORDER BY at DESC LIMIT ?")
+    .all(sinceMs, limit) as NearbyFind[];
+}

@@ -9,7 +9,7 @@ import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
 import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, MAX_REWARD_CLAIMS, MAX_REVIEW_CLAIMS, MAX_REFERRAL_CLAIMS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
 import { normalizeCode, checksumOk, loadCodes, saveCodes, appendLog, grantLabel, makeCode, validateGrant, LOG_FILE } from "./redeem.js";
-import { reportSignal, leaderboard, myScore, nearbyFinds, haversineKm, aliasFor } from "./signals.js";
+import { reportSignal, leaderboard, myScore, nearbyFinds, allFinds, haversineKm, aliasFor } from "./signals.js";
 
 // Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
 // I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
@@ -966,105 +966,204 @@ async function getObsDated(): Promise<Map<string, { lon: number; lat: number; da
   return obsDatedCache ?? new Map();
 }
 
-// Kombinerad områdessignal: anonyma medlemsfynd (14 d) + Artportalen (30 d) inom RADIUS_KM —
-// medvetet stor radie (30 km) så enskilda användares positioner aldrig kan härledas; svaret
-// innehåller aldrig koordinater. Hela artkatalogen är behörig (alla arter i SPECIES).
-// Filtrerat på arter i säsong med bra lokalt habitat. Nivåstyrd: free döljer arterna.
+// --- Progressiv geografi för nearbyActivity ---
+// local (30 km) -> area (region, t.ex. Mälardalen) -> part_of_sweden (Södra/Mellersta/Norra) -> sweden.
+// 30 km-lokal nivå garanterar att inga exakta positioner röjs (fynd är bara 0.05° celler, svar
+// innehåller aldrig koordinater).
 const NEARBY_RADIUS_KM = 30;
+const SCOPE_RANK: Record<string, number> = { local: 0, area: 1, part_of_sweden: 2, sweden: 3 };
+
+function regionName(lat: number, lon: number): string {
+  if (lat < 56.3) return "Skåne";
+  if (lat < 57.6 && lon < 13.6) return "Sydöstra Götaland";
+  if (lon < 14.9 && lat >= 56.4 && lat < 59.9) return "Västkusten";
+  if (lon >= 15 && lon <= 19.6 && lat >= 58.3 && lat < 60.7) return "Mälardalen";
+  if (lon >= 17.4 && lon <= 20.6 && lat >= 55.8 && lat < 58.4) return "Östra Götaland";
+  if (lat < 60.5) return "Götaland";
+  if (lat < 64.5) return "Svealand";
+  return "Norrland";
+}
+function partOfSweden(lat: number): string {
+  if (lat < 60.5) return "Södra Sverige";
+  if (lat < 64.5) return "Mellersta Sverige";
+  return "Norra Sverige";
+}
+function scopeOf(findLat: number, findLon: number, userLat: number, userLon: number): { scope: string; scopeLabel: string } {
+  if (haversineKm(userLat, userLon, findLat, findLon) <= NEARBY_RADIUS_KM) return { scope: "local", scopeLabel: "Ditt närområde" };
+  const region = regionName(userLat, userLon);
+  if (regionName(findLat, findLon) === region) return { scope: "area", scopeLabel: region };
+  const part = partOfSweden(userLat);
+  if (partOfSweden(findLat) === part) return { scope: "part_of_sweden", scopeLabel: part };
+  return { scope: "sweden", scopeLabel: "Hela Sverige" };
+}
+
+type FindRow = { species: string; at: number; lat: number; lon: number; source: "member" | "artportalen" };
+
+// Kombinerad områdessignal med progressiv geografisk fallback: local 30 km, area, landsdel, hela
+// Sverige. Medlemsfynd senaste `days` d + Artportalen senaste 30 d (hela katalogen). Arter måste
+// vara i säsong och ha bra lokalt habitat. Nivåstyrd: free döljer arter; endast årskort får feed48h.
 async function buildNearbyActivity(
   lat: number,
   lon: number,
   req: express.Request,
   cm: { capped: boolean; trial: boolean; unlocked: boolean },
+  opts: { days?: number; feed48h?: boolean } = {},
 ) {
   const ents = resolveEntitlements(req);
   const now = Date.now();
-  const member = nearbyFinds(lat, lon, NEARBY_RADIUS_KM, now - 14 * 86400000, now);
+  const days = opts.days ?? 14;
+  const since = now - days * 86400000;
+  // Alla fynd inom tidsfönstret (medlem) + Artportalen (30 d), med scope per fynd.
+  const memberAll = allFinds(since);
   const dated = await getObsDated();
-  const artRows: { species: string; at: number }[] = [];
+  const rows: FindRow[] = memberAll.map((f) => ({
+    species: f.species,
+    at: f.at,
+    lat: f.cellLat + 0.025,
+    lon: f.cellLon + 0.025,
+    source: "member" as const,
+  }));
   for (const [sp, arr] of dated) {
     for (const o of arr) {
-      if (o.date >= now - 30 * 86400000 && haversineKm(lat, lon, o.lat, o.lon) <= NEARBY_RADIUS_KM) artRows.push({ species: sp, at: o.date });
+      if (o.date >= now - 30 * 86400000) rows.push({ species: sp, at: o.date, lat: o.lat, lon: o.lon, source: "artportalen" as const });
     }
   }
-  const bySp = new Map<string, { count: number; sources: Set<string>; latest: number; latestArt: number }>();
-  for (const f of member) {
-    const g = bySp.get(f.species) ?? { count: 0, sources: new Set<string>(), latest: 0, latestArt: 0 };
-    g.count++;
-    g.sources.add("member");
-    g.latest = Math.max(g.latest, f.at);
-    bySp.set(f.species, g);
+  // Välj minsta scope som ger >= 3 fynd (annars bredaste som har något, annars local).
+  const scopeCounts: Record<string, number> = { local: 0, area: 0, part_of_sweden: 0, sweden: 0 };
+  for (const r of rows) scopeCounts[scopeOf(r.lat, r.lon, lat, lon).scope]++;
+  let chosen: string = "sweden";
+  for (const s of ["local", "area", "part_of_sweden", "sweden"]) {
+    if (scopeCounts[s] >= 3) { chosen = s; break; }
   }
-  for (const a of artRows) {
-    const g = bySp.get(a.species) ?? { count: 0, sources: new Set<string>(), latest: 0, latestArt: 0 };
+  if (scopeCounts[chosen] === 0) {
+    for (const s of ["local", "area", "part_of_sweden", "sweden"]) if (scopeCounts[s] > 0) { chosen = s; break; }
+  }
+  const chosenRank = SCOPE_RANK[chosen];
+  const inScope = rows.filter((r) => SCOPE_RANK[scopeOf(r.lat, r.lon, lat, lon).scope] <= chosenRank);
+  const chosenLabel =
+    chosen === "local" ? "Ditt närområde" : chosen === "area" ? regionName(lat, lon) : chosen === "part_of_sweden" ? partOfSweden(lat) : "Hela Sverige";
+
+  // Gruppera per art.
+  const bySp = new Map<string, { count: number; sources: Set<string>; latest: number; latestArt: number; scope: string; scopeLabel: string }>();
+  for (const r of inScope) {
+    const sc = scopeOf(r.lat, r.lon, lat, lon);
+    const g = bySp.get(r.species) ?? { count: 0, sources: new Set<string>(), latest: 0, latestArt: 0, scope: sc.scope, scopeLabel: sc.scopeLabel };
     g.count++;
-    g.sources.add("artportalen");
-    g.latest = Math.max(g.latest, a.at);
-    g.latestArt = Math.max(g.latestArt, a.at);
-    bySp.set(a.species, g);
+    g.sources.add(r.source);
+    g.latest = Math.max(g.latest, r.at);
+    if (r.source === "artportalen") g.latestArt = Math.max(g.latestArt, r.at);
+    // behåll tajtaste scope för arten
+    if (SCOPE_RANK[sc.scope] < SCOPE_RANK[g.scope]) {
+      g.scope = sc.scope;
+      g.scopeLabel = sc.scopeLabel;
+    }
+    bySp.set(r.species, g);
   }
   const store = await getLayerStore();
   const nowDate = new Date(now);
-  const highlights: Record<string, unknown>[] = [];
-  for (const [sp, g] of bySp) {
+  const [e0, n0] = toSWEREF(lon, lat);
+  const maskOk = store.mask ? store.mask.has(e0, n0) && store.mask.allows(e0, n0) : true;
+  function habOf(sp: string): number {
+    return staticHabitatScore(store, sp, lon, lat, { forestOk: maskOk, inClearcut: false, excluded: false, roadFactor: 1, forestEdge: false });
+  }
+  function highlight(sp: string, g: { count: number; sources: Set<string>; latest: number; latestArt: number; scope: string; scopeLabel: string } | null, hab: number) {
     const s = SPECIES[sp];
-    if (!s) continue; // hela katalogen är behörig så länge arten finns i SPECIES
-    if (seasonalFactor(s, lat, nowDate) <= 0) continue; // bara arter i säsong just nu
-    const [e, n] = toSWEREF(lon, lat);
-    const maskOk = store.mask ? store.mask.has(e, n) && store.mask.allows(e, n) : true;
-    const hab = staticHabitatScore(store, sp, lon, lat, {
-      forestOk: maskOk,
-      inClearcut: false,
-      excluded: false,
-      roadFactor: 1,
-      forestEdge: false,
-    });
-    if (hab < 0.6) continue; // bara bra lokalt habitat
+    if (!s) return null;
+    if (seasonalFactor(s, lat, nowDate) <= 0) return null;
+    if (hab < 0.6) return null;
     const unlocked = isSpeciesUnlocked(sp, ents);
-    // Kort sammanfattning — "gårdagens toppfynd" om Artportalen-fyndet är färskt.
     let summary: string | null = null;
-    if (g.latestArt > 0) {
-      const ageH = (now - g.latestArt) / 3600000;
-      summary = ageH <= 36 ? "Gårdagens toppfynd i regionen" : "Nya fynd i regionen (Artportalen)";
-    } else if (g.latest > 0) {
-      summary = "Nya medlemsfynd i regionen";
+    if (g) {
+      if (g.latestArt > 0 && now - g.latestArt <= 36 * 3600000) summary = `Gårdagens toppfynd i ${g.scopeLabel.toLowerCase()}`;
+      else if (g.latestArt > 0) summary = `Nya fynd i ${g.scopeLabel.toLowerCase()} (Artportalen)`;
+      else summary = `Nya medlemsfynd i ${g.scopeLabel.toLowerCase()}`;
+    } else {
+      summary = `Bra habitat i ${chosenLabel.toLowerCase()} — låst art`;
     }
-    highlights.push({
+    return {
       species: sp,
-      kind: unlocked ? "report" : "upsell", // upplåst = skogsrapport, låst = köprekommendation
-      findCount: g.count,
-      sources: [...g.sources],
-      latestAt: g.latest > 0 ? new Date(g.latest).toISOString() : null,
-      summary,
+      kind: unlocked ? "report" : "upsell",
+      findCount: g?.count ?? 0,
+      sources: g ? [...g.sources] : [],
+      scope: g?.scope ?? chosen,
+      scopeLabel: g?.scopeLabel ?? chosenLabel,
       habitatScore: Math.round(hab * 100),
       isUnlocked: unlocked,
       packId: s.pack ?? null,
-    });
+      summary,
+      timestamp: g && g.latest > 0 ? new Date(g.latest).toISOString() : null,
+    };
   }
-  // Rullande lista: senaste aktivitet först, sedan antal, sedan habitat.
+  const highlights: NonNullable<ReturnType<typeof highlight>>[] = [];
+  for (const [sp, g] of bySp) {
+    const h = highlight(sp, g, habOf(sp));
+    if (h) highlights.push(h);
+  }
   highlights.sort(
-    (a, b) => (b.latestAt as string ?? "").localeCompare(a.latestAt as string ?? "") ||
-      (b.findCount as number) - (a.findCount as number) ||
-      (b.habitatScore as number) - (a.habitatScore as number),
+    (a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? "") || b.findCount - a.findCount || b.habitatScore - a.habitatScore,
   );
   const top = highlights.slice(0, 8);
-  const total = member.length + artRows.length;
+  const total = inScope.length;
   const tierMode = cm.trial ? "trial" : cm.unlocked ? "annual" : "free";
   const full = tierMode !== "free";
   let ctaType = "none";
   if (tierMode === "free") ctaType = "upgrade_annual_pass";
   else if (tierMode === "trial") ctaType = "trial_upsell";
-  else if (top.some((h) => h.isUnlocked === false)) ctaType = "buy_species_or_pack";
-  const sources = [...new Set([...(member.length > 0 ? ["member"] : []), ...(artRows.length > 0 ? ["artportalen"] : [])])];
+  else if (top.some((h) => !h.isUnlocked)) ctaType = "buy_species_or_pack";
+  const sources = [...new Set(inScope.map((r) => r.source))];
+
+  // feed48h: bara årskort. Senaste 48 h från båda källor + köprekommendationer för låsta arter
+  // i säsong med riktigt bra habitat (även utan fynd).
+  let feed48h: typeof highlights = [];
+  if (tierMode === "annual" || opts.feed48h) {
+    const since48 = now - 48 * 3600000;
+    const rows48 = rows.filter((r) => r.at >= since48);
+    const bySp48 = new Map<string, { count: number; sources: Set<string>; latest: number; latestArt: number; scope: string; scopeLabel: string }>();
+    for (const r of rows48) {
+      const sc = scopeOf(r.lat, r.lon, lat, lon);
+      const g = bySp48.get(r.species) ?? { count: 0, sources: new Set<string>(), latest: 0, latestArt: 0, scope: sc.scope, scopeLabel: sc.scopeLabel };
+      g.count++;
+      g.sources.add(r.source);
+      g.latest = Math.max(g.latest, r.at);
+      if (r.source === "artportalen") g.latestArt = Math.max(g.latestArt, r.at);
+      if (SCOPE_RANK[sc.scope] < SCOPE_RANK[g.scope]) {
+        g.scope = sc.scope;
+        g.scopeLabel = sc.scopeLabel;
+      }
+      bySp48.set(r.species, g);
+    }
+    const feed: NonNullable<ReturnType<typeof highlight>>[] = [];
+    for (const [sp, g] of bySp48) {
+      const h = highlight(sp, g, habOf(sp));
+      if (h) feed.push(h);
+    }
+    // låsta arter i säsong med starkt habitat blir köprekommendationer även utan fynd
+    for (const sp of Object.keys(SPECIES)) {
+      if (bySp48.has(sp)) continue;
+      const s = SPECIES[sp];
+      if (!s.pack || isSpeciesUnlocked(sp, ents)) continue;
+      if (seasonalFactor(s, lat, nowDate) <= 0) continue;
+      const hab = habOf(sp);
+      if (hab < 0.8) continue;
+      const h = highlight(sp, null, hab);
+      if (h) feed.push(h);
+    }
+    feed.sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? "") || b.findCount - a.findCount || b.habitatScore - a.habitatScore);
+    feed48h = feed.slice(0, 10);
+  }
+
   return {
     hasRecentFinds: total > 0,
     totalRecentFinds: total,
-    sources,
+    scope: chosen,
+    scopeLabel: chosenLabel,
     radiusKm: NEARBY_RADIUS_KM,
+    sources,
     tierMode,
     ctaType,
     // free efter provperiod: dölj vilka arter — bara att fynd gjorts i området
     highlights: full ? top : [],
+    feed48h: tierMode === "annual" ? feed48h : [],
   };
 }
 

@@ -28,16 +28,21 @@ redo att porta till **Cloudflare D1** i produktion (samma schema funkar rakt av)
 ### `GET /api/leaderboard?days=5` → `{ days, leaderboard: [{rank, alias, points, finds}] }` (Topp 10)
 ### `GET /api/leaderboard/score?device=X&days=5` → `{ days, alias, points, finds, rank }`
 
-## nearbyActivity (i `/api/meta` och `/api/hotspots` meta)
+## nearbyActivity (i `/api/meta` och `/api/hotspots` meta) — progressiv geografi + feed48h
 
 Slår ihop **anonyma medlemsfynd** (senaste 14 d) + **Artportalen** (`observations.geojson` med
-`eventDate`, senaste 30 d) inom **`radiusKm: 30`** — medvetet stor radie så enskilda användares
-positioner aldrig kan härledas; svaret innehåller aldrig koordinater. **Hela artkatalogen** är
-behörig (alla arter i SPECIES), filtrerat på arter **i säsong** just nu och **bra lokalt habitat**
-(`staticHabitatScore ≥ 0.6` vid användarens plats). Highlights är en **rullande lista (max 8)**
-sorterad på senaste aktivitet, med både upplåsta (`kind: "report"` — skogsrapport) och låsta
-(`kind: "upsell"` — köprekommendation) arter, plus `summary` ("Gårdagens toppfynd i regionen" /
-"Nya fynd i regionen") och `latestAt`.
+`eventDate`, senaste 30 d, **hela artkatalogen**). **Progressiv geografisk fallback:** välj minsta
+scope med ≥3 fynd, annars bredaste med något: `local` (30 km, "Ditt närområde") → `area` (region
+t.ex. "Mälardalen"/"Skåne"/"Västkusten") → `part_of_sweden` ("Södra/Mellersta/Norra Sverige") →
+`sweden` ("Hela Sverige"). `scope`+`scopeLabel` finns på toppnivå OCH per highlight. 30 km-lokal
+nivå + 0.05° celler garanterar att inga exakta positioner röjs; svaret innehåller aldrig koordinater.
+Arter filtreras på **i säsong** just nu och **bra lokalt habitat** (`staticHabitatScore ≥ 0.6` vid
+användarens plats). Highlights = rullande lista (max 8), sorterad på senaste aktivitet, med både
+upplåsta (`kind: "report"`) och låsta (`kind: "upsell"`) arter + `summary`, `timestamp`.
+
+**`feed48h`** skickas **bara för årskort** (`tierMode: "annual"`): senaste 48 h från båda källor
+(max 10) blandat med köprekommendationer för låsta arter i säsong med starkt habitat (≥0.8, även
+utan fynd). `free`/`trial` får `feed48h: []`.
 
 Nivåstyrd (från `capMeta`): 
 
@@ -49,16 +54,19 @@ Nivåstyrd (från `capMeta`):
 
 ```json
 "nearbyActivity": {
-  "hasRecentFinds": true, "totalRecentFinds": 14, "sources": ["member", "artportalen"],
-  "radiusKm": 30, "tierMode": "annual", "ctaType": "buy_species_or_pack",
+  "hasRecentFinds": true, "totalRecentFinds": 14,
+  "scope": "local", "scopeLabel": "Ditt närområde", "radiusKm": 30,
+  "sources": ["member", "artportalen"], "tierMode": "annual", "ctaType": "buy_species_or_pack",
   "highlights": [
     { "species": "frostvaxing", "kind": "report", "findCount": 4, "sources": ["member", "artportalen"],
-      "latestAt": "2026-11-24T10:00:10Z", "summary": "Gårdagens toppfynd i regionen",
-      "habitatScore": 97, "isUnlocked": true, "packId": null },
+      "scope": "local", "scopeLabel": "Ditt närområde", "habitatScore": 97, "isUnlocked": true, "packId": null,
+      "summary": "Gårdagens toppfynd i ditt närområde", "timestamp": "2026-11-24T10:00:10Z" },
     { "species": "vinterskivling", "kind": "upsell", "findCount": 2, "sources": ["member", "artportalen"],
-      "latestAt": "2026-11-24T09:48:49Z", "summary": "Nya fynd i regionen (Artportalen)",
-      "habitatScore": 76, "isUnlocked": false, "packId": "blandad-korg-2" }
-  ]
+      "scope": "local", "scopeLabel": "Ditt närområde", "habitatScore": 76, "isUnlocked": false,
+      "packId": "blandad-korg-2", "summary": "Nya fynd i ditt närområde (Artportalen)",
+      "timestamp": "2026-11-24T09:48:49Z" }
+  ],
+  "feed48h": [ /* samma post-form, bara för annual; free/trial får [] */ ]
 }
 ```
 
@@ -76,8 +84,9 @@ Nivåstyrd (från `capMeta`):
 - samma enhet demo→Kiruna direkt: **403 orimlig_restid**
 - natt (solhöjd −50.9°): **0 p**, flag `natt`
 - leaderboard Top 10 + egen score/rank: OK
-- nearbyActivity: radie 30 km (fynd 24 km bort inkluderas, 7 km hade missat dem); free döljer
-  arter (cta upgrade_annual_pass), trial/årskort full rullande lista med kind report/upsell +
-  summary + latestAt; årskort får cta buy_species_or_pack för låst vinterskivling (blandad-korg-2);
-  Artportalen-fynd från hela katalogen dyker upp direkt med sources:["artportalen"]
+- nearbyActivity: radie 30 km; progressiv fallback local→area→part_of_sweden→sweden (testat:
+  Kiruna → scope sweden "Hela Sverige", 60N/16E → area "Mälardalen"); per-highlight scope/scopeLabel/
+  timestamp/summary/kind report|upsell; feed48h bara för årskort (free/trial får []); årskort får
+  cta buy_species_or_pack för låst vinterskivling (blandad-korg-2); Artportalen från hela katalogen
+  dyker upp direkt med sources:["artportalen"]
 - ents=pro → ej art-upplåst men topSpots=true; ents=all → 61 arter, topSpots=false
