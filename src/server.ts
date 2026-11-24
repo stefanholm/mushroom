@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
 import { PNG } from "pngjs";
 import { LayerStore, toSWEREF } from "./layers.js";
-import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, MAX_REWARD_CLAIMS, MAX_REVIEW_CLAIMS, MAX_REFERRAL_CLAIMS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
+import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SVENSKA_KLASSIKER_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, MAX_REWARD_CLAIMS, MAX_REVIEW_CLAIMS, MAX_REFERRAL_CLAIMS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
 import { normalizeCode, checksumOk, loadCodes, saveCodes, appendLog, grantLabel, makeCode, validateGrant, LOG_FILE } from "./redeem.js";
 import { reportSignal, leaderboard, myScore, nearbyFinds, allFinds, haversineKm, aliasFor, deleteDeviceData } from "./signals.js";
 
@@ -2494,6 +2494,8 @@ app.get("/api/shop", (req, res) => {
         };
       }),
     reviewRewardSpecies: REVIEW_REWARD_SPECIES,
+    svenskaKlassiker: SVENSKA_KLASSIKER_SPECIES,
+    svenskaKlassikerActive: ents.has("pro") || ents.has("topspots") || [...ents].some((e) => e.startsWith("topspots:")),
     topSpotsPass: {
       id: PASS_ID,
       label: `Årskort ${PASS_YEAR} — de hetaste ~${Math.round(FREE_HIDE_FRACTION * 100)} % av ställena glöder i guld`,
@@ -2543,6 +2545,8 @@ app.get("/api/unlocked", (req, res) => {
   res.json({
     entitlements: [...ents],
     unlocked: Object.keys(SPECIES).filter((id) => isSpeciesUnlocked(id, ents)),
+    svenskaKlassiker: SVENSKA_KLASSIKER_SPECIES,
+    svenskaKlassikerActive: ents.has("pro") || ents.has("topspots") || [...ents].some((e) => e.startsWith("topspots:")),
     topSpots: canSeeTopSpots(req),
   });
 });

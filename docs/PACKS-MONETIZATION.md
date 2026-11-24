@@ -6,7 +6,16 @@ Paketen ligger i KOD — inte i `data/species/artfakta.json` (den är git-ignore
 
 ## Gratisnivå (6 arter — förtroendebyggare)
 
-`kantarell`, `blek-taggsvamp`, `brunsopp`, `sandsopp`, `smorsopp`, `stolt-fjallskivling`
+`jatteroksvamp`, `blek-taggsvamp`, `brunsopp`, `sandsopp`, `frostvaxing`, `stolt-fjallskivling`
+
+(v1.0: `kantarell` flyttades till `blandad-korg-8`; `jatteroksvamp` är gratis i stället.)
+
+## Svenska Klassiker i Årskort Pro (249 kr/år)
+
+`SVENSKA_KLASSIKER_SPECIES = ["trattkantarell", "karljohan", "svart-trumpetsvamp", "mandelkremla"]`
+— aktiva ENDAST medan årskort/pro är aktivt (i prod: ents från App Store Server API, så de låses
+automatiskt när prenumerationen avslutas). Exponeras som `svenskaKlassiker` + `svenskaKlassikerActive`
+i `/api/shop` och `/api/unlocked`.
 
 Alltid gratis även utanför artlistan: säkerhetsinfo (förväxlingsvarningar, FRIDLYST,
 säkerhetschecklista i chatt), Stigar, Terrängskugga, Spara PNG, Hitta bilen, tryck-inspektion.
@@ -22,7 +31,7 @@ säkerhetschecklista i chatt), Stigar, Terrängskugga, Spara PNG, Hitta bilen, t
 | blandad-korg-5 | Sand, glänta & senhöst | 129 kr | tegelsopp, grynsopp, citronslemskivling, blek-ostronmussling, rokslojskivling |
 | blandad-korg-6 | Vår, ved & karaktär | 129 kr | toppmurkla, svart-trumpetsvamp, blomkalssvamp, rodnande-blacksvamp, streckmusseron |
 | blandad-korg-7 | Fält, skog & samlarfynd | 129 kr | rund-toppmurkla, farticka, korallticka, rimskivling, blasopp |
-| blandad-korg-8 | Tagg, löv & extra fynd | 129 kr | rodgul-taggsvamp, larksopp, jatteroksvamp, fjallig-blacksvamp, tallblodriska |
+| blandad-korg-8 | Tagg, löv & extra fynd | 129 kr | rodgul-taggsvamp, larksopp, kantarell, fjallig-blacksvamp, tallblodriska |
 
 ## Områdesspecifika 5-pack (#9–#11 — ärlig geografi/nisch)
 

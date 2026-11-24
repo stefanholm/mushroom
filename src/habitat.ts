@@ -1525,7 +1525,7 @@ const PACK_DEFS: [string, string, number, "mixed" | "regional" | "solo" | "all" 
   ["blandad-korg-5", "Blandad korg #5 — Sand, glänta & senhöst", 129, "mixed", ["tegelsopp", "grynsopp", "citronslemskivling", "blek-ostronmussling", "rokslojskivling"]],
   ["blandad-korg-6", "Blandad korg #6 — Vår, ved & karaktär", 129, "mixed", ["toppmurkla", "svart-trumpetsvamp", "blomkalssvamp", "rodnande-blacksvamp", "streckmusseron"]],
   ["blandad-korg-7", "Blandad korg #7 — Fält, skog & samlarfynd", 129, "mixed", ["rund-toppmurkla", "farticka", "korallticka", "rimskivling", "blasopp"]],
-  ["blandad-korg-8", "Blandad korg #8 — Tagg, löv & extra fynd", 129, "mixed", ["rodgul-taggsvamp", "larksopp", "jatteroksvamp", "fjallig-blacksvamp", "tallblodriska"]],
+  ["blandad-korg-8", "Blandad korg #8 — Tagg, löv & extra fynd", 129, "mixed", ["rodgul-taggsvamp", "larksopp", "kantarell", "fjallig-blacksvamp", "tallblodriska"]],
   ["syd-adellov-kalk", "Syd- & ädellöv / kalkmark",  129, "regional", ["blek-kantarell", "kruskantarell", "finluden-stensopp", "sommartryffel", "judasora"]],
   ["nordlig-fuktig-profil", "Nordlig & fuktig skogsprofil",  129, "regional", ["zonerad-granblodriska", "sotvaxing", "bla-taggsvamp", "rod-svavelticka", "brodticka"]],
   ["varme-lov-specialsoppar", "Värme- & lövpräglade specialsoppar",  129, "regional", ["blodsopp", "gulsopp", "tallskrubb", "blodriska"]],
@@ -1543,8 +1543,18 @@ for (const [pid, , , kind, list] of PACK_DEFS) {
     SPECIES_PACK[sid] = pid;
   }
 }
+// Gratisarter (saknar pack). kantarell flyttades till blandad-korg-8 vid v1.0-prissteget;
+// jatteroksvamp är gratis i stället.
+export const FREE_SPECIES: string[] = [
+  "stolt-fjallskivling",
+  "blek-taggsvamp",
+  "brunsopp",
+  "sandsopp",
+  "frostvaxing",
+  "jatteroksvamp",
+];
 for (const sid of Object.keys(SPECIES)) {
-  if (!SPECIES_PACK[sid] && sid !== "kantarell" && sid !== "blek-taggsvamp" && sid !== "brunsopp" && sid !== "sandsopp" && sid !== "frostvaxing" && sid !== "stolt-fjallskivling") {
+  if (!SPECIES_PACK[sid] && !FREE_SPECIES.includes(sid)) {
     throw new Error(`Art ${sid} saknar pack (och är inte gratisart)`);
   }
 }
@@ -1580,6 +1590,16 @@ for (const [k, s] of Object.entries(SPECIES)) {
 // Belöningspool för "lås upp 1 svamp mot betyg/kommentar": bara LÅSTA "helt ok"-arter —
 // aldrig topparter (kantarell/karljohan/trattkantarell/trumpetsvampar/stensopp/riskor) och
 // aldrig exklusiva/känsliga (jattemusseron, sommartryffel, murklor, korallticka, blomkålssvamp).
+// "Svenska Klassiker" — Ingår i Årskort Pro (topspots:<år> / pro, 249 kr/år). Aktiva ENDAST medan
+// prenumerationen är aktiv; i prod kommer ents från App Store Server API, så när prenumerationen
+// upphör försvinner ents och arterna låses automatiskt igen.
+export const SVENSKA_KLASSIKER_SPECIES: string[] = [
+  "trattkantarell",
+  "karljohan",
+  "svart-trumpetsvamp",
+  "mandelkremla",
+];
+
 export const REVIEW_REWARD_SPECIES: string[] = [
   "bjorksopp",
   "aspsopp",
@@ -1627,6 +1647,10 @@ export function isSpeciesUnlocked(id: string, ents: Set<string>): boolean {
   const s = SPECIES[id];
   if (!s) return false;
   if (!s.pack) return true;
+  // Svenska Klassiker följer Årskort Pro (pro / topspots / topspots:<år>) — de låses automatiskt
+  // igen när prenumerationen tar slut (ents kommer då inte längre från App Store-kvittot).
+  const arskortAktivt = ents.has("pro") || ents.has("topspots") || [...ents].some((e) => e.startsWith("topspots:"));
+  if (arskortAktivt && SVENSKA_KLASSIKER_SPECIES.includes(id)) return true;
   return (
     ents.has("all") ||
     ents.has(s.pack) ||
