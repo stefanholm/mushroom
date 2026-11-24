@@ -30,9 +30,14 @@ redo att porta till **Cloudflare D1** i produktion (samma schema funkar rakt av)
 
 ## nearbyActivity (i `/api/meta` och `/api/hotspots` meta)
 
-Slår ihop **anonyma medlemsfynd** (senaste 14 d, inom 7 km, från signals) + **Artportalen**
-(`observations.geojson` med `eventDate`, senaste 30 d, inom 7 km). Filtreras på arter **i säsong**
-just nu (`seasonalFactor > 0`) med **bra lokalt habitat** (`staticHabitatScore ≥ 0.6` vid användarens plats).
+Slår ihop **anonyma medlemsfynd** (senaste 14 d) + **Artportalen** (`observations.geojson` med
+`eventDate`, senaste 30 d) inom **`radiusKm: 30`** — medvetet stor radie så enskilda användares
+positioner aldrig kan härledas; svaret innehåller aldrig koordinater. **Hela artkatalogen** är
+behörig (alla arter i SPECIES), filtrerat på arter **i säsong** just nu och **bra lokalt habitat**
+(`staticHabitatScore ≥ 0.6` vid användarens plats). Highlights är en **rullande lista (max 8)**
+sorterad på senaste aktivitet, med både upplåsta (`kind: "report"` — skogsrapport) och låsta
+(`kind: "upsell"` — köprekommendation) arter, plus `summary` ("Gårdagens toppfynd i regionen" /
+"Nya fynd i regionen") och `latestAt`.
 
 Nivåstyrd (från `capMeta`): 
 
@@ -45,9 +50,15 @@ Nivåstyrd (från `capMeta`):
 ```json
 "nearbyActivity": {
   "hasRecentFinds": true, "totalRecentFinds": 14, "sources": ["member", "artportalen"],
-  "tierMode": "annual", "ctaType": "buy_species_or_pack",
-  "highlights": [{ "species": "vinterskivling", "findCount": 1, "sources": ["member"],
-                   "habitatScore": 76, "isUnlocked": false, "packId": "blandad-korg-2" }]
+  "radiusKm": 30, "tierMode": "annual", "ctaType": "buy_species_or_pack",
+  "highlights": [
+    { "species": "frostvaxing", "kind": "report", "findCount": 4, "sources": ["member", "artportalen"],
+      "latestAt": "2026-11-24T10:00:10Z", "summary": "Gårdagens toppfynd i regionen",
+      "habitatScore": 97, "isUnlocked": true, "packId": null },
+    { "species": "vinterskivling", "kind": "upsell", "findCount": 2, "sources": ["member", "artportalen"],
+      "latestAt": "2026-11-24T09:48:49Z", "summary": "Nya fynd i regionen (Artportalen)",
+      "habitatScore": 76, "isUnlocked": false, "packId": "blandad-korg-2" }
+  ]
 }
 ```
 
@@ -65,6 +76,8 @@ Nivåstyrd (från `capMeta`):
 - samma enhet demo→Kiruna direkt: **403 orimlig_restid**
 - natt (solhöjd −50.9°): **0 p**, flag `natt`
 - leaderboard Top 10 + egen score/rank: OK
-- nearbyActivity: free döljer arter (cta upgrade_annual_pass), trial full (trial_upsell),
-  årskort full + buy_species_or_pack för låst vinterskivling (packId blandad-korg-2)
+- nearbyActivity: radie 30 km (fynd 24 km bort inkluderas, 7 km hade missat dem); free döljer
+  arter (cta upgrade_annual_pass), trial/årskort full rullande lista med kind report/upsell +
+  summary + latestAt; årskort får cta buy_species_or_pack för låst vinterskivling (blandad-korg-2);
+  Artportalen-fynd från hela katalogen dyker upp direkt med sources:["artportalen"]
 - ents=pro → ej art-upplåst men topSpots=true; ents=all → 61 arter, topSpots=false

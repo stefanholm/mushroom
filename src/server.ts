@@ -966,8 +966,11 @@ async function getObsDated(): Promise<Map<string, { lon: number; lat: number; da
   return obsDatedCache ?? new Map();
 }
 
-// Kombinerad områdessignal: anonyma medlemsfynd (14 d, 5×5 km-rutor) + Artportalen (30 d),
-// filtrerat på arter i säsong med bra lokalt habitat. Nivåstyrd: free döljer arterna.
+// Kombinerad områdessignal: anonyma medlemsfynd (14 d) + Artportalen (30 d) inom RADIUS_KM —
+// medvetet stor radie (30 km) så enskilda användares positioner aldrig kan härledas; svaret
+// innehåller aldrig koordinater. Hela artkatalogen är behörig (alla arter i SPECIES).
+// Filtrerat på arter i säsong med bra lokalt habitat. Nivåstyrd: free döljer arterna.
+const NEARBY_RADIUS_KM = 30;
 async function buildNearbyActivity(
   lat: number,
   lon: number,
@@ -976,25 +979,28 @@ async function buildNearbyActivity(
 ) {
   const ents = resolveEntitlements(req);
   const now = Date.now();
-  const member = nearbyFinds(lat, lon, 7, now - 14 * 86400000, now);
+  const member = nearbyFinds(lat, lon, NEARBY_RADIUS_KM, now - 14 * 86400000, now);
   const dated = await getObsDated();
   const artRows: { species: string; at: number }[] = [];
   for (const [sp, arr] of dated) {
     for (const o of arr) {
-      if (o.date >= now - 30 * 86400000 && haversineKm(lat, lon, o.lat, o.lon) <= 7) artRows.push({ species: sp, at: o.date });
+      if (o.date >= now - 30 * 86400000 && haversineKm(lat, lon, o.lat, o.lon) <= NEARBY_RADIUS_KM) artRows.push({ species: sp, at: o.date });
     }
   }
-  const bySp = new Map<string, { count: number; sources: Set<string> }>();
+  const bySp = new Map<string, { count: number; sources: Set<string>; latest: number; latestArt: number }>();
   for (const f of member) {
-    const g = bySp.get(f.species) ?? { count: 0, sources: new Set<string>() };
+    const g = bySp.get(f.species) ?? { count: 0, sources: new Set<string>(), latest: 0, latestArt: 0 };
     g.count++;
     g.sources.add("member");
+    g.latest = Math.max(g.latest, f.at);
     bySp.set(f.species, g);
   }
   for (const a of artRows) {
-    const g = bySp.get(a.species) ?? { count: 0, sources: new Set<string>() };
+    const g = bySp.get(a.species) ?? { count: 0, sources: new Set<string>(), latest: 0, latestArt: 0 };
     g.count++;
     g.sources.add("artportalen");
+    g.latest = Math.max(g.latest, a.at);
+    g.latestArt = Math.max(g.latestArt, a.at);
     bySp.set(a.species, g);
   }
   const store = await getLayerStore();
@@ -1002,7 +1008,7 @@ async function buildNearbyActivity(
   const highlights: Record<string, unknown>[] = [];
   for (const [sp, g] of bySp) {
     const s = SPECIES[sp];
-    if (!s) continue;
+    if (!s) continue; // hela katalogen är behörig så länge arten finns i SPECIES
     if (seasonalFactor(s, lat, nowDate) <= 0) continue; // bara arter i säsong just nu
     const [e, n] = toSWEREF(lon, lat);
     const maskOk = store.mask ? store.mask.has(e, n) && store.mask.allows(e, n) : true;
@@ -1014,17 +1020,34 @@ async function buildNearbyActivity(
       forestEdge: false,
     });
     if (hab < 0.6) continue; // bara bra lokalt habitat
+    const unlocked = isSpeciesUnlocked(sp, ents);
+    // Kort sammanfattning — "gårdagens toppfynd" om Artportalen-fyndet är färskt.
+    let summary: string | null = null;
+    if (g.latestArt > 0) {
+      const ageH = (now - g.latestArt) / 3600000;
+      summary = ageH <= 36 ? "Gårdagens toppfynd i regionen" : "Nya fynd i regionen (Artportalen)";
+    } else if (g.latest > 0) {
+      summary = "Nya medlemsfynd i regionen";
+    }
     highlights.push({
       species: sp,
+      kind: unlocked ? "report" : "upsell", // upplåst = skogsrapport, låst = köprekommendation
       findCount: g.count,
       sources: [...g.sources],
+      latestAt: g.latest > 0 ? new Date(g.latest).toISOString() : null,
+      summary,
       habitatScore: Math.round(hab * 100),
-      isUnlocked: isSpeciesUnlocked(sp, ents),
+      isUnlocked: unlocked,
       packId: s.pack ?? null,
     });
   }
-  highlights.sort((a, b) => (b.findCount as number) - (a.findCount as number) || (b.habitatScore as number) - (a.habitatScore as number));
-  const top = highlights.slice(0, 5);
+  // Rullande lista: senaste aktivitet först, sedan antal, sedan habitat.
+  highlights.sort(
+    (a, b) => (b.latestAt as string ?? "").localeCompare(a.latestAt as string ?? "") ||
+      (b.findCount as number) - (a.findCount as number) ||
+      (b.habitatScore as number) - (a.habitatScore as number),
+  );
+  const top = highlights.slice(0, 8);
   const total = member.length + artRows.length;
   const tierMode = cm.trial ? "trial" : cm.unlocked ? "annual" : "free";
   const full = tierMode !== "free";
@@ -1037,6 +1060,7 @@ async function buildNearbyActivity(
     hasRecentFinds: total > 0,
     totalRecentFinds: total,
     sources,
+    radiusKm: NEARBY_RADIUS_KM,
     tierMode,
     ctaType,
     // free efter provperiod: dölj vilka arter — bara att fynd gjorts i området
