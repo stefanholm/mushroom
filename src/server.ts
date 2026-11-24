@@ -126,7 +126,19 @@ if (!process.env.MISTRAL_API_KEY) {
 const client = new Mistral({ apiKey: process.env.MISTRAL_API_KEY });
 
 const app = express();
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "256kb" })); // API:t behöver små bodies; tiles/filer är GET
+
+// Grundläggande säkerhetsheaders (i prod ännu striktare via Cloudflare Workers).
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'",
+  );
+  next();
+});
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const noCache = { etag: false, lastModified: false, setHeaders: (res: express.Response) => res.setHeader("Cache-Control", "no-cache") };
@@ -2102,7 +2114,15 @@ app.get("/api/tiles/multi/:z/:x/:y.png", async (req, res) => {
 
 // Batch-variant av /api/debug/cell: många punkter i ett anrop (används av scripts/validate-auc.mjs
 // som annars gör ~200k individuella HTTP-anrop). ents skickas som query param (?ents=all).
+// Debug-endpoints är AVSTÄNGDA i prod (sätt DEBUG_API=1 lokalt). I Workers finns de inte alls.
+function debugOff(res: express.Response): boolean {
+  if (process.env.DEBUG_API === "1") return false;
+  res.status(404).json({ error: "not found" });
+  return true;
+}
+
 app.post("/api/debug/cells", async (req, res) => {
+  if (debugOff(res)) return;
   if (heavyRateLimited(req, 10)) return res.status(429).json({ error: "För många batch-anrop — vänta en stund." });
   const key = String(req.body?.species ?? "");
   const species = SPECIES[key];
@@ -2206,6 +2226,7 @@ app.post("/api/debug/cells", async (req, res) => {
 });
 
 app.get("/api/debug/cell", async (req, res) => {
+  if (debugOff(res)) return;
   const lat = Number(req.query.lat);
   const lon = Number(req.query.lon);
   const key = String(req.query.species ?? "kantarell");

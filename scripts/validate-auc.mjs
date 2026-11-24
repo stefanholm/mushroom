@@ -77,7 +77,7 @@ function mulberry32(seed) {
 const child = spawn(
   process.execPath,
   [path.join(root, "node_modules", "tsx", "dist", "cli.mjs"), path.join(root, "src", "server.ts")],
-  { env: { ...process.env, PORT: String(port), MISTRAL_API_KEY: process.env.MISTRAL_API_KEY ?? "validate" }, stdio: ["ignore", "pipe", "pipe"] },
+  { env: { ...process.env, PORT: String(port), MISTRAL_API_KEY: process.env.MISTRAL_API_KEY ?? "validate", DEBUG_API: "1" }, stdio: ["ignore", "pipe", "pipe"] },
 );
 child.stderr.on("data", (d) => process.stderr.write(d));
 
