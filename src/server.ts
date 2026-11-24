@@ -51,7 +51,7 @@ function lockedResponse(res: express.Response, locked: string[]) {
 // alla tillbaka och topp-frac får gold:true (glödande guld). Under provperiod (trial):
 // alla pins, inget guld.
 const FREE_HIDE_FRACTION = Math.max(0, Math.min(0.95, Number(process.env.FREE_HIDE_FRACTION ?? 0.3) || 0.3));
-const TOP_SPOTS_PRICE_SEK = Math.max(0, Number(process.env.TOP_SPOTS_PRICE_SEK ?? 99) || 99);
+const TOP_SPOTS_PRICE_SEK = Math.max(0, Number(process.env.TOP_SPOTS_PRICE_SEK ?? 249) || 249);
 const PASS_YEAR = new Date().getFullYear();
 const PASS_ID = `topspots:${PASS_YEAR}`; // årskort för innevarande år; "topspots" (alla år) funkar också
 function canSeeTopSpots(req: express.Request): boolean {
@@ -2480,7 +2480,7 @@ app.get("/api/shop", (req, res) => {
   });
 });
 
-// Dev-läge: köp enskild svamp (10 kr). I produktion: StoreKit-produkt per art + server-validerat kvitto.
+// Dev-läge: köp enskild svamp (39 kr). I produktion: StoreKit-produkt per art + server-validerat kvitto.
 app.post("/api/single/claim", (req, res) => {
   const id = String(req.body?.species ?? "");
   if (!isValidSingleClaim(id)) {
@@ -2616,7 +2616,7 @@ app.post("/api/reward/claim", (req, res) => {
     return res.status(409).json({ error: "Redan upplåst via belöning.", entitlements: "reward:" + id });
   }
   if (claims.length >= MAX_REWARD_CLAIMS) {
-    return res.status(403).json({ error: `Max ${MAX_REWARD_CLAIMS} gratis-arter (1 recension + ${MAX_REFERRAL_CLAIMS} referrals) — köp resten för 10 kr.`, maxRewardClaims: MAX_REWARD_CLAIMS });
+    return res.status(403).json({ error: `Max ${MAX_REWARD_CLAIMS} gratis-arter (1 recension + ${MAX_REFERRAL_CLAIMS} referrals) — köp resten för ${SINGLE_PRICE_SEK} kr.`, maxRewardClaims: MAX_REWARD_CLAIMS });
   }
   if (type === "review") {
     const nReview = claims.filter((c) => c.type === "review").length;

@@ -68,9 +68,9 @@ Workers kan inte läsa stora GeoTIFF live. Lösning: **statiska peaks för-bakad
 
 | Produkt-ID (App Store Connect) | Pris | Server-mappning |
 |---|---|---|
-| 13 paket (`blandad-korg-1..8`, 3 regionala, `goliatmusseron-solo`, `all`) | 29–149 kr | ent = pack-id (`all` ger alla arter men **inte** årskortets guld — jmf beslut 0069fa0) |
-| `topspots.2026` | 99 kr | ent `topspots:2026` (årskort, guld-toppar) |
-| `single.species` (consumable) | 10 kr | appen skickar vald art till `/api/single/claim` + kvitto; server ger `species:<id>` (403 för solo-only jattemusseron) |
+| 13 paket (`blandad-korg-1..8`, 3 regionala, `goliatmusseron-solo`, `all`) | 79–399 kr | ent = pack-id (`all` ger alla arter men **inte** årskortets guld — jmf beslut 0069fa0) |
+| `topspots.2026` | 249 kr | ent `topspots:2026` (årskort, guld-toppar) |
+| `single.species` (consumable) | 39 kr | appen skickar vald art till `/api/single/claim` + kvitto; server ger `species:<id>` (403 för solo-only jattemusseron) |
 
 - **Kvittovalidering i prod:** App Store Server API — ES256 JWT signerat med `.p8`-nyckeln (secret i Worker),
   verifiera `transactionId`, spara i D1, sätt ents där. **Lita aldrig på klientens `?ents=` i prod** (just nu dev-läge).

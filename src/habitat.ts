@@ -1518,20 +1518,20 @@ const WATER_DIST_IDEAL: Record<string, [number, number]> = {
 // Gratisarter = arterna UTAN pack nedan (kantarell, blek-taggsvamp, brunsopp, sandsopp,
 // frostvaxing, stolt-fjallskivling). Fail-fast: modulen kastar fel om någon art saknas/dubbleras.
 const PACK_DEFS: [string, string, number, "mixed" | "regional" | "solo" | "all" | "pro", string[]][] = [
-  ["blandad-korg-1", "Blandad korg #1 — Skog & sensommar", 39, "mixed", ["trattkantarell", "karljohan", "mandelkremla", "ostronmussling", "varmusseron"]],
-  ["blandad-korg-2", "Blandad korg #2 — Kust, tall & höst", 39, "mixed", ["rodbrun-stensopp", "granblodriska", "snobolischampinjon", "vinterskivling", "smorsopp"]],
-  ["blandad-korg-3", "Blandad korg #3 — Björk, mosse & skörd", 29, "mixed", ["bjorksopp", "rodgul-trumpetsvamp", "sillkremla", "honungsskivling", "blamusseron"]],
-  ["blandad-korg-4", "Blandad korg #4 — Blandad skog & övergång", 29, "mixed", ["aspsopp", "gronkremla", "mandelriska", "svavelticka", "varskivling"]],
-  ["blandad-korg-5", "Blandad korg #5 — Sand, glänta & senhöst", 29, "mixed", ["tegelsopp", "grynsopp", "citronslemskivling", "blek-ostronmussling", "rokslojskivling"]],
-  ["blandad-korg-6", "Blandad korg #6 — Vår, ved & karaktär", 39, "mixed", ["toppmurkla", "svart-trumpetsvamp", "blomkalssvamp", "rodnande-blacksvamp", "streckmusseron"]],
-  ["blandad-korg-7", "Blandad korg #7 — Fält, skog & samlarfynd", 29, "mixed", ["rund-toppmurkla", "farticka", "korallticka", "rimskivling", "blasopp"]],
-  ["blandad-korg-8", "Blandad korg #8 — Tagg, löv & extra fynd", 29, "mixed", ["rodgul-taggsvamp", "larksopp", "jatteroksvamp", "fjallig-blacksvamp", "tallblodriska"]],
-  ["syd-adellov-kalk", "Syd- & ädellöv / kalkmark", 29, "regional", ["blek-kantarell", "kruskantarell", "finluden-stensopp", "sommartryffel", "judasora"]],
-  ["nordlig-fuktig-profil", "Nordlig & fuktig skogsprofil", 29, "regional", ["zonerad-granblodriska", "sotvaxing", "bla-taggsvamp", "rod-svavelticka", "brodticka"]],
-  ["varme-lov-specialsoppar", "Värme- & lövpräglade specialsoppar", 29, "regional", ["blodsopp", "gulsopp", "tallskrubb", "blodriska"]],
+  ["blandad-korg-1", "Blandad korg #1 — Skog & sensommar", 129, "mixed", ["trattkantarell", "karljohan", "mandelkremla", "ostronmussling", "varmusseron"]],
+  ["blandad-korg-2", "Blandad korg #2 — Kust, tall & höst", 129, "mixed", ["rodbrun-stensopp", "granblodriska", "snobolischampinjon", "vinterskivling", "smorsopp"]],
+  ["blandad-korg-3", "Blandad korg #3 — Björk, mosse & skörd", 129, "mixed", ["bjorksopp", "rodgul-trumpetsvamp", "sillkremla", "honungsskivling", "blamusseron"]],
+  ["blandad-korg-4", "Blandad korg #4 — Blandad skog & övergång", 129, "mixed", ["aspsopp", "gronkremla", "mandelriska", "svavelticka", "varskivling"]],
+  ["blandad-korg-5", "Blandad korg #5 — Sand, glänta & senhöst", 129, "mixed", ["tegelsopp", "grynsopp", "citronslemskivling", "blek-ostronmussling", "rokslojskivling"]],
+  ["blandad-korg-6", "Blandad korg #6 — Vår, ved & karaktär", 129, "mixed", ["toppmurkla", "svart-trumpetsvamp", "blomkalssvamp", "rodnande-blacksvamp", "streckmusseron"]],
+  ["blandad-korg-7", "Blandad korg #7 — Fält, skog & samlarfynd", 129, "mixed", ["rund-toppmurkla", "farticka", "korallticka", "rimskivling", "blasopp"]],
+  ["blandad-korg-8", "Blandad korg #8 — Tagg, löv & extra fynd", 129, "mixed", ["rodgul-taggsvamp", "larksopp", "jatteroksvamp", "fjallig-blacksvamp", "tallblodriska"]],
+  ["syd-adellov-kalk", "Syd- & ädellöv / kalkmark",  129, "regional", ["blek-kantarell", "kruskantarell", "finluden-stensopp", "sommartryffel", "judasora"]],
+  ["nordlig-fuktig-profil", "Nordlig & fuktig skogsprofil",  129, "regional", ["zonerad-granblodriska", "sotvaxing", "bla-taggsvamp", "rod-svavelticka", "brodticka"]],
+  ["varme-lov-specialsoppar", "Värme- & lövpräglade specialsoppar",  129, "regional", ["blodsopp", "gulsopp", "tallskrubb", "blodriska"]],
   ["goliatmusseron-solo", "Goliatmusseron — specialutgåva (FRIDLYST: karta/foto, aldrig plocktips)", 79, "solo", ["jattemusseron"]],
-  ["all", "Alla 61 arter", 149, "all", []],
-  ["pro", "Pro (allt + fläckvarning + offline)", 299, "pro", []],
+  ["all", "Alla 61 arter", 399, "all", []],
+  ["pro", "Pro (allt + fläckvarning + offline)", 249, "pro", []],
 ];
 const SPECIES_PACK: Record<string, string> = {};
 for (const [pid, , , kind, list] of PACK_DEFS) {
@@ -1641,14 +1641,14 @@ export function isValidRewardClaim(id: string): boolean {
 
 // Enskild svamp à detta pris (köp via "species:<id>"). Endast jattemusseron är solo-only;
 // reward-pool-arter går att köpa enskilt EFTER att gratis-betyget använts (se MAX_REWARD_CLAIMS).
-export const SINGLE_PRICE_SEK = 10;
+export const SINGLE_PRICE_SEK = 39;
 export const SOLO_ONLY_SPECIES = ["jattemusseron"];
 // Hur många arter man max kan låsa upp gratis ur poolen: 1 via app-recension + 2 via
 // referral-koder som faktiskt lösts in = max 3 totalt.
 export const MAX_REVIEW_CLAIMS = 1;
 export const MAX_REFERRAL_CLAIMS = 2;
 export const MAX_REWARD_CLAIMS = MAX_REVIEW_CLAIMS + MAX_REFERRAL_CLAIMS;
-// Topplista i shopen: de 5 mest populära arterna som enskilda BETALDA köp (10 kr).
+// Topplista i shopen: de 5 mest populära arterna som enskilda BETALDA köp (39 kr).
 // Gratisarter (kantarell m.fl.) och reward-pool-arter får inte vara med (valideras nedan).
 export const TOP_PICKS: string[] = ["karljohan", "trattkantarell", "svart-trumpetsvamp", "rodbrun-stensopp", "rodgul-trumpetsvamp"];
 for (const id of TOP_PICKS) {

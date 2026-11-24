@@ -40,10 +40,10 @@ git stash drop
 - [ ] Alltid skicka `ents=` på `/api/hotspots` och tiles (även tom), `static=1` på tiles, `minScore=70`,
       timeouts 15 s/25 s på fastSession (patchar från tidigare — finns i konversationen)
 - [ ] Rendera `pin.gold` som guldglöd; visa capped-banner från `meta.capped / goldPeaks / passId / passLabel / passPriceSek`
-- [ ] StoreKit 2-produkter: 13 pack + `goliatmusseron-solo` (79 kr) + enskilda arter (10 kr) +
-      årskort `topspots:2026` (99 kr, från `/api/shop` `topSpotsPass`); i prod validera kvitton
+- [ ] StoreKit 2-produkter: 13 pack + `goliatmusseron-solo` (79 kr) + enskilda arter (39 kr) +
+      årskort `topspots:2026` (249 kr, från `/api/shop` `topSpotsPass`); i prod validera kvitton
       server-side via App Store Server API (ersätter dev-lägets `ents=`-trust)
-- [ ] **Stycklistan (enskilda 10 kr) ska bara visa arter användaren saknar** — `/api/shop?ents=...`
+- [ ] **Stycklistan (enskilda 39 kr) ska bara visa arter användaren saknar** — `/api/shop?ents=...`
       filtrerar server-side (`singles` = bara icke-ägda, `topPicks` likaså, pack får `owned:true`);
       skicka alltid med klientens ents när shopen hämtas. **Goliatmusseron/jättemusseron är
       solo-only** (`SOLO_ONLY_SPECIES`) — syns aldrig i stycklistan, bara som paketet

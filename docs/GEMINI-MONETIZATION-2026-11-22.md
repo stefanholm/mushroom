@@ -10,7 +10,7 @@
 3. **Free tier:** 6 arter; Gemini bytte `smorsopp` → `frostvaxing` (säsong 9–12) så november
    inte är tomt + 5-punkts regnsampling (`4db3605`).
 4. **Packs/singles:** 11×5-pack + solo (goliatmusseron 79 kr) + all 149 kr; Pro ej till salu;
-   singles 10 kr; top-5 utan kantarell; reward-pool: 1 recension + 2 referrals = max 3 arter
+   singles 39 kr; top-5 utan kantarell; reward-pool: 1 recension + 2 referrals = max 3 arter
    (server-side per device, persistenta i `data/referrals.json` — `5cc2776`).
 5. **Inlösenkoder (redeem codes):** format `SVAMP-XXXX-XXXX-XXXX-C` (checksum), grant =
    `all` | `pro` | `<packId>` | `species:<id>` | `topspots:<år>` | csv av flera.
@@ -20,7 +20,7 @@
    användare: `POST /api/redeem {code, device}` i Affären (🎁-kort). CLI kvar:
    `npm run redeem -- ...`. Koder i `data/redeem-codes.json` (git-ignored), logg i
    `data/redeem-log.json` (`2082d7e`, `5cc2776`).
-6. **Top-spots / årskort (`topspots:<år>`, 99 kr, `TOP_SPOTS_PRICE_SEK`):** tre lägen på
+6. **Top-spots / årskort (`topspots:<år>`, 249 kr, `TOP_SPOTS_PRICE_SEK`):** tre lägen på
    `/api/hotspots` + `/api/peaks` — **provperiod** (`?trial=1`, i prod från StoreKit
    `is_trial_period`): alla pins, inget guld; **free efter trial**: topp-`FREE_HIDE_FRACTION`
    (default **0.30**, rankat efter score) försvinner (`meta.capped=true`, `goldPeaks`=antal);
@@ -40,7 +40,7 @@
 - Ska free efter trial se *antalet* gömda ställen (`meta.goldPeaks`) eller ett vagare
   "vissa ställen är låsta"? (Just nu: exakt antal — funkar som teaser.)
 - Ska guld-pins för betalande visa exakt score, eller bara "het"/"hetast"-nivåer?
-- Är **99 kr engångsköp för årskort 2026** rätt pris för Sverige, eller hellre månadsvis
+- Är **249 kr engångsköp för årskort 2026** rätt pris för Sverige, eller hellre månadsvis
   29 kr aug–okt, eller prenumeration med 7 dagars trial (auto-renew)? Notera: användaren
   ville inte sälja Pro "pga kort säsong" — årskort löser det genom att gälla hela året.
 - Compliance: provperiod måste deklareras tydligt i App Store-beskrivningen (vi capp:ar

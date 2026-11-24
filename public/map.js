@@ -637,7 +637,7 @@ async function renderShop() {
     grid.appendChild(card);
   }
 
-  // ⭐ Topplista: 5 populära arter som enskilda köp (gratis eller 10 kr)
+  // ⭐ Topplista: 5 populära arter som enskilda köp (gratis eller 39 kr)
   if (Array.isArray(shop.topPicks) && shop.topPicks.length > 0) {
     const topWrap = document.createElement("div");
     topWrap.className = "shop-card";
@@ -720,7 +720,7 @@ async function renderShop() {
   }
   updateShopBadge();
 
-  // Rullista: köp enskild svamp (10 kr) — alla låsta arter utom solo-only (jattemusseron)
+  // Rullista: köp enskild svamp (39 kr) — alla låsta arter utom solo-only (jattemusseron)
   const singleWrap = document.createElement("div");
   singleWrap.className = "shop-card";
   singleWrap.style.gridColumn = "1 / -1";
@@ -811,7 +811,7 @@ function openRewardModal() {
   const left = 3 - claimed.length;
   if (status) {
     status.textContent = claimed.length > 0
-      ? `Upplåst via belöning: ${claimed.join(", ")} — ${Math.max(0, left)} gratis kvar (max 3), resten köps för 10 kr eller via pack.`
+      ? `Upplåst via belöning: ${claimed.join(", ")} — ${Math.max(0, left)} gratis kvar (max 3), resten köps för 39 kr eller via pack.`
       : "Välj en art från poolen och skicka betyg/kommentar (max 3 gratis).";
   }
   if (btn) btn.disabled = left <= 0 || candidates.length === 0;

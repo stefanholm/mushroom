@@ -17,7 +17,7 @@ Implementerat i kod: `src/habitat.ts` (`REVIEW_REWARD_SPECIES`, `TOP_PICKS`,
 - **Referral-koder**: `POST /api/referral/create {device}` → `{code, shareText}`;
   `POST /api/referral/redeem {code, device}` → 200 (max 2 per enhet), 404 ogiltig kod,
   403 egen kod, 409 redan använd. (Dev: in-memory; produktion: i DB kopplad till Apple-ID.)
-  Efteråt kan samma art köpas enskilt för 10 kr (`species:<id>`).
+  Efteråt kan samma art köpas enskilt för 39 kr (`species:<id>`).
 - Jättemusseron är `SOLO_ONLY` — aldrig i poolen, bara `goliatmusseron-solo` (79 kr, foto/karta).
 
 ## 2. Verifierbarhet per kanal (viktigt — olika kanaler är olika säkra)
@@ -36,12 +36,12 @@ claims till App Store-konto (receipt) så samma Apple-ID inte kan farma på fler
 ## 3. Topplistan (⭐ Topp 5 i shopen)
 
 - `TOP_PICKS` = karljohan, trattkantarell, svart-trumpetsvamp, rodbrun-stensopp,
-  rodgul-trumpetsvamp — visas överst som enskilda köp à 10 kr med bild. Gratisarter
+  rodgul-trumpetsvamp — visas överst som enskilda köp à 39 kr med bild. Gratisarter
   (kantarell) och reward-pool-arter får INTE vara med (fail-fast i koden).
 - **Regel (fail-fast i kod):** Topp 5 får aldrig innehålla reward-pool-arter — bara arter man
   verkligen betalat för, eller som är gratis från början.
 - Under topp-listan: 13 pack-kort (med bild på top-art per pack) + rullista för alla 54
-  låsta arter à 10 kr.
+  låsta arter à 39 kr.
 
 ## 4. Framtida awards att överväga (Gemini)
 
