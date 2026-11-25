@@ -6,85 +6,141 @@
       "id": "tradhojd",
       "file": "skog_tradhojd_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/skog_tradhojd_10m.tif__patchA.tif",
+        "patches/skog_tradhojd_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "volym",
       "file": "skog_volym_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/skog_volym_10m.tif__patchA.tif",
+        "patches/skog_volym_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "grundyta",
       "file": "grundyta_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/grundyta_10m.tif__patchA.tif",
+        "patches/grundyta_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "gran",
       "file": "skog_gran_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/skog_gran_10m.tif__patchA.tif",
+        "patches/skog_gran_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "tall",
       "file": "skog_tall_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/skog_tall_10m.tif__patchA.tif",
+        "patches/skog_tall_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "bjork",
       "file": "skog_bjork_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/skog_bjork_10m.tif__patchA.tif",
+        "patches/skog_bjork_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "ek",
       "file": "skog_ek_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/skog_ek_10m.tif__patchA.tif",
+        "patches/skog_ek_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "bok",
       "file": "skog_bok_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/skog_bok_10m.tif__patchA.tif",
+        "patches/skog_bok_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "hassel",
       "file": "skog_hassel_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/skog_hassel_10m.tif__patchA.tif",
+        "patches/skog_hassel_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "asp",
       "file": "skog_asp_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/skog_asp_10m.tif__patchA.tif",
+        "patches/skog_asp_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "sis",
       "file": "skog_sis_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/skog_sis_10m.tif__patchA.tif",
+        "patches/skog_sis_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "gdd5",
       "file": "smhi_gdd5.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/smhi_gdd5.tif__patchA.tif",
+        "patches/smhi_gdd5.tif__patchB.tif"
+      ]
     },
     {
       "id": "soildepth",
       "file": "sgu_soil_depth_10m.tif",
       "nodata": 255,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/sgu_soil_depth_10m.tif__patchA.tif",
+        "patches/sgu_soil_depth_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "markfuktighet",
       "file": "markfuktighet_10m.tif",
       "nodata": 255,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/markfuktighet_10m.tif__patchA.tif",
+        "patches/markfuktighet_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "jordart",
@@ -94,55 +150,91 @@
       "recode": {
         "1": "acidic",
         "2": "calcareous"
-      }
+      },
+      "patches": [
+        "patches/jordart_10m.tif__patchA.tif",
+        "patches/jordart_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "hojd",
       "file": "hojdmodell_2m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/hojdmodell_2m.tif__patchA.tif",
+        "patches/hojdmodell_2m.tif__patchB.tif"
+      ]
     },
     {
       "id": "alder",
       "file": "skog_alder_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/skog_alder_10m.tif__patchA.tif",
+        "patches/skog_alder_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "twi",
       "file": "twi_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/twi_10m.tif__patchA.tif",
+        "patches/twi_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "slope",
       "file": "slope_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/slope_10m.tif__patchA.tif",
+        "patches/slope_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "water_rel",
       "file": "water_rel_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/water_rel_10m.tif__patchA.tif",
+        "patches/water_rel_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "stand_struct",
       "file": "stand_struct_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/stand_struct_10m.tif__patchA.tif",
+        "patches/stand_struct_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "water_dist",
       "file": "water_dist_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/water_dist_10m.tif__patchA.tif",
+        "patches/water_dist_10m.tif__patchB.tif"
+      ]
     },
     {
       "id": "dodved",
       "file": "dodved_10m.tif",
       "nodata": -9999,
-      "band": 1
+      "band": 1,
+      "patches": [
+        "patches/dodved_10m.tif__patchA.tif",
+        "patches/dodved_10m.tif__patchB.tif"
+      ]
     }
   ],
   "vectors": [
@@ -191,6 +283,10 @@
       61,
       62
     ],
-    "waterBufferM": 50
+    "waterBufferM": 50,
+    "patches": [
+      "patches/nmd_10m.tif__patchA.tif",
+      "patches/nmd_10m.tif__patchB.tif"
+    ]
   }
 }

@@ -19,6 +19,9 @@ export type RasterEntry = {
   nodata?: number;
   band?: number;
   recode?: Record<string, string>;
+  // Extra GeoTIFF-filer (t.ex. patches/<fil>__patchA.tif) som täcker andra områden än huvudfilen.
+  // Mosaic: huvudfilen frågas först, sedan patcharna i ordning. Patcharna får INTE överlappa varandra.
+  patches?: string[];
 };
 
 export type VectorEntry = { id: string; file: string; crs?: string };
@@ -34,6 +37,7 @@ export type Manifest = {
     dilateClasses?: number[];
     waterClasses?: number[];
     waterBufferM?: number;
+    patches?: string[];
   };
 };
 
@@ -92,7 +96,27 @@ export class MaskLayer {
     return this.image.getHeight();
   }
 
+  // Test-patchar (andra områden än huvudmasken) — samma gränssnitt, frågas efter huvudmasken.
+  private patchMasks: MaskLayer[] = [];
+  addPatch(m: MaskLayer): void {
+    this.patchMasks.push(m);
+  }
+  private covers(easting: number, northing: number): boolean {
+    const s = this.pixelX * this.block;
+    const px = Math.floor((easting - this.originX) / s);
+    const py = Math.floor((northing - this.originY) / this.pixelY / this.block);
+    return px >= 0 && py >= 0 && px < this.gridW && py < this.gridH;
+  }
+  private built = false;
+
   async build(): Promise<void> {
+    if (this.built) return;
+    this.built = true;
+    await this.buildOwn();
+    for (const p of this.patchMasks) await p.build();
+  }
+
+  private async buildOwn(): Promise<void> {
     if (this.allowed) return;
     const w = this.width;
     const h = this.height;
@@ -208,18 +232,22 @@ export class MaskLayer {
   }
 
   has(easting: number, northing: number): boolean {
-    const s = this.pixelX * this.block;
-    const px = Math.floor((easting - this.originX) / s);
-    const py = Math.floor((northing - this.originY) / this.pixelY / this.block);
-    return px >= 0 && py >= 0 && px < this.gridW && py < this.gridH;
+    if (this.covers(easting, northing)) return true;
+    return this.patchMasks.some((p) => p.has(easting, northing));
   }
 
   allows(easting: number, northing: number): boolean {
-    if (!this.allowed) return false;
-    const px = Math.floor((easting - this.originX) / (this.pixelX * this.block));
-    const py = Math.floor((northing - this.originY) / (this.pixelY * this.block));
-    if (px < 0 || py < 0 || px >= this.gridW || py >= this.gridH) return false;
-    return this.allowed[py * this.gridW + px] === 1;
+    if (this.covers(easting, northing)) {
+      if (!this.allowed) return false;
+      const px = Math.floor((easting - this.originX) / (this.pixelX * this.block));
+      const py = Math.floor((northing - this.originY) / (this.pixelY * this.block));
+      if (px < 0 || py < 0 || px >= this.gridW || py >= this.gridH) return false;
+      return this.allowed[py * this.gridW + px] === 1;
+    }
+    for (const p of this.patchMasks) {
+      if (p.has(easting, northing)) return p.allows(easting, northing);
+    }
+    return false;
   }
 }
 
@@ -235,6 +263,22 @@ export class RasterLayer {
     private band: number,
     readonly recode?: Record<string, string>,
   ) {}
+
+  // Test-patchar (andra områden än huvudfilen) — mosaic: huvudfilen frågas först, sedan patcharna.
+  private patchLayers: RasterLayer[] = [];
+  addPatch(layer: RasterLayer): void {
+    this.patchLayers.push(layer);
+  }
+  private covers(easting: number, northing: number): boolean {
+    const px = Math.floor((easting - this.originX) / this.pixelX);
+    const py = Math.floor((northing - this.originY) / this.pixelY);
+    return px >= 0 && py >= 0 && px < this.width && py < this.height;
+  }
+  private locate(easting: number, northing: number): RasterLayer | null {
+    if (this.covers(easting, northing)) return this;
+    for (const p of this.patchLayers) if (p.covers(easting, northing)) return p;
+    return null;
+  }
 
   static async load(
     file: string,
@@ -267,7 +311,16 @@ export class RasterLayer {
     return this.image.getSamplesPerPixel();
   }
 
+  private ensured = false;
   async ensureData(): Promise<void> {
+    if (!this.ensured) {
+      this.ensured = true;
+      await this.ensureOwn();
+    }
+    for (const p of this.patchLayers) await p.ensureData();
+  }
+
+  private async ensureOwn(): Promise<void> {
     if (this.data) return;
     if (this.width * this.height * this.bands() <= 128_000_000) {
       const rasters = await this.image.readRasters({ interleave: true });
@@ -282,14 +335,17 @@ export class RasterLayer {
   }
 
   get cached(): boolean {
-    return this.data !== null;
+    return this.data !== null && this.patchLayers.every((p) => p.cached);
   }
 
   get tooBig(): boolean {
-    return this.width * this.height * this.bands() > 128_000_000;
+    return this.width * this.height * this.bands() > 128_000_000 || this.patchLayers.some((p) => p.tooBig);
   }
 
   sampleSync(easting: number, northing: number): number | null {
+    const L = this.locate(easting, northing);
+    if (!L) return null;
+    if (L !== this) return L.sampleSync(easting, northing);
     if (!this.data) return null;
     const px = Math.floor((easting - this.originX) / this.pixelX);
     const py = Math.floor((northing - this.originY) / this.pixelY);
@@ -300,6 +356,9 @@ export class RasterLayer {
   }
 
   sampleGridSync(easting: number, northing: number, spacingM = 250): number[][] | null {
+    const L = this.locate(easting, northing);
+    if (!L) return null;
+    if (L !== this) return L.sampleGridSync(easting, northing, spacingM);
     if (!this.data) return null;
     const px = Math.floor((easting - this.originX) / this.pixelX);
     const py = Math.floor((northing - this.originY) / this.pixelY);
@@ -334,12 +393,13 @@ export class RasterLayer {
   }
 
   has(easting: number, northing: number): boolean {
-    const px = Math.floor((easting - this.originX) / this.pixelX);
-    const py = Math.floor((northing - this.originY) / this.pixelY);
-    return px >= 0 && py >= 0 && px < this.width && py < this.height;
+    return this.locate(easting, northing) !== null;
   }
 
   async sample(easting: number, northing: number): Promise<number | null> {
+    const L = this.locate(easting, northing);
+    if (!L) return null;
+    if (L !== this) return L.sample(easting, northing);
     await this.ensureData();
     const px = Math.floor((easting - this.originX) / this.pixelX);
     const py = Math.floor((northing - this.originY) / this.pixelY);
@@ -351,6 +411,9 @@ export class RasterLayer {
   }
 
   async sampleGrid(easting: number, northing: number, spacingM = 50): Promise<number[][] | null> {
+    const L = this.locate(easting, northing);
+    if (!L) return null;
+    if (L !== this) return L.sampleGrid(easting, northing, spacingM);
     await this.ensureData();
     const px = Math.floor((easting - this.originX) / this.pixelX);
     const py = Math.floor((northing - this.originY) / this.pixelY);
@@ -454,6 +517,13 @@ export class LayerStore {
     for (const r of manifest.rasters ?? []) {
       try {
         const layer = await RasterLayer.load(path.join(dir, r.file), r.id, r.nodata, r.band ?? 1, r.recode);
+        for (const pf of r.patches ?? []) {
+          try {
+            layer.addPatch(await RasterLayer.load(path.join(dir, pf), `${r.id}#${path.basename(pf)}`, r.nodata, r.band ?? 1, r.recode));
+          } catch {
+            store.missing.push(pf);
+          }
+        }
         await layer.ensureData();
         store.rasters.set(r.id, layer);
       } catch {
@@ -469,7 +539,7 @@ export class LayerStore {
     }
     if (manifest.mask) {
       try {
-        store.mask = await MaskLayer.load(
+        const mask = await MaskLayer.load(
           path.join(dir, manifest.mask.file),
           manifest.mask.forestClasses,
           manifest.mask.dilatePx ?? 3,
@@ -477,7 +547,24 @@ export class LayerStore {
           manifest.mask.waterClasses ?? [61, 62],
           manifest.mask.waterBufferM ?? 50,
         );
-        await store.mask.build();
+        for (const pf of manifest.mask.patches ?? []) {
+          try {
+            mask.addPatch(
+              await MaskLayer.load(
+                path.join(dir, pf),
+                manifest.mask.forestClasses,
+                manifest.mask.dilatePx ?? 3,
+                manifest.mask.dilateClasses ?? [51, 52, 53, 54],
+                manifest.mask.waterClasses ?? [61, 62],
+                manifest.mask.waterBufferM ?? 50,
+              ),
+            );
+          } catch {
+            store.missing.push(pf);
+          }
+        }
+        await mask.build();
+        store.mask = mask;
       } catch {
         store.missing.push(manifest.mask.file);
       }

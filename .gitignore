@@ -8,6 +8,8 @@ dist/
 data/tiles/
 data/layers/*.tif
 data/layers/*.geojson
+data/layers/patches/
+data/overview/
 data/tile-cache/
 data/osm/
 data/species/
