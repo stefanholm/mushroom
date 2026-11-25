@@ -40,6 +40,20 @@ inte överlappa varandra.
 - **Tier 2 — Detail (z10–z15+):** `npm run bake-tiles -- --bbox ... --zmin 10 --zmax 15`
   — finmaskiga 10–25 m habitat-tiles, samma scoring som Tier 1 (static=1), väder live.
 
+### Varför 2 tier räcker (inte 3 geografiska: Sverige / halva Sverige / detalj)
+
+- Explosionen är **art × zoom**, inte geografi. z10 ≈ 78 m/px i Sverige (fortfarande
+  översikt), riktig detalj börjar vid z12 (~20 m/px ≈ vår 10–25 m rasterupplösning).
+- Rekommenderad brytning: baka **z5–z10 hela Sverige, alla arter (~2.7 GB för 61 arter)**
+  som Tier 1; **z11+ on-demand** från tunn origin — edge-cachen (R2/Worker LRU + CDN) gör
+  att populära områden automatiskt blir en "tredje nivå" gratis efter första anropet.
+- En geografisk mitt-nivå ("halva Sverige" i z10–z11) skulle kosta ~2× bake/lagring och
+  skapa **sömmar vid inzoom** (decollapse) — precis det Patch B testar. Baka den bara
+  för top-regioner (Mälardalen/Västra Götaland/Skåne) först om riktig användardata efter
+  launch visar kallstart-problem i z10–z11.
+- Hillshade och basemap är egna set (1×, inte per art): hillshade z5–z13 (~2 GB),
+  basemap PMTiles/raster z5–z14 (~3–6 GB).
+
 ## På Mac med riktiga data
 
 Ersätt syntetiska patch-värden mot riktiga urklipp (samma filnamn i `data/layers/patches/`):
