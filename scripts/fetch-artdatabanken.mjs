@@ -98,6 +98,15 @@ const SPECIES = [
   ["rodnande-blacksvamp", "Amanita rubescens"],
 ];
 
+// Manuell alias-karta för arter vars Artportalen-fynd ligger under ett annat namn.
+// OBS: sommartryffel (Tuber aestivum) har i praktiken INGA georefererade fynd i Artportalen —
+// tryffel-lokaler är sekretessbelagda (hasCoordinate ger 0 träffar). Lämna tom så rapporteras
+// arten ärligt som "saknar observationslager"; fyll på med ett taxonomiskt korrekt alias om
+// Artdatabanken börjar publicera koordinater (t.ex. "Tuber aestivum/uncinatum").
+const ALIASES = {
+  // "sommartryffel": ["Tuber aestivum/uncinatum"],
+};
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function gbifJson(url, tries = 3) {
@@ -147,11 +156,71 @@ async function resolveTaxonIds() {
       }
     }
     const m = await gbifJson(`${GBIF}/species/match?name=${encodeURIComponent(sci)}`);
-    out.push({ id, scientificName: sci, dyntaxaId: null, gbifKey: m.usageKey ?? null, gbifStatus: m.status, canonical: m.canonicalName });
-    console.log(`${id}: GBIF key ${m.usageKey} (${m.canonicalName}, ${m.status})`);
+    // SYNONYM (t.ex. Albatrellus confluens) har sina Artportalen-fynd under accepted-nyckeln —
+    // använd acceptedUsageKey, men med kollisionsskydd: om accepted redan används av en annan
+    // art i vår lista (t.ex. Laetiporus cincinnatus -> L. sulphureus = vår svavelticka), behåll
+    // synonym-nyckeln som fallbackKey och låt resolveOccurrenceQuery prova vidare.
+    const accepted = m.acceptedUsageKey ?? null;
+    const used = new Set(out.map((t) => t.gbifKey));
+    const key = m.status === "ACCEPTED" || !accepted || used.has(accepted) ? m.usageKey ?? null : accepted;
+    out.push({
+      id,
+      scientificName: sci,
+      dyntaxaId: null,
+      gbifKey: key,
+      gbifFallbackKey: m.usageKey ?? null,
+      gbifStatus: m.status,
+      canonical: m.canonicalName,
+    });
+    console.log(`${id}: GBIF key ${key} (${m.canonicalName}, ${m.status})`);
     await sleep(400);
   }
   return out;
+}
+
+// Antal Artportalen-fynd (med koordinater, i bbox) för en extra query-sträng.
+async function occurrenceCount(extra) {
+  const j = await gbifJson(
+    `${GBIF}/occurrence/search?dataset_key=${ARTportalen_DATASET}` +
+      `&decimalLatitude=${minLat},${maxLat}&decimalLongitude=${minLon},${maxLon}&hasCoordinate=true&limit=0&${extra}`,
+  );
+  return j.count ?? 0;
+}
+
+// Hitta bästa GBIF-query för en art: taxon_key (eget) -> fallbackKey -> accepted/synonymer ->
+// scientific_name verbatim -> släkte-nivå + verbatim namn. Returnerar null om Artportalen
+// helt saknar arten (då får arten helt enkelt inga observationer — loggas i coverage).
+async function resolveOccurrenceQuery(t) {
+  const keys = [...new Set([t.gbifKey, t.gbifFallbackKey].filter(Boolean))];
+  for (const k of keys) {
+    if ((await occurrenceCount(`taxon_key=${k}`)) > 0) return { taxonKey: k };
+  }
+  for (const alias of ALIASES[t.id] ?? []) {
+    if ((await occurrenceCount(`scientific_name=${encodeURIComponent(alias)}`)) > 0) return { sciName: alias };
+  }
+  const baseKey = t.gbifKey ?? t.gbifFallbackKey;
+  if (baseKey) {
+    try {
+      const syn = await gbifJson(`${GBIF}/species/${baseKey}/synonyms?limit=50`);
+      for (const s of syn.results ?? []) {
+        if (s.key && (await occurrenceCount(`taxon_key=${s.key}`)) > 0) return { taxonKey: s.key };
+      }
+    } catch {}
+  }
+  if ((await occurrenceCount(`scientific_name=${encodeURIComponent(t.scientificName)}`)) > 0) {
+    return { sciName: t.scientificName };
+  }
+  const genus = t.scientificName.split(" ")[0];
+  try {
+    const gm = await gbifJson(`${GBIF}/species/match?name=${encodeURIComponent(genus)}`);
+    if (
+      gm.usageKey &&
+      (await occurrenceCount(`taxon_key=${gm.usageKey}&scientific_name=${encodeURIComponent(t.scientificName)}`)) > 0
+    ) {
+      return { genusKey: gm.usageKey, sciName: t.scientificName };
+    }
+  } catch {}
+  return null;
 }
 
 async function fetchArtfakta(taxa) {
@@ -169,9 +238,19 @@ async function fetchArtfakta(taxa) {
 
 async function fetchObservations(taxa) {
   const features = [];
+  const coverage = {};
   for (const t of taxa) {
-    if (!t.gbifKey) continue;
-    const base = `${GBIF}/occurrence/search?dataset_key=${ARTportalen_DATASET}&taxon_key=${t.gbifKey}` +
+    if (!t.gbifKey && !t.gbifFallbackKey) continue;
+    const q = await resolveOccurrenceQuery(t);
+    if (!q) {
+      console.log(`  ${t.id}: INGA Artportalen-fynd för ${t.scientificName} — arten saknar observationslager`);
+      coverage[t.id] = 0;
+      continue;
+    }
+    const taxParam = q.taxonKey
+      ? `&taxon_key=${q.taxonKey}`
+      : `&taxon_key=${q.genusKey}&scientific_name=${encodeURIComponent(q.sciName)}`;
+    const base = `${GBIF}/occurrence/search?dataset_key=${ARTportalen_DATASET}${taxParam}` +
       `&decimalLatitude=${minLat},${maxLat}&decimalLongitude=${minLon},${maxLon}` +
       `&hasCoordinate=true&limit=300`;
     let offset = 0;
@@ -203,8 +282,9 @@ async function fetchObservations(taxa) {
       console.log(`  ${t.id}: ${Math.min(got, total)}/${Math.min(total, limit)} fynd`);
       await sleep(500);
     }
+    coverage[t.id] = got;
   }
-  return { type: "FeatureCollection", name: "artportalen-observations", bbox, features };
+  return { type: "FeatureCollection", name: "artportalen-observations", bbox, features, coverage };
 }
 
 const taxa = await resolveTaxonIds();
@@ -230,4 +310,7 @@ fs.writeFileSync(
 const obs = await fetchObservations(taxa);
 fs.writeFileSync(path.join(root, "data", "validation", "observations.geojson"), JSON.stringify(obs));
 console.log(`KLART: ${obs.features.length} observationer i data/validation/observations.geojson, metadata i data/species/artfakta.json`);
+const cov = obs.coverage ?? {};
+const missing = SPECIES.map(([id]) => id).filter((id) => !cov[id]);
+console.log(`Täckning: ${Object.keys(cov).filter((k) => cov[k] > 0).length}/${SPECIES.length} arter har fynd` + (missing.length ? ` — saknar: ${missing.join(", ")}` : " — 61/61 OK"));
 console.log("Nästa steg: kör AUC mot modellens score (se docs/SCORING.md §5) — skicka fyndens koordinater till /api/debug/cell.");
