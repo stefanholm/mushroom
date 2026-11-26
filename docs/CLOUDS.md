@@ -54,3 +54,36 @@ Verifierat live mot SMHI (2026-11-26): 12 frames, 25 kB/st, alpha från riktig m
 Samma frames kan bakas av Cloudflare Worker till R2 (`/clouds/<id>.png`, immutable) och
 manifest via Worker — då noll SMHI-trafik från telefonerna. Tills dess körs det från
 Mac-servern bakom samma endpoints.
+
+## Rullande 7-dagars regnhistorik (`src/rain-history.ts`) — samma kontrakt som molnen
+
+Byggt för att ersätta det utzoomade molnlagret (SNOW1gv1:s heltals-oktas gav bandning):
+**rullande 7-dagars uppmätt regn** från SMHI **Metobs parameter 5** (dygnssumma mm, CC BY 4.0).
+
+- **Stationer:** aktiva Metobs-stationer i utökat Sverige, tunna till 1 per ~0.7°-ruta
+  → **180 stationer** (Skåne–Norrbotten). `latest-months` hämtas parallellt (konkurrens 14),
+  cachas 6 h i minne + `data/rain-history/` (git-ignored); vid SMHI-fel serveras senaste cache.
+- **Frames:** 11 st i 2-dagarssteg över senaste 20 dygnen; frame visar mm-summan i
+  `[endDate-6d .. endDate]`. Station som saknar någon dag i fönstret skippas för framen.
+  Dag > 150 mm behandlas som felvärde/saknad.
+- **Render 256×320 RGBA över `[10.5, 55.0, 24.5, 69.5]`:** gaussisk IDW (σ=48 km) med
+  avståndsdämpning `exp(-(minDist/75km)²)` (Norge/Östersjön/Finland → alpha 0 utan kant)
+  + 15 % smoothstep-feather mot quad-kanten + ±0.5 LSB dither → **noll bandning, ytterkant
+  exakt alpha=0**. Färg: 0–4 mm transparent, 4–15 ljus skiffer, 15–35 akvarell blågrönt
+  (svampregn), 35–75+ djup skifferblå. ~11–55 kB/frame.
+- **Endpoints:**
+  ```
+  GET /api/v1/weather/rain-history/manifest   (max-age=600)
+    → { updatedAt, referenceTime, windowDays: 7, spanDays: 20, stationCount,
+        bounds, width: 256, height: 320, attribution,
+        frames: [{ id: "20261125-7d-a1b2c3", startDate, endDate, daysAgoEnd,
+                   label: "19 nov–25 nov", maxMm, url }] }
+  GET /api/v1/weather/rain-history/frame/:id.png  (image/png, immutable, traversal→404)
+  ```
+- **iOS:** samma GPU-dubbelbuffer som molnen — byt bara endpoint till
+  `/api/v1/weather/rain-history/*`, ta bort kontur-filtret, pill-text t.ex.
+  `Regn 7 d • 19 nov–25 nov` (från `label`). Samma quad (`bounds`).
+
+Verifierat live mot Metobs 2026-11-26: 11 frames, 180 stationer, maxMm 54–123 mm/7d,
+alla frames 200+immutable+256×320, ytterkant alpha=0, 383k mellanvärdes-px (anti-bandning),
+visuell koll: mjuka fuktzoner i Sveriges form.

@@ -11,6 +11,7 @@ import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SVENSKA_KLASSIKER_SPECIES, FREE_
 import { normalizeCode, checksumOk, loadCodes, saveCodes, appendLog, grantLabel, makeCode, validateGrant, LOG_FILE } from "./redeem.js";
 import { reportSignal, leaderboard, myScore, nearbyFinds, allFinds, haversineKm, aliasFor, deleteDeviceData } from "./signals.js";
 import { getCloudManifest, getCloudFrame } from "./clouds.js";
+import { getRainManifest, getRainFrame } from "./rain-history.js";
 
 // Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
 // I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
@@ -1866,6 +1867,25 @@ app.get("/api/v1/weather/clouds/manifest", async (req, res) => {
 app.get("/api/v1/weather/clouds/frame/:id.png", async (req, res) => {
   const buf = await getCloudFrame(String(req.params.id ?? ""));
   if (!buf) return res.status(404).json({ error: "Okänd moln-frame." });
+  res.set("Content-Type", "image/png");
+  res.set("Cache-Control", "public, max-age=31536000, immutable");
+  res.send(buf);
+});
+
+// ---------- Rullande 7-dagars regnhistorik (SMHI Metobs param 5; se src/rain-history.ts) ----------
+// Samma manifest/frame-kontrakt som molnen — iOS byter bara endpoint + pill-text.
+app.get("/api/v1/weather/rain-history/manifest", async (req, res) => {
+  try {
+    const m = await getRainManifest();
+    res.set("Cache-Control", "public, max-age=600");
+    res.json(m);
+  } catch (e) {
+    res.status(502).json({ error: "SMHI regnhistorik otillgänglig just nu.", detail: (e as Error).message });
+  }
+});
+app.get("/api/v1/weather/rain-history/frame/:id.png", async (req, res) => {
+  const buf = await getRainFrame(String(req.params.id ?? ""));
+  if (!buf) return res.status(404).json({ error: "Okänd regn-frame." });
   res.set("Content-Type", "image/png");
   res.set("Cache-Control", "public, max-age=31536000, immutable");
   res.send(buf);
