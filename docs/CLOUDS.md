@@ -129,3 +129,29 @@ helt oberört. `/api/debug/cell` har nya fälten `effMmPerWeek` och `rainFlushWi
 Verifierat live: toppmurkla(14 d, fw 3–10, f=1.046), karljohan(21 d, 5–16, 1.002),
 kantarell(28 d, 7–24, 0.793), sommartryffel(42 d, 10–40, 0.703) — samma punkt, olika
 fönster; alla 61 arter har giltigt fönster; tsc ren.
+
+## Exakta id-listor per regnfönster (att synka iOS MushroomCatalog.swift 1:1 mot 373088e)
+
+Alla 61 id:n nedan finns i `SPECIES` (`src/habitat.ts`); fördelning 13/24/12/12.
+
+- **14 d (13):** fjallig-blacksvamp, gulsopp, jatteroksvamp, larksopp, rodnande-blacksvamp,
+  rund-toppmurkla, sandsopp, smorsopp, snobolischampinjon, stolt-fjallskivling, toppmurkla,
+  varmusseron, varskivling
+- **21 d (24):** aspsopp, bjorksopp, blasopp, blodriska, blodsopp, brunsopp,
+  finluden-stensopp, frostvaxing, granblodriska, gronkremla, grynsopp, honungsskivling,
+  karljohan, mandelkremla, mandelriska, rimskivling, rodbrun-stensopp, sillkremla,
+  sotvaxing, streckmusseron, tallblodriska, tallskrubb, tegelsopp, zonerad-granblodriska
+- **28 d (12):** bla-taggsvamp, blamusseron, blek-kantarell, blek-taggsvamp,
+  citronslemskivling, kantarell, kruskantarell, rodgul-taggsvamp, rodgul-trumpetsvamp,
+  rokslojskivling, svart-trumpetsvamp, trattkantarell
+- **42 d (12):** blek-ostronmussling, blomkalssvamp, brodticka, farticka, jattemusseron,
+  judasora, korallticka, ostronmussling, rod-svavelticka, sommartryffel, svavelticka,
+  vinterskivling
+
+Obs: listorna ovan är genererade från kod — ändra alltid i `RAIN_WINDOW_BY_SPECIES` först.
+
+## Observations-täckning (artfakta, Sverige-bbox, efter 8eac318)
+
+60/61 arter har fynd. `aspsopp, blodsopp, brodticka, rod-svavelticka, toppmurkla` fixades av
+fallback-kedjan (synonymer/accepted-nyckel). **sommartryffel** har 0 — Artportalen publicerar
+inga koordinater för tryffel (sekretess), förväntat beteende.
