@@ -1,4 +1,5 @@
 import { toSWEREF, type LayerStore, type RasterLayer } from "./layers.js";
+import { sampleRainForLive, rainGridsAvailable, type RainLiveSample } from "./rain-history.js";
 
 export type SpeciesProfile = {
   label: string;
@@ -33,6 +34,8 @@ export type SpeciesProfile = {
   structIdeal?: [number, number];
   waterDistIdeal?: [number, number];
   pack?: string;
+  // Ackumulerat regnfönster (dagar) som artens Live-regnfaktor baseras på (default 28).
+  rainWindowDays?: 14 | 21 | 28 | 42;
 };
 
 export const SPECIES: Record<string, SpeciesProfile> = {
@@ -1286,6 +1289,36 @@ export const SPECIES: Record<string, SpeciesProfile> = {
     expertMode: true,
   },
 };
+
+// Regnfönster per art (dagar ackumulerad nederbörd i Live-läge; default 28).
+// Långa fönster för långlivade mycel (tryffel, jättemusseron), korta för snabba flush-arter.
+const RAIN_WINDOW_BY_SPECIES: Record<string, 14 | 21 | 28 | 42> = {
+  toppmurkla: 14,
+  "rund-toppmurkla": 14,
+  sommartryffel: 42,
+  jattemusseron: 42,
+  kantarell: 28,
+  trattkantarell: 28,
+  karljohan: 21,
+  "svart-trumpetsvamp": 28,
+};
+for (const [k, s] of Object.entries(SPECIES)) {
+  s.rainWindowDays = RAIN_WINDOW_BY_SPECIES[k] ?? 28;
+}
+
+// Live-regnfaktor för en art på en punkt — från det förinterpolerade regn-rutnätet
+// (samma källa som regnkartan, så Live-poäng och karta stämmer 1-till-1).
+// Fallback factor 1.0 om rolling-42d.json ännu inte laddats. ENDAST för Live (static=0).
+export function liveRainFactorFor(
+  speciesKey: string,
+  lat: number,
+  lon: number,
+): RainLiveSample & { factor: number } {
+  const win = SPECIES[speciesKey]?.rainWindowDays ?? 28;
+  const s = sampleRainForLive(lat, lon, win);
+  return { ...s, factor: s.available ? s.factor : 1 };
+}
+export { rainGridsAvailable };
 
 // Empirical calibration from Artportalen (via GBIF mirror, Sweden, ~2026-11):
 // season windows = observed month p5–p95; GDD5 envelopes = bioclimatic niches

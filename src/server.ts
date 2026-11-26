@@ -11,7 +11,7 @@ import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SVENSKA_KLASSIKER_SPECIES, FREE_
 import { normalizeCode, checksumOk, loadCodes, saveCodes, appendLog, grantLabel, makeCode, validateGrant, LOG_FILE } from "./redeem.js";
 import { reportSignal, leaderboard, myScore, nearbyFinds, allFinds, haversineKm, aliasFor, deleteDeviceData } from "./signals.js";
 import { getCloudManifest, getCloudFrame } from "./clouds.js";
-import { getRainManifest, getRainFrame } from "./rain-history.js";
+import { getRainManifest, getRainFrame, sampleRainForLive, rainGridsAvailable, warmRainGrids } from "./rain-history.js";
 
 // Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
 // I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
@@ -1330,6 +1330,10 @@ async function computeCells(
   const rainFactor =
     (rain14 === null ? 0.5 : 1 - Math.exp(-rain14 / 32)) *
     (rain90 === null ? 1 : 0.75 + 0.25 * (1 - Math.exp(-rain90 / 120)));
+  // Live-läge: regnfaktor per cell från det förinterpolerade ackumulerade regn-rutnätet
+  // (samma källa som regnkartan) när rolling-42d.json är laddad; annars punkt-SMHI-fallback.
+  const rainWin = species.rainWindowDays ?? 28;
+  const gridsAvail = rainGridsAvailable();
   let minTemp: number | null = null;
   let frost = 1;
   let coolNights: number | null = null;
@@ -1409,7 +1413,8 @@ async function computeCells(
         roadFactor,
         forestEdge,
       });
-      const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * rainFactor * frost * flush;
+      const dynRain = !staticOnly && gridsAvail ? sampleRainForLive(clat, clon, rainWin).factor : rainFactor;
+      const dynamic = staticOnly ? 1 : seasonalFactor(species, clat, asOf) * dynRain * frost * flush;
       let prior = obsPrior(await getObsIndex(), key, clon, clat);
       if (species.protected) prior = 0;
       const score = Math.min(100, Math.round(100 * habitat * dynamic * (1 + 0.15 * prior)));
@@ -1453,6 +1458,8 @@ async function computeCells(
       flush,
       hostFallback: hostFallback(store),
       staticOnly,
+      rainWindowDays: rainWin,
+      rainGrids: gridsAvail,
       asOf: asOf.toISOString().slice(0, 10),
       forestAreas: forestPolys?.length ?? 0,
       forestKnown: useMask ? true : forestPolys !== null,
@@ -1592,9 +1599,12 @@ async function overviewLiveFactor(speciesKey: string, lat: number, lon: number, 
   const season = seasonalFactor(s, lat, asOf);
   if (season <= 0) return 0;
   const g = await liveGridAt(lat, lon, asOf);
-  const rainFactor =
-    (g.rain14 === null ? 0.5 : 1 - Math.exp(-g.rain14 / 32)) *
-    (g.rain90 === null ? 1 : 0.75 + 0.25 * (1 - Math.exp(-g.rain90 / 120)));
+  // samma ackumulerade regn-rutnät som regnkartan när det finns — annars punkt-SMHI
+  const lr = sampleRainForLive(lat, lon, s.rainWindowDays ?? 28);
+  const rainFactor = lr.available
+    ? lr.factor
+    : (g.rain14 === null ? 0.5 : 1 - Math.exp(-g.rain14 / 32)) *
+      (g.rain90 === null ? 1 : 0.75 + 0.25 * (1 - Math.exp(-g.rain90 / 120)));
   let frost = 1;
   if (s.frostSensitive && g.minT !== null && g.minT <= -3) frost = 0;
   return season * rainFactor * frost * flushFactor(g.cool);
@@ -2776,7 +2786,11 @@ app.get("/api/debug/cell", async (req, res) => {
     : await Promise.all([minTempLast48h(lat, lon, asOf), coolNightsLast7d(lat, lon, asOf)]);
   const frost = species.frostSensitive && minTemp !== null && minTemp <= -3 ? 0 : 1;
   const flush = flushFactor(coolNights);
-  const dynamic = staticOnly ? 1 : seasonalFactor(species, lat, asOf) * rainFactor * frost * flush;
+  // Live: regnfaktor från ackumulerat regn-rutnät (samma som regnkarta); static=1 helt oberört.
+  const rainWin = species.rainWindowDays ?? 28;
+  const liveRain = staticOnly ? null : sampleRainForLive(lat, lon, rainWin);
+  const dynRainF = staticOnly || !liveRain?.available ? rainFactor : liveRain.factor;
+  const dynamic = staticOnly ? 1 : seasonalFactor(species, lat, asOf) * dynRainF * frost * flush;
   let prior = obsPrior(await getObsIndex(), key, lon, lat);
   if (species.protected) prior = 0;
   res.json({
@@ -2799,6 +2813,14 @@ app.get("/api/debug/cell", async (req, res) => {
     rain30,
     rain90,
     rainFactor: Number(rainFactor.toFixed(3)),
+    // Live-regnförklaring (för iOS vid tryck på kartan); null i Habitat-läge (static=1)
+    rainWindowDays: rainWin,
+    rainAccumulatedMm: liveRain?.available ? liveRain.totalMm : null,
+    rainFlushMm: liveRain?.available ? liveRain.flushMm : null,
+    rainRecentMm: liveRain?.available ? liveRain.recentMm : null,
+    mmPerWeek: liveRain?.available ? liveRain.mmPerWeek : null,
+    rainFactorLive: staticOnly ? null : Number(dynRainF.toFixed(3)),
+    rainGrids: rainGridsAvailable(),
     seasonFactor: Number(seasonalFactor(species, lat, asOf).toFixed(2)),
     minTemp48h: minTemp,
     frost,
@@ -3217,6 +3239,8 @@ app.get("/api/admin/overview", (req, res) => {
 const port = Number(process.env.PORT ?? 3000);
 app.listen(port, () => {
   console.log(`Chat app running at http://localhost:${port}`);
+  // Värm regn-rutnäten (rolling-42d.json) i bakgrunden så Live-läge får grid-baserad regnfaktor direkt
+  void warmRainGrids().catch((e) => console.error("warmRainGrids misslyckades:", (e as Error).message));
   (async () => {
     try {
       const dir = path.join(here, "..", "data", "osm");

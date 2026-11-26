@@ -90,3 +90,26 @@ Verifierat live mot Metobs 2026-11-26: 27/27 tester — rolling-42d.json 42 nyck
 days=14/28/42 ger 8/10/11 frames med monotont växande maxMm (t.ex. 42d: 24→213 mm),
 alla frames 200+immutable+256×320, ytterkant alpha=0, `days=99`→28, prune-test tar bort ett
 60 dagar gammalt syntetiskt datum.
+
+## Regn kopplat till Live-score (`sampleRainForLive`)
+
+`src/rain-history.ts` håller fyra förinterpolerade Float32-rutnät (256×320, 14/21/28/42 d)
++ flush (3 d) + recent (5 d) i minnet, byggda från `rolling-42d.json` vid varje 6h-uppdatering
+(`warmRainGrids()` vid serverstart). `sampleRainForLive(lat, lon, windowDays)` bilinjär-samplar
+dem och returnerar `{ totalMm, flushMm, recentMm, mmPerWeek, factor, available, windowDays }`.
+
+`factor` = kontinuerlig kurva på mm/vecka: `<3 → 0.30–0.45` (torkstraff), `3–15 → 0.45–1.00`,
+`15–35 → 1.00–1.18` (flush-boost), `35–65 → 1.18`, `>65 → avtrappning mot 0.92`.
+
+- `src/habitat.ts`: `SpeciesProfile.rainWindowDays` (14|21|28|42, default 28; murklor 14,
+  tryffel/jättemusseron 42, karljohan 21 …) + `liveRainFactorFor(species, lat, lon)`
+  (fallback factor 1.0 tills rolling-filen laddats).
+- `src/server.ts`: **endast Live (`static=0`)** — `computeCells` tar per-cell
+  `sampleRainForLive(...).factor` när rutnäten finns (annars punkt-SMHI-fallback);
+  `overviewLiveFactor` samma. `static=1` (Habitat) är 100 % oberört.
+  `/api/debug/cell` svarar med `rainWindowDays, rainAccumulatedMm, rainFlushMm,
+  rainRecentMm, mmPerWeek, rainFactorLive, rainGrids` (null i Habitat-läge) +
+  `computeCells`-meta har `rainWindowDays`/`rainGrids`.
+
+Verifierat live: Stockholm 38.2 mm/28d → factor 0.75, Skåne 43.7 mm → 0.813 (spatialt varierande),
+static=1 ger null i alla regnfält, murkla=14 d / tryffel=42 d, hotspots+overview live OK.
