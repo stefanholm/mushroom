@@ -1,21 +1,24 @@
-// rain-history.ts — rullande 7-dagars UPPMÄTT regnhistorik (SMHI Metobs parameter 5,
-// "Nederbördsmängd, summa 1 dygn", CC BY 4.0) bakad till bandningsfria 256x320 RGBA-PNG-frames
-// över Sverige. Samma manifest/frame-kontrakt som molnen (src/clouds.ts) så iOS kan byta
-// endpoint utan större patch.
+// rain-history.ts — ackumulerad nederbördshistorik (SMHI Metobs parameter 5, dygnssumma mm,
+// CC BY 4.0) bakad till bandningsfria 256x320 RGBA-PNG-frames över Sverige.
 //
-// 11 frames i 2-dagarssteg över de senaste 20 dagarna: frame i visar summan mm under
-// [endDate-6d .. endDate], endDate = senaste kompletta dygnet - (20-2i) dagar.
-// Saknar en station någon dag i fönstret -> stationen skippas för just den framen.
+// Persistent rullande 6-veckorsfil: data/rain-history/rolling-42d.json
+//   { updatedAt, maxDays: 42, stations: {id: {lat, lon}}, days: { "YYYY-MM-DD": {id: mm} } }
+// Var 6:e timme mergas nya SMHI latest-months in i filen; prune är hårt till max 42 dygn
+// (cutoff = senaste datum - 41 d) och rensar även stationer som inte längre finns kvar.
+// Skrivs atomiskt (.tmp + rename). Vid SMHI-fel serveras filen rakt från disk.
 //
-// Interpolation: gaussisk kärna sigma=48 km viktad IDW + avståndsdämpning
-// decay=exp(-(minDist/75km)^2) så områden långt från svenska stationer (Norge/Fjällen,
-// Östersjön, Finland, söder om Skåne) tonar till alpha=0 utan rektangulär kant, plus
-// 15% smoothstep-feather mot quadens kant. Kontinuerlig ramp + ±0.5 LSB dithering.
+// Manifest stöder ?days=14|21|28|42 (default 28): ackumulerade frames — frame k visar
+// TOTAL nederbörd från startDate till frame-slutdatum. Alla spann renderas från den
+// 6h-cachade rolling-filen (ingen extra SMHI-hämtning per spann); PNG:er cachas per spann
+// i data/rain-history/{days}d/ och gamla frames från tidigare referenceTime rensas bort.
 //
-// Cache: minne + disk (data/rain-history/), uppdateras max var 6:e timme; vid SMHI-fel
-// serveras senaste goda cache.
+// Render: 256x320 över [10.5,55.0,24.5,69.5], gaussisk IDW sigma=48 km × avståndsdämpning
+// exp(-(minDist/75km)^2), 15% kant-feather, ±0.5 LSB dither → ytterkant alltid alpha=0,
+// noll bandning. Färg normaliseras per vecka (mm/vecka) så 14d- och 42d-kartorna får samma
+// tydliga kontrast mot sepia-baskartan.
 
 import fsp from "node:fs/promises";
+import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -30,7 +33,7 @@ const to3006 = ([lon, lat]: [number, number]) => proj4("EPSG:4326", "EPSG:3006",
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(here, "..", "data", "rain-history");
-const FRAMES_DIR = path.join(DIR, "frames");
+const ROLLING_FILE = path.join(DIR, "rolling-42d.json");
 
 const METOBS = "https://opendata-download-metobs.smhi.se/api/version/latest";
 const PARAM = "5"; // nederbörd summa 1 dygn (mm)
@@ -38,32 +41,40 @@ const PARAM = "5"; // nederbörd summa 1 dygn (mm)
 export const RAIN_BOUNDS = { minLon: 10.5, minLat: 55.0, maxLon: 24.5, maxLat: 69.5 };
 const W = 256;
 const H = 320;
-const WINDOW_DAYS = 7;
-const SPAN_DAYS = 20;
-const FRAME_STEP_DAYS = 2;
-const N_FRAMES = 11;
+const MAX_DAYS = 42; // hårt tak för rolling-filen
 const REFRESH_MS = 6 * 3600 * 1000;
-const SIGMA_M = 48_000; // gaussisk kärna
-const DECAY_M = 75_000; // avståndsdämpning mot närmaste station
-const MAX_INTERP_M = 160_000; // längre än så till närmaste station -> alpha 0
+const SIGMA_M = 48_000;
+const DECAY_M = 75_000;
+const MAX_INTERP_M = 160_000;
 const CONCURRENCY = 14;
+const ALLOWED_DAYS = [14, 21, 28, 42] as const;
+const DEFAULT_DAYS = 28;
+// antal ackumulerade frames per spann
+const FRAMES_PER_DAYS: Record<number, number> = { 14: 8, 21: 11, 28: 10, 42: 11 };
+// andel av dygn i ett fönster som måste finnas för att en station ska ingå i en frame
+const MIN_PRESENCE = 0.6;
 
-// utökat urvalsområde (inkl. gränsstationer) så Sverige får täckning även vid kanterna
 const SELECT_BOUNDS = { minLon: 10.0, minLat: 54.5, maxLon: 25.0, maxLat: 70.0 };
-const CELL_DEG = 0.7; // ~78 km latitud-ruta; 1 station per ruta (landet ger ~150–200 stn)
+const CELL_DEG = 0.7;
 const MAX_PER_CELL = 1;
-const MAX_DAILY_MM = 150; // metobs-fel/ackumulerade värden över detta behandlas som saknad dag
+const MAX_DAILY_MM = 150; // felvärden över detta = saknad dag
 
-type Station = { id: string; lat: number; lon: number; e: number; n: number; days: Map<string, number> };
+type RollingFile = {
+  updatedAt: string;
+  maxDays: number;
+  stations: Record<string, { lat: number; lon: number }>;
+  days: Record<string, Record<string, number>>;
+};
 type FrameMeta = {
-  id: string; startDate: string; endDate: string; daysAgoEnd: number;
+  id: string; startDate: string; endDate: string; daysAcc: number; daysAgoEnd: number;
   label: string; maxMm: number; url: string;
 };
 type Manifest = {
   updatedAt: string;
   referenceTime: string;
-  windowDays: number;
+  requestedDays: number;
   spanDays: number;
+  mode: "accumulated";
   stationCount: number;
   bounds: [number, number, number, number];
   width: number;
@@ -72,9 +83,10 @@ type Manifest = {
   frames: FrameMeta[];
 };
 
-let cache: { at: number; manifest: Manifest } | null = null;
-let inflight: Promise<Manifest> | null = null;
-let stationDataCache: { at: number; stations: Station[]; endDate: string } | null = null;
+let rollingCache: { at: number; data: RollingFile } | null = null;
+let rollingInflight: Promise<RollingFile> | null = null;
+let manifestCaches = new Map<number, { at: number; manifest: Manifest }>();
+let manifestInflight = new Map<number, Promise<Manifest>>();
 
 const hash8 = (s: string) => crypto.createHash("sha256").update(s).digest("hex").slice(0, 8);
 const dayMs = 86400000;
@@ -88,7 +100,37 @@ async function fetchJson(url: string, timeoutMs = 25000): Promise<unknown> {
   return r.json();
 }
 
-// ---------- stationsurval ----------
+// ---------- persistent rolling-fil ----------
+
+// Hård prune: behåll bara de maxDays senaste datumen (cutoff = latest - (maxDays-1)).
+export function pruneRollingDays(
+  days: Record<string, Record<string, number>>,
+  latestDate: string,
+  maxDays = MAX_DAYS,
+): Record<string, Record<string, number>> {
+  const cutoff = addDays(latestDate, -(maxDays - 1));
+  const out: Record<string, Record<string, number>> = {};
+  for (const [d, vals] of Object.entries(days)) {
+    if (d >= cutoff && d <= latestDate && vals && Object.keys(vals).length > 0) out[d] = vals;
+  }
+  return out;
+}
+
+async function readRollingDisk(): Promise<RollingFile | null> {
+  try {
+    return JSON.parse(await fsp.readFile(ROLLING_FILE, "utf8")) as RollingFile;
+  } catch {
+    return null;
+  }
+}
+
+async function writeRollingDisk(data: RollingFile): Promise<void> {
+  await fsp.mkdir(DIR, { recursive: true });
+  const tmp = ROLLING_FILE + ".tmp";
+  await fsp.writeFile(tmp, JSON.stringify(data));
+  fs.renameSync(tmp, ROLLING_FILE); // atomiskt
+}
+
 async function selectStations(): Promise<{ id: string; lat: number; lon: number }[]> {
   const j = (await fetchJson(`${METOBS}/parameter/${PARAM}.json`, 40000)) as {
     station?: { key: unknown; summary?: string; active?: boolean }[];
@@ -102,7 +144,6 @@ async function selectStations(): Promise<{ id: string; lat: number; lon: number 
     if (lon < SELECT_BOUNDS.minLon || lon > SELECT_BOUNDS.maxLon || lat < SELECT_BOUNDS.minLat || lat > SELECT_BOUNDS.maxLat) continue;
     all.push({ id: String(s.key), lat, lon });
   }
-  // tunna ut: max MAX_PER_CELL per CELL_DEG-ruta
   const cells = new Map<string, number>();
   const picked: { id: string; lat: number; lon: number }[] = [];
   for (const s of all) {
@@ -142,8 +183,8 @@ async function pool<T, R>(items: T[], worker: (t: T) => Promise<R>, conc: number
   return out;
 }
 
-async function loadStations(): Promise<{ stations: Station[]; endDate: string }> {
-  if (stationDataCache && Date.now() - stationDataCache.at < REFRESH_MS) return stationDataCache;
+// Hämta SMHI och merga in i rolling-filen; returnerar den uppdaterade filen.
+async function updateRolling(): Promise<RollingFile> {
   const picked = await selectStations();
   const daysList = await pool(
     picked,
@@ -156,41 +197,53 @@ async function loadStations(): Promise<{ stations: Station[]; endDate: string }>
     },
     CONCURRENCY,
   );
-  const stations: Station[] = [];
-  let endDate = "";
+  const base = (await readRollingDisk()) ?? { updatedAt: "", maxDays: MAX_DAYS, stations: {}, days: {} };
+  const rolling: RollingFile = { updatedAt: new Date().toISOString(), maxDays: MAX_DAYS, stations: { ...base.stations }, days: { ...base.days } };
+  let latest = Object.keys(rolling.days).sort().pop() ?? "";
   for (let i = 0; i < picked.length; i++) {
+    const s = picked[i];
+    rolling.stations[s.id] = { lat: s.lat, lon: s.lon };
     const days = daysList[i];
-    if (days.size < 20) continue; // för kort historik — kasta
-    const [e, n] = to3006([picked[i].lon, picked[i].lat]);
-    stations.push({ id: picked[i].id, lat: picked[i].lat, lon: picked[i].lon, e, n, days });
-    for (const d of days.keys()) if (d > endDate) endDate = d;
+    for (const [d, mm] of days) {
+      (rolling.days[d] ??= {})[s.id] = mm;
+      if (d > latest) latest = d;
+    }
   }
-  if (stations.length < 40) throw new Error(`för få stationer med data: ${stations.length}`);
-  if (!endDate) throw new Error("ingen endDate från Metobs");
-  stationDataCache = { at: Date.now(), stations, endDate };
-  // disk-cache
-  try {
-    await fsp.mkdir(DIR, { recursive: true });
-    const slim = stations.map((s) => ({ id: s.id, lat: s.lat, lon: s.lon, days: [...s.days] }));
-    await fsp.writeFile(path.join(DIR, "stations.json"), JSON.stringify({ at: Date.now(), endDate, stations: slim }));
-  } catch {}
-  console.log(`rain-history: ${stations.length} stationer, senaste dygn ${endDate}`);
-  return stationDataCache;
+  if (!latest) throw new Error("ingen data från SMHI och ingen tidigare rolling-fil");
+  rolling.days = pruneRollingDays(rolling.days, latest, MAX_DAYS);
+  // rensa stationer som inte finns i någon kvarvarande dag
+  const used = new Set<string>();
+  for (const vals of Object.values(rolling.days)) for (const id of Object.keys(vals)) used.add(id);
+  for (const id of Object.keys(rolling.stations)) if (!used.has(id)) delete rolling.stations[id];
+  await writeRollingDisk(rolling);
+  console.log(`rolling-42d.json: ${Object.keys(rolling.days).length} dygn (max ${MAX_DAYS}), ${Object.keys(rolling.stations).length} stationer, senaste ${latest}`);
+  return rolling;
 }
 
-// ---------- 7-dagars fönster ----------
-function windowSum(days: Map<string, number>, end: string): number | null {
-  let sum = 0;
-  for (let k = WINDOW_DAYS - 1; k >= 0; k--) {
-    const d = addDays(end, -k);
-    const v = days.get(d);
-    if (v === undefined) return null; // saknad dag -> skippa stationen för framen
-    sum += v;
-  }
-  return sum;
+// Rolling-fil: 6h minnes-cache; vid SMHI-fel serveras senast sparade disk-fil.
+async function getRolling(): Promise<RollingFile> {
+  if (rollingCache && Date.now() - rollingCache.at < REFRESH_MS) return rollingCache.data;
+  if (rollingInflight) return rollingInflight;
+  rollingInflight = (async () => {
+    try {
+      const data = await updateRolling();
+      rollingCache = { at: Date.now(), data };
+      return data;
+    } catch (e) {
+      console.error("rain-history update failed, använder disk-cache:", (e as Error).message);
+      const disk = await readRollingDisk();
+      if (!disk) throw e;
+      rollingCache = { at: Date.now() - REFRESH_MS + 60000, data: disk };
+      return disk;
+    } finally {
+      rollingInflight = null;
+    }
+  })();
+  return rollingInflight;
 }
 
-// ---------- interpolation ----------
+// ---------- ackumulerad rendering ----------
+
 function interpField(stations: { e: number; n: number; v: number }[]): Float32Array {
   const out = new Float32Array(W * H);
   const [minE, maxN] = to3006([RAIN_BOUNDS.minLon, RAIN_BOUNDS.maxLat]);
@@ -203,14 +256,12 @@ function interpField(stations: { e: number; n: number; v: number }[]): Float32Ar
     const n = maxN - (py + 0.5) * sy;
     for (let px = 0; px < W; px++) {
       const e = minE + (px + 0.5) * sx;
-      // närsta station
       let minD2 = Infinity;
       for (const s of stations) {
         const d2 = (s.e - e) * (s.e - e) + (s.n - n) * (s.n - n);
         if (d2 < minD2) minD2 = d2;
       }
-      const minD = Math.sqrt(minD2);
-      if (minD > MAX_INTERP_M) continue; // utanför täckning -> alpha 0
+      if (Math.sqrt(minD2) > MAX_INTERP_M) continue;
       const decay = Math.exp(-minD2 / dec2);
       let wsum = 0;
       let vsum = 0;
@@ -227,24 +278,23 @@ function interpField(stations: { e: number; n: number; v: number }[]): Float32Ar
   return out;
 }
 
-// ---------- färg/alfa + dithering ----------
-// akvarell-skala: 0-4 mm transparent; 4-15 ljus skiffer; 15-35 akvarell blågrönt (svampregn);
-// 35-75+ djup skifferblå kärna. Helt kontinuerlig i flyttal, ±0.5 LSB dither före 8-bit.
-const STOPS: [mm: number, r: number, g: number, b: number, a: number][] = [
-  [0, 190, 200, 210, 0],
-  [4, 190, 200, 210, 0],
-  [15, 152, 178, 188, 0.26],
-  [35, 110, 165, 155, 0.54],
-  [75, 70, 95, 125, 0.74],
-  [1e9, 70, 95, 125, 0.74],
+// Mättad akvarell-skala per VECKA (mm/vecka): 0-3 transparent; 3-10 turkosblå slöja;
+// 10-25 kobolt/skifferblå fuktzon; 25-50+ djup indigoblå kärna. Kontinuerlig i flyttal.
+const STOPS: [mmPerWeek: number, r: number, g: number, b: number, a: number][] = [
+  [0, 42, 132, 178, 0],
+  [3, 42, 132, 178, 0],
+  [10, 24, 96, 168, 0.42],
+  [25, 18, 58, 138, 0.72],
+  [50, 18, 58, 138, 0.88],
+  [1e9, 18, 58, 138, 0.88],
 ];
 
-function ramp(mm: number): [number, number, number, number] {
+function ramp(mmPerWeek: number): [number, number, number, number] {
   for (let i = 0; i < STOPS.length - 1; i++) {
     const [m0, r0, g0, b0, a0] = STOPS[i];
     const [m1, r1, g1, b1, a1] = STOPS[i + 1];
-    if (mm <= m1) {
-      const t = m1 === m0 ? 0 : (mm - m0) / (m1 - m0);
+    if (mmPerWeek <= m1) {
+      const t = m1 === m0 ? 0 : (mmPerWeek - m0) / (m1 - m0);
       return [r0 + (r1 - r0) * t, g0 + (g1 - g0) * t, b0 + (b1 - b0) * t, a0 + (a1 - a0) * t];
     }
   }
@@ -256,28 +306,24 @@ const smoothstep = (t: number) => {
   const x = Math.min(1, Math.max(0, t));
   return x * x * (3 - 2 * x);
 };
-// deterministisk brus per pixel+frame (±0.5 LSB dither)
 const dither = (x: number, y: number, seed: number) => {
   const s = Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453;
   return (s - Math.floor(s)) - 0.5;
 };
 
-function renderFrame(field: Float32Array, seed: number): Buffer {
+function renderFrame(field: Float32Array, spanDays: number, seed: number): Buffer {
+  const weeks = spanDays / 7;
   const png = new PNG({ width: W, height: H });
   const feather = 0.15;
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const k = y * W + x;
-      const mm = field[k];
-      const [r, g, b, a] = ramp(mm);
-      // 15% smoothstep-feather mot quadens ytterkanter
+      const [r, g, b, a] = ramp(field[k] / weeks); // normalisera per vecka
       const fx = smoothstep(Math.min(x / W, (W - 1 - x) / W) / feather);
       const fy = smoothstep(Math.min(y / H, (H - 1 - y) / H) / feather);
-      let alpha = a * fx * fy;
+      const alpha = a * fx * fy;
       if (alpha <= 0.008) {
-        // under ~2/255 även efter dither -> helt transparent (ytterkanten blir exakt alpha=0)
-        const o = k * 4;
-        png.data[o + 3] = 0;
+        png.data[k * 4 + 3] = 0;
         continue;
       }
       const o = k * 4;
@@ -291,103 +337,143 @@ function renderFrame(field: Float32Array, seed: number): Buffer {
   return PNG.sync.write(png, { deflateLevel: 9 });
 }
 
-function labelFor(startDay: string, endDay: string): string {
+function labelFor(startDay: string, endDay: string, suffix = ""): string {
   const f = (d: string) => {
     const dt = new Date(d + "T12:00:00Z");
-    const day = dt.getUTCDate();
     const mon = new Intl.DateTimeFormat("sv-SE", { month: "short", timeZone: "UTC" }).format(dt).replace(/\.$/, "");
-    return `${day} ${mon}`;
+    return `${dt.getUTCDate()} ${mon}`;
   };
-  return `${f(startDay)}–${f(endDay)}`;
+  return `${f(startDay)}–${f(endDay)}${suffix}`;
 }
 
-async function buildManifest(): Promise<Manifest> {
-  await fsp.mkdir(FRAMES_DIR, { recursive: true });
-  const { stations, endDate } = await loadStations();
+// Ackumulerad summa per station över [start..end]; stationen krävs ha minst MIN_PRESENCE
+// av dygn i fönstret, annars skippas den för just den framen.
+function accumulate(rolling: RollingFile, start: string, end: string): { e: number; n: number; v: number }[] {
+  const pts: { e: number; n: number; v: number }[] = [];
+  const dayKeys = Object.keys(rolling.days).filter((d) => d >= start && d <= end).sort();
+  if (dayKeys.length === 0) return pts;
+  for (const [id, st] of Object.entries(rolling.stations)) {
+    let sum = 0;
+    let present = 0;
+    for (const d of dayKeys) {
+      const v = rolling.days[d]?.[id];
+      if (v !== undefined) {
+        sum += v;
+        present++;
+      }
+    }
+    if (present / dayKeys.length < MIN_PRESENCE) continue;
+    const [e, n] = to3006([st.lon, st.lat]);
+    pts.push({ e, n, v: sum });
+  }
+  return pts;
+}
+
+async function buildManifest(requestedDays: number): Promise<Manifest> {
+  const days = ALLOWED_DAYS.includes(requestedDays as (typeof ALLOWED_DAYS)[number])
+    ? requestedDays
+    : DEFAULT_DAYS;
+  const rolling = await getRolling();
+  const dayKeys = Object.keys(rolling.days).sort();
+  const latest = dayKeys[dayKeys.length - 1];
+  if (!latest) throw new Error("rolling-42d.json är tom");
+  const actualDays = Math.min(days, dayKeys.length);
+  const startDate = addDays(latest, -(actualDays - 1));
+  const nFrames = FRAMES_PER_DAYS[days] ?? FRAMES_PER_DAYS[DEFAULT_DAYS];
+
+  const framesDir = path.join(DIR, `${days}d`);
+  await fsp.mkdir(framesDir, { recursive: true });
   const frames: FrameMeta[] = [];
-  for (let i = 0; i < N_FRAMES; i++) {
-    const daysAgoEnd = SPAN_DAYS - i * FRAME_STEP_DAYS;
-    const end = addDays(endDate, -daysAgoEnd);
-    const start = addDays(end, -(WINDOW_DAYS - 1));
-    const pts: { e: number; n: number; v: number }[] = [];
-    for (const s of stations) {
-      const sum = windowSum(s.days, end);
-      if (sum !== null) pts.push({ e: s.e, n: s.n, v: sum });
-    }
-    if (pts.length < 30) {
-      console.error(`rain frame ${end}: för få stationer (${pts.length}), hoppar över`);
-      continue;
-    }
+  const keepIds = new Set<string>();
+  for (let k = 1; k <= nFrames; k++) {
+    const endOffset = Math.round((k * actualDays) / nFrames) - 1; // 0-baserat, sista = actualDays-1
+    const end = addDays(startDate, Math.min(endOffset, actualDays - 1));
+    const span = Math.round((new Date(end + "T12:00:00Z").getTime() - new Date(startDate + "T12:00:00Z").getTime()) / dayMs) + 1;
+    const pts = accumulate(rolling, startDate, end);
+    if (pts.length < 30) continue;
     const field = interpField(pts);
     let maxMm = 0;
     for (const v of field) if (v > maxMm) maxMm = v;
-    const id = `${compactDay(end)}-7d-${hash8(end + ":" + pts.length + ":" + maxMm.toFixed(3))}`;
-    const seed = parseInt(hash8(id).slice(0, 8), 16);
-    const png = renderFrame(field, seed);
-    await fsp.writeFile(path.join(FRAMES_DIR, `${id}.png`), png);
+    const id = `${compactDay(end)}-acc${span}d-${hash8(startDate + ":" + end + ":" + pts.length + ":" + maxMm.toFixed(3))}`;
+    keepIds.add(id + ".png");
+    const file = path.join(framesDir, `${id}.png`);
+    if (!fs.existsSync(file)) {
+      const seed = parseInt(hash8(id).slice(0, 8), 16);
+      await fsp.writeFile(file, renderFrame(field, span, seed));
+    }
+    const isLast = k === nFrames;
     frames.push({
       id,
-      startDate: start,
+      startDate,
       endDate: end,
-      daysAgoEnd,
-      label: labelFor(start, end),
+      daysAcc: span,
+      daysAgoEnd: Math.round((new Date(latest + "T12:00:00Z").getTime() - new Date(end + "T12:00:00Z").getTime()) / dayMs),
+      label: labelFor(startDate, end, isLast ? ` (${span} d)` : ""),
       maxMm: Number(maxMm.toFixed(1)),
       url: `/api/v1/weather/rain-history/frame/${id}.png`,
     });
-    console.log(`rain frame ${id} ${start}..${end} max=${maxMm.toFixed(1)}mm ${(png.length / 1024).toFixed(1)} kB (${pts.length} stn)`);
+    console.log(`rain frame ${id} ${startDate}..${end} (${span}d) max=${maxMm.toFixed(1)}mm ${pts.length} stn`);
   }
+  // rensa gamla PNG:er från tidigare referenceTime så disken inte växer
+  try {
+    for (const f of await fsp.readdir(framesDir)) {
+      if (f.endsWith(".png") && !keepIds.has(f)) await fsp.unlink(path.join(framesDir, f)).catch(() => {});
+    }
+  } catch {}
   if (frames.length === 0) throw new Error("inga rain-frames byggda");
+
   const manifest: Manifest = {
     updatedAt: new Date().toISOString(),
-    referenceTime: endDate,
-    windowDays: WINDOW_DAYS,
-    spanDays: SPAN_DAYS,
-    stationCount: stations.length,
+    referenceTime: latest,
+    requestedDays: days,
+    spanDays: actualDays,
+    mode: "accumulated",
+    stationCount: Object.keys(rolling.stations).length,
     bounds: [RAIN_BOUNDS.minLon, RAIN_BOUNDS.minLat, RAIN_BOUNDS.maxLon, RAIN_BOUNDS.maxLat],
     width: W,
     height: H,
     attribution: "Nederbörd: SMHI öppna data (Metobs), CC BY 4.0 — © SMHI",
     frames,
   };
-  await fsp.writeFile(path.join(DIR, "manifest.json"), JSON.stringify(manifest, null, 2));
-  cache = { at: Date.now(), manifest };
+  const outPath = path.join(DIR, `manifest-${days}d.json`);
+  await fsp.writeFile(outPath, JSON.stringify(manifest, null, 2));
   return manifest;
 }
 
-export async function getRainManifest(): Promise<Manifest> {
-  if (cache && Date.now() - cache.at < REFRESH_MS) return cache.manifest;
-  if (inflight) return inflight;
-  inflight = (async () => {
+export async function getRainManifest(requestedDays = DEFAULT_DAYS): Promise<Manifest> {
+  const days = ALLOWED_DAYS.includes(requestedDays as (typeof ALLOWED_DAYS)[number]) ? requestedDays : DEFAULT_DAYS;
+  const c = manifestCaches.get(days);
+  if (c && Date.now() - c.at < REFRESH_MS) return c.manifest;
+  const inf = manifestInflight.get(days);
+  if (inf) return inf;
+  const p = (async () => {
     try {
-      return await buildManifest();
+      return await buildManifest(days);
     } catch (e) {
-      console.error("rain manifest build failed, disk-cache:", (e as Error).message);
       try {
-        const disk = JSON.parse(await fsp.readFile(path.join(DIR, "manifest.json"), "utf8")) as Manifest;
-        cache = { at: Date.now() - REFRESH_MS + 60000, manifest: disk };
+        const disk = JSON.parse(await fsp.readFile(path.join(DIR, `manifest-${days}d.json`), "utf8")) as Manifest;
+        manifestCaches.set(days, { at: Date.now() - REFRESH_MS + 60000, manifest: disk });
         return disk;
       } catch {
-        cache = null;
         throw e;
       }
     } finally {
-      inflight = null;
+      manifestInflight.delete(days);
     }
   })();
-  return inflight;
+  manifestInflight.set(days, p);
+  const m = await p;
+  manifestCaches.set(days, { at: Date.now(), manifest: m });
+  return m;
 }
 
 export async function getRainFrame(id: string): Promise<Buffer | null> {
-  if (!/^\d{8}-7d-[0-9a-f]{8}$/.test(id)) return null;
-  const p = path.join(FRAMES_DIR, `${id}.png`);
-  try {
-    return await fsp.readFile(p);
-  } catch {
+  if (!/^\d{8}-acc\d+d-[0-9a-f]{8}$/.test(id)) return null;
+  // försök alla spann-kataloger
+  for (const d of ALLOWED_DAYS) {
     try {
-      await getRainManifest();
-      return await fsp.readFile(p);
-    } catch {
-      return null;
-    }
+      return await fsp.readFile(path.join(DIR, `${d}d`, `${id}.png`));
+    } catch {}
   }
+  return null;
 }

@@ -55,35 +55,38 @@ Samma frames kan bakas av Cloudflare Worker till R2 (`/clouds/<id>.png`, immutab
 manifest via Worker — då noll SMHI-trafik från telefonerna. Tills dess körs det från
 Mac-servern bakom samma endpoints.
 
-## Rullande 7-dagars regnhistorik (`src/rain-history.ts`) — samma kontrakt som molnen
+## Ackumulerad regnhistorik, valbart spann (`src/rain-history.ts`)
 
-Byggt för att ersätta det utzoomade molnlagret (SNOW1gv1:s heltals-oktas gav bandning):
-**rullande 7-dagars uppmätt regn** från SMHI **Metobs parameter 5** (dygnssumma mm, CC BY 4.0).
+Ersätter det fasta 7-d-fönstret: **ackumulerad nederbörd som växer fram över tid**, med
+valbart spann via `?days=14|21|28|42` (default 28; ogiltigt → 28). iOS väljer spann efter
+vald art (längsta vid flerval).
 
-- **Stationer:** aktiva Metobs-stationer i utökat Sverige, tunna till 1 per ~0.7°-ruta
-  → **180 stationer** (Skåne–Norrbotten). `latest-months` hämtas parallellt (konkurrens 14),
-  cachas 6 h i minne + `data/rain-history/` (git-ignored); vid SMHI-fel serveras senaste cache.
-- **Frames:** 11 st i 2-dagarssteg över senaste 20 dygnen; frame visar mm-summan i
-  `[endDate-6d .. endDate]`. Station som saknar någon dag i fönstret skippas för framen.
-  Dag > 150 mm behandlas som felvärde/saknad.
-- **Render 256×320 RGBA över `[10.5, 55.0, 24.5, 69.5]`:** gaussisk IDW (σ=48 km) med
-  avståndsdämpning `exp(-(minDist/75km)²)` (Norge/Östersjön/Finland → alpha 0 utan kant)
-  + 15 % smoothstep-feather mot quad-kanten + ±0.5 LSB dither → **noll bandning, ytterkant
-  exakt alpha=0**. Färg: 0–4 mm transparent, 4–15 ljus skiffer, 15–35 akvarell blågrönt
-  (svampregn), 35–75+ djup skifferblå. ~11–55 kB/frame.
-- **Endpoints:**
-  ```
-  GET /api/v1/weather/rain-history/manifest   (max-age=600)
-    → { updatedAt, referenceTime, windowDays: 7, spanDays: 20, stationCount,
-        bounds, width: 256, height: 320, attribution,
-        frames: [{ id: "20261125-7d-a1b2c3", startDate, endDate, daysAgoEnd,
-                   label: "19 nov–25 nov", maxMm, url }] }
-  GET /api/v1/weather/rain-history/frame/:id.png  (image/png, immutable, traversal→404)
-  ```
-- **iOS:** samma GPU-dubbelbuffer som molnen — byt bara endpoint till
-  `/api/v1/weather/rain-history/*`, ta bort kontur-filtret, pill-text t.ex.
-  `Regn 7 d • 19 nov–25 nov` (från `label`). Samma quad (`bounds`).
+- **Persistent rullande 6-veckorsfil** `data/rain-history/rolling-42d.json` (~83 kB för
+  178 stationer × 42 dygn): `{ updatedAt, maxDays: 42, stations, days: { "YYYY-MM-DD": {id: mm} } }`.
+  Var 6:e timme mergas SMHI Metobs param 5 `latest-months` in (samma stationsurval, felvärden
+  >150 mm/dygn = saknad dag). **Hård prune till max 42 dygn** (`cutoff = senaste − 41 d`,
+  `pruneRollingDays` är exporterad/pure för test) + borttagna stationer utan kvarvarande dygn.
+  Atomiskt skrivande (`.tmp` → `rename`). Vid SMHI-fel serveras filen rakt från disk.
+- **Manifest:** `GET /api/v1/weather/rain-history/manifest?days=28` (`max-age=600`) →
+  `{ updatedAt, referenceTime, requestedDays, spanDays, mode: "accumulated", stationCount,
+  bounds, width: 256, height: 320, attribution, frames: [{ id, startDate, endDate, daysAcc,
+  daysAgoEnd, label: "29 okt–25 nov (28 d)", maxMm, url }] }`.
+  Alla spann renderas från den 6h-cachade rolling-filen (ingen extra SMHI-hämtning per spann);
+  PNG:er cachas per spann i `data/rain-history/{days}d/` och gamla frames från tidigare
+  referenceTime rensas bort. Om filen har färre dagar än begärt används det som finns och
+  `requestedDays`/`spanDays` rapporterar båda.
+- **Frames per spann (ackumulerade):** 14 d → 8 st, 21 d → 11 st, 28 d → 10 st, 42 d → 11 st;
+  frame k = total mm från `startDate` till frame-slut. `maxMm` växer alltså monotont genom
+  loopen. Station utan minst 60 % av dygn i fönstret skippas för den framen.
+- **Render:** samma 256×320, IDW σ=48 km × `exp(-(minDist/75km)²)`, 15 % kant-feather,
+  ±0.5 LSB dither (ytterkant alltid exakt `alpha=0`, noll bandning). Färg normaliseras
+  **per vecka** (`mm/vecka`) så alla spann får samma kontrast mot sepia-baskartan:
+  0–3 mm/v transparent · 3–10 turkosblå (42,132,178, α→0.42) · 10–25 koboltblå
+  (24,96,168, α→0.72) · 25–50+ djup indigo (18,58,138, α→0.88).
+- `GET /api/v1/weather/rain-history/frame/:id.png` — `image/png`, `immutable`, id =
+  `YYYYMMDD-acc<N>d-<hash8>`, traversal → 404.
 
-Verifierat live mot Metobs 2026-11-26: 11 frames, 180 stationer, maxMm 54–123 mm/7d,
-alla frames 200+immutable+256×320, ytterkant alpha=0, 383k mellanvärdes-px (anti-bandning),
-visuell koll: mjuka fuktzoner i Sveriges form.
+Verifierat live mot Metobs 2026-11-26: 27/27 tester — rolling-42d.json 42 nycklar/83 kB/178 stn,
+days=14/28/42 ger 8/10/11 frames med monotont växande maxMm (t.ex. 42d: 24→213 mm),
+alla frames 200+immutable+256×320, ytterkant alpha=0, `days=99`→28, prune-test tar bort ett
+60 dagar gammalt syntetiskt datum.

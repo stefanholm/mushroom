@@ -1876,7 +1876,9 @@ app.get("/api/v1/weather/clouds/frame/:id.png", async (req, res) => {
 // Samma manifest/frame-kontrakt som molnen — iOS byter bara endpoint + pill-text.
 app.get("/api/v1/weather/rain-history/manifest", async (req, res) => {
   try {
-    const m = await getRainManifest();
+    // ?days=14|21|28|42 (default 28; ogiltigt värde -> default)
+    const days = Number(req.query.days ?? 28);
+    const m = await getRainManifest(Number.isFinite(days) ? days : 28);
     res.set("Cache-Control", "public, max-age=600");
     res.json(m);
   } catch (e) {
