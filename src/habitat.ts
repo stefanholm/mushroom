@@ -1291,16 +1291,63 @@ export const SPECIES: Record<string, SpeciesProfile> = {
 };
 
 // Regnfönster per art (dagar ackumulerad nederbörd i Live-läge; default 28).
-// Långa fönster för långlivade mycel (tryffel, jättemusseron), korta för snabba flush-arter.
+// Synkat med iOS MushroomCatalog.swift — ändra båda samtidigt!
+// 14 d = snabba saprofyter & murklor; 21 d = soppar/kremlor/riskor/vaxingar;
+// 42 d = tryffel, djupmark & vedlevande; 28 d = kantareller/taggsvampar/trumpetsvampar/tickor.
 const RAIN_WINDOW_BY_SPECIES: Record<string, 14 | 21 | 28 | 42> = {
+  // 14 d — snabba saprofyter & murklor
   toppmurkla: 14,
   "rund-toppmurkla": 14,
+  "fjallig-blacksvamp": 14,
+  "rodnande-blacksvamp": 14,
+  snobolischampinjon: 14,
+  jatteroksvamp: 14,
+  "stolt-fjallskivling": 14,
+  smorsopp: 14,
+  gulsopp: 14,
+  larksopp: 14,
+  sandsopp: 14,
+  varskivling: 14,
+  varmusseron: 14,
+  // 21 d — soppar, kremlor, riskor, vaxingar
+  karljohan: 21,
+  brunsopp: 21,
+  blodsopp: 21,
+  bjorksopp: 21,
+  aspsopp: 21,
+  tegelsopp: 21,
+  grynsopp: 21,
+  blasopp: 21,
+  "rodbrun-stensopp": 21,
+  "finluden-stensopp": 21,
+  tallskrubb: 21,
+  mandelkremla: 21,
+  gronkremla: 21,
+  sillkremla: 21,
+  blodriska: 21,
+  tallblodriska: 21,
+  granblodriska: 21,
+  "zonerad-granblodriska": 21,
+  mandelriska: 21,
+  sotvaxing: 21,
+  frostvaxing: 21,
+  rimskivling: 21,
+  streckmusseron: 21,
+  honungsskivling: 21,
+  // 42 d — tryffel, djupmark & vedlevande
   sommartryffel: 42,
   jattemusseron: 42,
-  kantarell: 28,
-  trattkantarell: 28,
-  karljohan: 21,
-  "svart-trumpetsvamp": 28,
+  ostronmussling: 42,
+  "blek-ostronmussling": 42,
+  judasora: 42,
+  svavelticka: 42,
+  "rod-svavelticka": 42,
+  vinterskivling: 42,
+  korallticka: 42,
+  blomkalssvamp: 42,
+  farticka: 42,
+  brodticka: 42,
+  // 28 d — default: kantareller, taggsvampar, trumpetsvampar m.m. (övriga arter)
 };
 for (const [k, s] of Object.entries(SPECIES)) {
   s.rainWindowDays = RAIN_WINDOW_BY_SPECIES[k] ?? 28;

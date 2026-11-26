@@ -2819,6 +2819,8 @@ app.get("/api/debug/cell", async (req, res) => {
     rainFlushMm: liveRain?.available ? liveRain.flushMm : null,
     rainRecentMm: liveRain?.available ? liveRain.recentMm : null,
     mmPerWeek: liveRain?.available ? liveRain.mmPerWeek : null,
+    effMmPerWeek: liveRain?.available ? liveRain.effMmPerWeek : null,
+    rainFlushWindow: liveRain?.available ? liveRain.flushWindow : null,
     rainFactorLive: staticOnly ? null : Number(dynRainF.toFixed(3)),
     rainGrids: rainGridsAvailable(),
     seasonFactor: Number(seasonalFactor(species, lat, asOf).toFixed(2)),

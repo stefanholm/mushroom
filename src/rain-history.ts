@@ -482,10 +482,22 @@ export async function getRainFrame(id: string): Promise<Buffer | null> {
 
 // ---------- live-rutnät: sampleRainForLive (kopplar regnkarta 1-till-1 till Live-score) ----------
 // Fyra förinterpolerade Float32-rutnät (256x320) för 14/21/28/42 dagar ur rolling-42d.json,
-// plus flush-rutnät (senaste 3 dygn) och recent-rutnät (senaste 5 dygn).
+// plus per-spann flush-rutnät (artgruppens "viktigaste flush-period", dagar bakåt) och
+// recent-rutnät (senaste 5 dygn = nylig ytfukt).
 type RainGrid = { field: Float32Array; startDate: string; latest: string; days: number };
+// flush-fönster [start, end] dagar bakåt per spann: 14d -> 3..10, 21d -> 5..16, 28d -> 7..24, 42d -> 10..40
+const FLUSH_WINDOW: Record<number, [number, number]> = {
+  14: [3, 10],
+  21: [5, 16],
+  28: [7, 24],
+  42: [10, 40],
+};
+const RECENT_DAYS = 5;
+// flush vägs 75 % mot 25 % nylig ytfukt i den effektiva veckodosen
+const FLUSH_WEIGHT = 0.75;
+
 let rainGrids: Map<number, RainGrid> | null = null;
-let flushGrid: Float32Array | null = null;
+let flushGrids: Map<number, Float32Array> | null = null;
 let recentGrid: Float32Array | null = null;
 
 export function rainGridsAvailable(): boolean {
@@ -497,18 +509,24 @@ function buildGrids(rolling: RollingFile): void {
   const latest = dayKeys[dayKeys.length - 1];
   if (!latest) return;
   const grids = new Map<number, RainGrid>();
+  const flushes = new Map<number, Float32Array>();
   for (const D of ALLOWED_DAYS) {
     const actualDays = Math.min(D, dayKeys.length);
     const start = addDays(latest, -(actualDays - 1));
     const pts = accumulate(rolling, start, latest);
     if (pts.length < 30) continue;
     grids.set(D, { field: interpField(pts), startDate: start, latest, days: actualDays });
+    // artgruppens flush-fönster för detta spann
+    const [fs, fe] = FLUSH_WINDOW[D];
+    const fStart = addDays(latest, -Math.min(fe, actualDays - 1));
+    const fEnd = addDays(latest, -fs);
+    const fPts = accumulate(rolling, fStart, fEnd);
+    if (fPts.length >= 30) flushes.set(D, interpField(fPts));
   }
-  const flushPts = accumulate(rolling, addDays(latest, -2), latest);
-  const recentPts = accumulate(rolling, addDays(latest, -4), latest);
-  flushGrid = flushPts.length >= 30 ? interpField(flushPts) : null;
+  const recentPts = accumulate(rolling, addDays(latest, -(RECENT_DAYS - 1)), latest);
   recentGrid = recentPts.length >= 30 ? interpField(recentPts) : null;
   rainGrids = grids;
+  flushGrids = flushes;
 }
 
 // Bygg rutnäten när rolling-filen uppdateras (anropas från getRolling).
@@ -550,6 +568,8 @@ export type RainLiveSample = {
   flushMm: number;
   recentMm: number;
   mmPerWeek: number;
+  effMmPerWeek: number;
+  flushWindow: [number, number];
   factor: number;
   available: boolean;
   windowDays: number;
@@ -562,17 +582,29 @@ export function sampleRainForLive(
 ): RainLiveSample {
   const D = (ALLOWED_DAYS as readonly number[]).includes(windowDays) ? windowDays : DEFAULT_DAYS;
   const g = rainGrids?.get(D);
+  const flushWindow = FLUSH_WINDOW[D];
   if (!g) {
-    return { totalMm: 0, flushMm: 0, recentMm: 0, mmPerWeek: 0, factor: 1, available: false, windowDays: D };
+    return {
+      totalMm: 0, flushMm: 0, recentMm: 0, mmPerWeek: 0, effMmPerWeek: 0,
+      flushWindow, factor: 1, available: false, windowDays: D,
+    };
   }
   const totalMm = sampleField(g.field, lat, lon);
   const mmPerWeek = totalMm / (g.days / 7);
+  const flushMm = flushGrids?.get(D) ? sampleField(flushGrids.get(D)!, lat, lon) : 0;
+  const recentMm = recentGrid ? sampleField(recentGrid, lat, lon) : 0;
+  // effektiv veckodos: 75 % flush-fönstrets dos + 25 % nylig ytfukt (0–4 d)
+  const flushDays = flushWindow[1] - flushWindow[0] + 1;
+  const effMmPerWeek =
+    FLUSH_WEIGHT * (flushMm / (flushDays / 7)) + (1 - FLUSH_WEIGHT) * (recentMm / (RECENT_DAYS / 7));
   return {
     totalMm: Number(totalMm.toFixed(1)),
-    flushMm: Number((flushGrid ? sampleField(flushGrid, lat, lon) : 0).toFixed(1)),
-    recentMm: Number((recentGrid ? sampleField(recentGrid, lat, lon) : 0).toFixed(1)),
+    flushMm: Number(flushMm.toFixed(1)),
+    recentMm: Number(recentMm.toFixed(1)),
     mmPerWeek: Number(mmPerWeek.toFixed(2)),
-    factor: Number(rainFactorCurve(mmPerWeek).toFixed(3)),
+    effMmPerWeek: Number(effMmPerWeek.toFixed(2)),
+    flushWindow,
+    factor: Number(rainFactorCurve(effMmPerWeek).toFixed(3)),
     available: true,
     windowDays: D,
   };

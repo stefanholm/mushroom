@@ -113,3 +113,19 @@ dem och returnerar `{ totalMm, flushMm, recentMm, mmPerWeek, factor, available, 
 
 Verifierat live: Stockholm 38.2 mm/28d → factor 0.75, Skåne 43.7 mm → 0.813 (spatialt varierande),
 static=1 ger null i alla regnfält, murkla=14 d / tryffel=42 d, hotspots+overview live OK.
+
+## Synkade regnfönster för alla 61 arter + artgrupps-flush (2026-11-26)
+
+`RAIN_WINDOW_BY_SPECIES` i `src/habitat.ts` täcker nu alla 61 arter (synkat med iOS
+`MushroomCatalog.swift`): **14 d** = 13 snabba saprofyter/murklor, **21 d** = 24 soppar/kremlor/
+riskor/vaxingar, **42 d** = 12 tryffel/vedlevande, **28 d** = 12 kantarell-gruppen (default).
+
+`sampleRainForLive` väger nu flush-fönstret **75 %** mot nylig ytfukt (senaste 5 d, 25 %):
+per spann är flush-fönstret dag `[3..10]` (14 d), `[5..16]` (21 d), `[7..24]` (28 d),
+`[10..40]` (42 d) bakåt. Svaret innehåller `flushWindow`, `effMmPerWeek` (den viktade dosen
+som `factor` baseras på) och oförändrade `totalMm/mmPerWeek`. `static=1` är fortfarande
+helt oberört. `/api/debug/cell` har nya fälten `effMmPerWeek` och `rainFlushWindow`.
+
+Verifierat live: toppmurkla(14 d, fw 3–10, f=1.046), karljohan(21 d, 5–16, 1.002),
+kantarell(28 d, 7–24, 0.793), sommartryffel(42 d, 10–40, 0.703) — samma punkt, olika
+fönster; alla 61 arter har giltigt fönster; tsc ren.
