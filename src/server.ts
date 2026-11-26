@@ -10,6 +10,7 @@ import { LayerStore, toSWEREF } from "./layers.js";
 import { SPECIES, PACKS, REVIEW_REWARD_SPECIES, SVENSKA_KLASSIKER_SPECIES, FREE_SPECIES, SINGLE_PRICE_SEK, SOLO_ONLY_SPECIES, TOP_PICKS, MAX_REWARD_CLAIMS, MAX_REVIEW_CLAIMS, MAX_REFERRAL_CLAIMS, effectiveGdd5, hostFallback, isSpeciesUnlocked, isSpeciesPermanentlyOwned, isValidRewardClaim, isValidSingleClaim, seasonalFactor, staticHabitatScore } from "./habitat.js";
 import { normalizeCode, checksumOk, loadCodes, saveCodes, appendLog, grantLabel, makeCode, validateGrant, LOG_FILE } from "./redeem.js";
 import { reportSignal, leaderboard, myScore, nearbyFinds, allFinds, haversineKm, aliasFor, deleteDeviceData } from "./signals.js";
+import { getCloudManifest, getCloudFrame } from "./clouds.js";
 
 // Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
 // I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
@@ -1850,6 +1851,25 @@ async function overviewHandler(req: express.Request, res: express.Response) {
 }
 app.get("/api/v1/fungi/overview", overviewHandler);
 app.get("/api/overview", overviewHandler);
+
+// ---------- Live molnprognos (SMHI SNOW1gv1, bakade PNG-frames; se src/clouds.ts) ----------
+// Manifest cachas 30 min server-side; frames är immutable (id innehåller referenceTime-hash).
+app.get("/api/v1/weather/clouds/manifest", async (req, res) => {
+  try {
+    const m = await getCloudManifest();
+    res.set("Cache-Control", "public, max-age=300");
+    res.json(m);
+  } catch (e) {
+    res.status(502).json({ error: "SMHI molnprognos otillgänglig just nu.", detail: (e as Error).message });
+  }
+});
+app.get("/api/v1/weather/clouds/frame/:id.png", async (req, res) => {
+  const buf = await getCloudFrame(String(req.params.id ?? ""));
+  if (!buf) return res.status(404).json({ error: "Okänd moln-frame." });
+  res.set("Content-Type", "image/png");
+  res.set("Cache-Control", "public, max-age=31536000, immutable");
+  res.send(buf);
+});
 
 app.get("/api/hotspots", async (req, res) => {
   const keys = String(req.query.species ?? "")
