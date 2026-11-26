@@ -40,6 +40,27 @@ inte överlappa varandra.
 - **Tier 2 — Detail (z10–z15+):** `npm run bake-tiles -- --bbox ... --zmin 10 --zmax 15`
   — finmaskiga 10–25 m habitat-tiles, samma scoring som Tier 1 (static=1), väder live.
 
+### Overview-API + makroläge (Sverige-vy)
+
+- `GET /api/v1/fungi/overview` (alias `GET /api/overview`):
+  `?species=id1,id2&static=1|0&date=YYYY-MM-DD&minScore=55&sensitivity=0&ents=...`
+  Svar: `{ overviewRevision, mode: "habitat"|"live", capped, trial, goldPeaks, profiles, tiers: { "55km"|"18km"|"6km": [...] }, skipped, asOf, minScore }`.
+  Habitat läser `data/overview/<art>.json` + `species-pyramid-profile.json` (nationalCells
+  140/55/18/6/2 km, topScore, p95Score, rarityWeight 1.00–1.45 — lägre 6 km-täckning ger
+  högre vikt så sällsynta arter lyfts). Live viktar samma celler med
+  `seasonalFactor × regn14/90 × frost × flush` på ett 1°-rutnät (SMHI cachas 6 h), så
+  topparna flyttar sig mellan landsdelar. Saknas overview-fil → makro-fallback
+  (1°-rastersampling där masken tillåter + obsPrior för icke-skyddade arter).
+  Entitlements: samma gate som `/api/hotspots` (403 om alla låsta, `skipped` annars).
+  Free efter trial: capped — topp-30 % döljs per art/tier MEN minst 1 pin per art hålls
+  alltid synlig (sällsynta arter klipps aldrig bort helt); årskort/trial ser allt,
+  årskort får `gold: true`.
+- `/api/hotspots` tillåter nu Sverige-bbox (klampas till 10.5–24.5°E, 55.0–69.5°N);
+  vid `span > 1.5°` serveras pins från overview-JSON (`meta.source: "overview"`) med
+  **rättvis artkvot**: `floor(180 / antal arter)` reserveras per art, resten fylls på
+  score — maxP=180 svälter alltså inte ut ovanliga arter. Närzoom-låset
+  (`span <= 0.06 → cell 0.0004`) är kvar. Live (`static=0`) viktar overview-pinnarna.
+
 ### Varför 2 tier räcker (inte 3 geografiska: Sverige / halva Sverige / detalj)
 
 - Explosionen är **art × zoom**, inte geografi. z10 ≈ 78 m/px i Sverige (fortfarande

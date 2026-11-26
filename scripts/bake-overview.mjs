@@ -12,6 +12,10 @@
 //   npm run bake-overview -- --species kantarell,karljohan --cell 2000 --min 55
 //   npm run bake-overview -- --all-species
 //
+// Skriver även data/overview/species-pyramid-profile.json (per art: nationalCells per
+// SWEREF-ruta 140/55/18/6/2 km, topScore, p95Score, rarityWeight 1.00–1.45, updatedAt).
+// --species gör inkrementell merge; --all-species skriver om hela profilen.
+//
 // Kräver tsx (importerar src/*.ts): körs via npm run bake-overview.
 
 import fs from "node:fs/promises";
@@ -43,6 +47,40 @@ const allSpecies = args.includes("--all-species");
 const cellM = Number(opt("cell", 2000));
 const minScore = Number(opt("min", 55));
 const maxCells = Number(opt("max", 2000));
+
+// SWEREF 99 TM pyramid-rutor (m) för artprofilen
+const PYRAMID_SIZES = [
+  ["140km", 140000],
+  ["55km", 55000],
+  ["18km", 18000],
+  ["6km", 6000],
+  ["2km", 2000],
+];
+
+function profileFor(species, qualCells, updatedAt) {
+  const nationalCells = {};
+  for (const [label, size] of PYRAMID_SIZES) {
+    const keys = new Set(qualCells.map((c) => `${Math.floor(c.e / size)},${Math.floor(c.n / size)}`));
+    nationalCells[label] = keys.size;
+  }
+  const maxes = qualCells.map((c) => c.max);
+  const topScore = maxes.length ? Math.max(...maxes) : 0;
+  const p95Score = quantile(maxes, 0.95);
+  return {
+    nationalCells,
+    topScore: Number(topScore.toFixed(1)),
+    p95Score: Number(p95Score.toFixed(1)),
+    rarityWeight: 1, // sätts när hela profilen är klar (behöver max över alla arter)
+    updatedAt,
+  };
+}
+
+// Deterministisk mjuk log-vikt 1.00–1.45: färre 6 km-rutor => högre vikt (rariteter lyfts).
+function rarityWeightFor(c6km, refC6km) {
+  const ref = Math.max(2, refC6km);
+  const t = Math.min(1, Math.max(0, Math.log(Math.max(1, c6km)) / Math.log(ref)));
+  return Number((1 + 0.45 * (1 - t)).toFixed(2));
+}
 
 async function unionBBox() {
   const manifest = JSON.parse(await fs.readFile(path.join(layersDir, "manifest.json"), "utf8"));
@@ -76,6 +114,7 @@ async function main() {
   console.log(`täckning (EPSG:3006): E ${Math.round(minE)}–${Math.round(maxE)}, N ${Math.round(minN)}–${Math.round(maxN)}`);
 
   const speciesList = allSpecies ? Object.keys(SPECIES).sort() : speciesArg.split(",").map((s) => s.trim()).filter(Boolean);
+  const profileUpdates = {};
 
   for (const sp of speciesList) {
     if (!SPECIES[sp]) {
@@ -121,9 +160,28 @@ async function main() {
       cells: kept,
     };
     await fs.writeFile(path.join(outDir, `${sp}.json`), JSON.stringify(out));
+    profileUpdates[sp] = profileFor(sp, cells, out.generatedAt); // alla kvalificerade celler, ej trunkerade
     const top = kept.slice(0, 3).map((c) => `${c.lat},${c.lon} max=${c.max}`).join(" | ");
     console.log(`${sp}: ${kept.length} celler (min ${minScore}) ${cells.length > kept.length ? "(trunkerad)" : ""} — topp: ${top}`);
   }
+
+  // species-pyramid-profile.json: inkrementell merge vid --species, komplett vid --all-species
+  const profilePath = path.join(outDir, "species-pyramid-profile.json");
+  let profiles = {};
+  try {
+    profiles = JSON.parse(await fs.readFile(profilePath, "utf8")).profiles ?? {};
+  } catch {}
+  if (allSpecies) profiles = {};
+  Object.assign(profiles, profileUpdates);
+  const refC6 = Math.max(0, ...Object.values(profiles).map((p) => p.nationalCells["6km"] ?? 0));
+  for (const p of Object.values(profiles)) {
+    p.rarityWeight = rarityWeightFor(p.nationalCells["6km"] ?? 0, refC6);
+  }
+  await fs.writeFile(
+    profilePath,
+    JSON.stringify({ generatedAt: new Date().toISOString(), profiles }, null, 2) + "\n",
+  );
+  console.log(`species-pyramid-profile.json: ${Object.keys(profiles).length} arter (refC6km=${refC6})`);
 }
 
 main().catch((e) => {

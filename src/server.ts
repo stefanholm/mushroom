@@ -1490,6 +1490,367 @@ async function computeCellsCached(
   return p;
 }
 
+// ---------- Nationell overview (Tier 1) ----------
+// Bakad av scripts/bake-overview.mjs: data/overview/<art>.json (2 km-celler, max+p95)
+// + data/overview/species-pyramid-profile.json. Används för Sverige-vy (span > MACRO_SPAN)
+// och av /api/v1/fungi/overview. Live-läge viktar cellerna med säsong × regn × frost × flush
+// på ett grovt 1°-rutnät (SMHI cachas 6 h per 0.1°) så topparna flyttas mellan landsdelar.
+const OVERVIEW_DIR = path.join(here, "..", "data", "overview");
+const SWEDEN_BBOX = { minLon: 10.5, minLat: 55.0, maxLon: 24.5, maxLat: 69.5 };
+const MACRO_SPAN = 1.5; // ° — större bbox än så går via overview-JSON istället för rasterceller
+const MAXP_MACRO = 180; // pin-budget i makroläge (rättvist fördelad per art, se nedan)
+
+type OverviewCell = { e: number; n: number; lon: number; lat: number; max: number; p95: number };
+type OverviewFile = {
+  species: string; tier: number; cellM: number; minScore: number;
+  generatedAt: string; count: number; truncated?: boolean; cells: OverviewCell[];
+};
+type PyramidProfile = {
+  nationalCells: Record<string, number>;
+  topScore: number; p95Score: number; rarityWeight: number; updatedAt: string;
+};
+
+const overviewFileCache = new Map<string, { mtimeMs: number; data: OverviewFile | null }>();
+async function readOverviewFile(sp: string): Promise<OverviewFile | null> {
+  const p = path.join(OVERVIEW_DIR, `${sp}.json`);
+  try {
+    const st = await fsp.stat(p);
+    const c = overviewFileCache.get(sp);
+    if (c && c.mtimeMs === st.mtimeMs) return c.data;
+    const data = JSON.parse(await fsp.readFile(p, "utf8")) as OverviewFile;
+    overviewFileCache.set(sp, { mtimeMs: st.mtimeMs, data });
+    return data;
+  } catch {
+    overviewFileCache.set(sp, { mtimeMs: -1, data: null });
+    return null;
+  }
+}
+
+let profileCache: { mtimeMs: number; data: { generatedAt: string; profiles: Record<string, PyramidProfile> } | null } = {
+  mtimeMs: -1,
+  data: null,
+};
+async function readPyramidProfile(): Promise<{ generatedAt: string; profiles: Record<string, PyramidProfile> } | null> {
+  const p = path.join(OVERVIEW_DIR, "species-pyramid-profile.json");
+  try {
+    const st = await fsp.stat(p);
+    if (profileCache.mtimeMs === st.mtimeMs) return profileCache.data;
+    const data = JSON.parse(await fsp.readFile(p, "utf8")) as { generatedAt: string; profiles: Record<string, PyramidProfile> };
+    profileCache = { mtimeMs: st.mtimeMs, data };
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function defaultProfile(sp: string, ov: OverviewFile | null): PyramidProfile {
+  const cells = ov?.cells ?? [];
+  const nationalCells: Record<string, number> = {};
+  for (const size of [140000, 55000, 18000, 6000, 2000]) {
+    nationalCells[`${size / 1000}km`] = new Set(cells.map((c) => `${Math.floor(c.e / size)},${Math.floor(c.n / size)}`)).size;
+  }
+  const maxes = cells.map((c) => c.max);
+  return {
+    nationalCells,
+    topScore: maxes.length ? Number(Math.max(...maxes).toFixed(1)) : 0,
+    p95Score: maxes.length ? Number(maxes.slice().sort((a, b) => a - b)[Math.floor(0.95 * (maxes.length - 1))].toFixed(1)) : 0,
+    rarityWeight: 1,
+    updatedAt: ov?.generatedAt ?? new Date().toISOString(),
+  };
+}
+
+// Live-faktor på 1°-rutnät (SMHI-värden cachas i rainValues/tempCache per 0.1°, 6 h).
+const liveGridCache = new Map<
+  string,
+  { at: number; rain14: number | null; rain90: number | null; minT: number | null; cool: number | null }
+>();
+async function liveGridAt(lat: number, lon: number, asOf: Date) {
+  const key = `${Math.round(lat)}:${Math.round(lon)}:${asOf.toISOString().slice(0, 10)}`;
+  const c = liveGridCache.get(key);
+  if (c && Date.now() - c.at < 6 * 3600 * 1000) return c;
+  const [rv, minT, cool] = await Promise.allSettled([
+    rainValues(lat, lon),
+    minTempLast48h(lat, lon, asOf),
+    coolNightsLast7d(lat, lon, asOf),
+  ]);
+  const entry = {
+    at: Date.now(),
+    rain14: rv.status === "fulfilled" ? sumRain(rv.value, asOf, 14) : null,
+    rain90: rv.status === "fulfilled" ? sumRain(rv.value, asOf, 90) : null,
+    minT: minT.status === "fulfilled" ? minT.value : null,
+    cool: cool.status === "fulfilled" ? cool.value : null,
+  };
+  liveGridCache.set(key, entry);
+  return entry;
+}
+
+async function overviewLiveFactor(speciesKey: string, lat: number, lon: number, asOf: Date): Promise<number> {
+  const s = SPECIES[speciesKey];
+  if (!s) return 0;
+  const season = seasonalFactor(s, lat, asOf);
+  if (season <= 0) return 0;
+  const g = await liveGridAt(lat, lon, asOf);
+  const rainFactor =
+    (g.rain14 === null ? 0.5 : 1 - Math.exp(-g.rain14 / 32)) *
+    (g.rain90 === null ? 1 : 0.75 + 0.25 * (1 - Math.exp(-g.rain90 / 120)));
+  let frost = 1;
+  if (s.frostSensitive && g.minT !== null && g.minT <= -3) frost = 0;
+  return season * rainFactor * frost * flushFactor(g.cool);
+}
+
+// Lättviktig makro-fallback när data/overview/<art>.json saknas: grov raster-sampling
+// (1°) över Sverige där masken tillåter + obsPrior för icke-skyddade arter.
+async function macroFallbackCells(
+  sp: string,
+  minScore: number,
+  asOf: Date,
+  staticOnly: boolean,
+): Promise<OverviewCell[]> {
+  const store = await getLayerStore();
+  const out: OverviewCell[] = [];
+  const step = 1.0;
+  for (let lat = SWEDEN_BBOX.minLat; lat < SWEDEN_BBOX.maxLat; lat += step) {
+    for (let lon = SWEDEN_BBOX.minLon; lon < SWEDEN_BBOX.maxLon; lon += step) {
+      const clat = lat + step / 2;
+      const clon = lon + step / 2;
+      const [e, n] = toSWEREF(clon, clat);
+      if (store.mask && !(store.mask.has(e, n) && store.mask.allows(e, n))) continue;
+      const habitat = staticHabitatScore(store, sp, clon, clat, {
+        forestOk: true, inClearcut: false, excluded: false, roadFactor: 1, forestEdge: false,
+      });
+      let score = Math.min(100, habitat * 100);
+      if (!staticOnly) score = Math.min(100, score * (await overviewLiveFactor(sp, clat, clon, asOf)));
+      const prior = SPECIES[sp].protected ? 0 : obsPrior(await getObsIndex(), sp, clon, clat);
+      score = Math.min(100, Math.round(score * (1 + 0.15 * prior)));
+      if (score >= minScore) {
+        out.push({ e: Math.round(e), n: Math.round(n), lon: Number(clon.toFixed(5)), lat: Number(clat.toFixed(5)), max: score, p95: score });
+      }
+    }
+  }
+  return out.slice(0, 400);
+}
+
+async function overviewCellsForSpecies(
+  sp: string,
+  minScore: number,
+  asOf: Date,
+  staticOnly: boolean,
+): Promise<OverviewCell[]> {
+  const ov = await readOverviewFile(sp);
+  return ov ? ov.cells : macroFallbackCells(sp, minScore, asOf, staticOnly);
+}
+
+// Makro-pins för /api/hotspots vid stor span: overview-celler inom bbox, live-viktade
+// när static != "1", filtrerade på minScore, sorterade på score.
+async function overviewPeaksForSpecies(
+  sp: string,
+  minLon: number, minLat: number, maxLon: number, maxLat: number,
+  minScore: number,
+  asOf: Date,
+  staticOnly: boolean,
+): Promise<{ lon: number; lat: number; score: number; species: string }[]> {
+  const cells = await overviewCellsForSpecies(sp, minScore, asOf, staticOnly);
+  const out: { lon: number; lat: number; score: number; species: string }[] = [];
+  for (const c of cells) {
+    if (c.lon < minLon || c.lon > maxLon || c.lat < minLat || c.lat > maxLat) continue;
+    let score = c.max;
+    if (!staticOnly) score = Math.min(100, Math.round(c.max * (await overviewLiveFactor(sp, c.lat, c.lon, asOf))));
+    if (score < minScore) continue;
+    out.push({ lon: c.lon, lat: c.lat, score, species: sp });
+  }
+  out.sort((a, b) => b.score - a.score);
+  return out;
+}
+
+// Gold/cap med per-art-garanti: när free är capped döljs topp-fraktionen, men varje art
+// hålls alltid representerad med minst 1 synlig pin (ovanliga arter klipps aldrig bort helt).
+function applyGoldCap<T extends { score: number; species: string }>(
+  picked: T[],
+  cm: ReturnType<typeof capMeta>,
+): { visible: T[]; goldSet: Set<T>; goldN: number } {
+  picked.sort((a, b) => b.score - a.score);
+  const goldN = picked.length > 0 ? Math.max(1, Math.round(picked.length * FREE_HIDE_FRACTION)) : 0;
+  const goldSet = new Set(picked.slice(0, goldN));
+  let visible = cm.capped ? picked.slice(goldN) : picked;
+  if (cm.capped) {
+    const visSp = new Set(visible.map((p) => p.species));
+    for (const p of picked) {
+      if (goldSet.has(p) && !visSp.has(p.species)) {
+        goldSet.delete(p);
+        visible.push(p);
+        visSp.add(p.species);
+      }
+    }
+    visible.sort((a, b) => b.score - a.score);
+  }
+  return { visible, goldSet, goldN };
+}
+
+async function macroHotspotsResponse(
+  req: express.Request,
+  res: express.Response,
+  keys: string[],
+  minLon: number, minLat: number, maxLon: number, maxLat: number,
+  minScore: number,
+  asOf: Date,
+  staticOnly: boolean,
+) {
+  // Rättvis budget: reservera floor(MAXP/keys) per art, fyll resten globalt på score —
+  // en vanlig art får alltså inte svälta ut en ovanlig redan i serverns JSON.
+  const quota = Math.floor(MAXP_MACRO / Math.max(1, keys.length));
+  const perSpecies = await Promise.all(
+    keys.map((k) => overviewPeaksForSpecies(k, minLon, minLat, maxLon, maxLat, minScore, asOf, staticOnly)),
+  );
+  const picked: { lon: number; lat: number; score: number; species: string }[] = [];
+  const rest: typeof picked = [];
+  for (const list of perSpecies) {
+    picked.push(...list.slice(0, quota));
+    rest.push(...list.slice(quota));
+  }
+  rest.sort((a, b) => b.score - a.score);
+  while (picked.length < MAXP_MACRO && rest.length > 0) picked.push(rest.shift()!);
+
+  const cm = capMeta(req);
+  const centerLat = (minLat + maxLat) / 2;
+  const mPerDegLat = 111000;
+  const mPerDegLon = 111000 * Math.cos((centerLat * Math.PI) / 180);
+  const spacingDeg = 120 / Math.max(mPerDegLat, mPerDegLon);
+  const thinned: typeof picked = [];
+  for (const p of picked) {
+    if (thinned.length >= MAXP_MACRO) break;
+    const tooClose = thinned.some((q) => Math.abs(q.lat - p.lat) < spacingDeg && Math.abs(q.lon - p.lon) < spacingDeg);
+    if (!tooClose) thinned.push(p);
+  }
+  const { visible, goldSet, goldN } = applyGoldCap(thinned, cm);
+  return res.json({
+    hotspots: visible.map((p) => ({
+      lat: p.lat,
+      lon: p.lon,
+      species: p.species,
+      label: SPECIES[p.species]?.label ?? p.species,
+      eatScore: SPECIES[p.species]?.eatScore ?? null,
+      score: p.score,
+      gold: cm.unlocked === true && goldSet.has(p),
+    })),
+    meta: {
+      count: visible.length,
+      minScore,
+      species: keys,
+      asOf: asOf.toISOString().slice(0, 10),
+      staticOnly,
+      source: "overview",
+      ...cm,
+      goldPeaks: goldN,
+      skipped: (res.locals.skipped as string[] | undefined) ?? [],
+      nearbyActivity: await buildNearbyActivity(
+        Number.isFinite(Number(req.query.lat)) ? Number(req.query.lat) : centerLat,
+        Number.isFinite(Number(req.query.lon)) ? Number(req.query.lon) : (minLon + maxLon) / 2,
+        req,
+        cm,
+      ),
+    },
+  });
+}
+
+async function overviewHandler(req: express.Request, res: express.Response) {
+  const keys = String(req.query.species ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((k) => SPECIES[k]);
+  if (keys.length === 0) {
+    return res.status(400).json({ error: "Expected query params: species=id1,id2,..." });
+  }
+  const locked = gateSpecies(req, keys);
+  const open = keys.filter((k) => !locked.includes(k));
+  if (open.length === 0 && locked.length > 0) return lockedResponse(res, locked);
+  res.locals.skipped = locked;
+  const staticOnly = req.query.static === "1";
+  const asOf = parseAsOf(String(req.query.date ?? ""));
+  const sens = Math.max(-50, Math.min(50, Number(req.query.sensitivity ?? 0) || 0));
+  const minScore = Math.max(0, Math.min(100, (Number(req.query.minScore ?? 55) || 55) - sens));
+  const cm = capMeta(req);
+  const profile = await readPyramidProfile();
+
+  const profiles: Record<string, PyramidProfile> = {};
+  const tiers: Record<string, { species: string; lat: number; lon: number; northing: number; easting: number; score: number; count: number; gold: boolean }[]> = {
+    "55km": [],
+    "18km": [],
+    "6km": [],
+  };
+  const TIER_SIZES: [string, number][] = [["55km", 55000], ["18km", 18000], ["6km", 6000]];
+  for (const sp of open) {
+    const ov = await readOverviewFile(sp);
+    const cells = ov ? ov.cells : await macroFallbackCells(sp, minScore, asOf, staticOnly);
+    profiles[sp] = profile?.profiles?.[sp] ?? defaultProfile(sp, ov);
+    const tierMaps = new Map<string, Map<string, (typeof tiers)["55km"][number]>>();
+    for (const [label] of TIER_SIZES) tierMaps.set(label, new Map());
+    for (const c of cells) {
+      let score = c.max;
+      if (!staticOnly) score = Math.min(100, Math.round(c.max * (await overviewLiveFactor(sp, c.lat, c.lon, asOf))));
+      if (score < minScore) continue;
+      for (const [label, size] of TIER_SIZES) {
+        const m = tierMaps.get(label)!;
+        const k = `${Math.floor(c.e / size)},${Math.floor(c.n / size)}`;
+        const prev = m.get(k);
+        if (!prev || score > prev.score) {
+          m.set(k, { species: sp, lat: c.lat, lon: c.lon, northing: c.n, easting: c.e, score, count: (prev?.count ?? 0) + 1, gold: false });
+        } else {
+          prev.count++;
+        }
+      }
+    }
+    for (const [label, m] of tierMaps) tiers[label].push(...m.values());
+  }
+
+  // Gold/cap per art och tier (samma princip som applyGoldCap: minst 1 synlig per art/tier).
+  let goldPeaks = 0;
+  const visibleTiers: typeof tiers = {};
+  for (const [label, spots] of Object.entries(tiers)) {
+    const bySp = new Map<string, typeof spots>();
+    for (const s of spots) {
+      const arr = bySp.get(s.species) ?? [];
+      arr.push(s);
+      bySp.set(s.species, arr);
+    }
+    const vis: typeof spots = [];
+    for (const arr of bySp.values()) {
+      arr.sort((a, b) => b.score - a.score);
+      const goldN = Math.max(1, Math.round(arr.length * FREE_HIDE_FRACTION));
+      for (let i = 0; i < goldN; i++) {
+        arr[i].gold = true;
+        goldPeaks++;
+      }
+      if (cm.capped) {
+        const hidden = arr.filter((s) => s.gold);
+        vis.push(...arr.filter((s) => !s.gold));
+        if (vis.filter((s) => s.species === arr[0]?.species).length === 0 && hidden.length > 0) {
+          vis.push({ ...hidden[hidden.length - 1], gold: false });
+        }
+      } else {
+        vis.push(...arr);
+      }
+    }
+    for (const s of vis) s.gold = cm.unlocked === true && s.gold;
+    vis.sort((a, b) => b.score - a.score);
+    visibleTiers[label] = vis;
+  }
+
+  res.json({
+    overviewRevision: profile?.generatedAt ?? new Date().toISOString(),
+    mode: staticOnly ? "habitat" : "live",
+    capped: cm.capped,
+    trial: cm.trial,
+    goldPeaks,
+    profiles,
+    tiers: visibleTiers,
+    skipped: locked,
+    asOf: asOf.toISOString().slice(0, 10),
+    minScore,
+  });
+}
+app.get("/api/v1/fungi/overview", overviewHandler);
+app.get("/api/overview", overviewHandler);
+
 app.get("/api/hotspots", async (req, res) => {
   const keys = String(req.query.species ?? "")
     .split(",")
@@ -1516,8 +1877,14 @@ app.get("/api/hotspots", async (req, res) => {
   let [minLon, minLat, maxLon, maxLat] = box;
   if (minLon > maxLon) [minLon, maxLon] = [maxLon, minLon];
   if (minLat > maxLat) [minLat, maxLat] = [maxLat, minLat];
-  if (maxLon - minLon > 4 || maxLat - minLat > 4) {
-    return res.status(400).json({ error: "Bounding box too large (max 4 degrees per side)." });
+  // Stora bboxes (t.ex. hela Sverige) är tillåtna nu — klampas till Sverige; vid span > MACRO_SPAN
+  // serveras pins från den bakade overview-JSON:en (med live-viktning när static != "1").
+  minLon = Math.max(minLon, SWEDEN_BBOX.minLon);
+  maxLon = Math.min(maxLon, SWEDEN_BBOX.maxLon);
+  minLat = Math.max(minLat, SWEDEN_BBOX.minLat);
+  maxLat = Math.min(maxLat, SWEDEN_BBOX.maxLat);
+  if (maxLon - minLon <= 0 || maxLat - minLat <= 0) {
+    return res.status(400).json({ error: "Bounding box outside Sweden coverage." });
   }
   const staticOnly = req.query.static === "1";
   const asOf = parseAsOf(String(req.query.date ?? ""));
@@ -1529,6 +1896,11 @@ app.get("/api/hotspots", async (req, res) => {
   // Lås rutnätet till en fast koordinatupplösning vid inzoomning (span <= 0.06°)
   // så att svamparna står helt stilla på exakt samma punkt när man zoomar in/ut.
   const cell = span <= 0.06 ? 0.0004 : cellForSpan(span);
+
+  // Makroläge: hela Sverige (eller stor region) — bakad overview + rättvis artkvot.
+  if (span > MACRO_SPAN) {
+    return macroHotspotsResponse(req, res, keys, minLon, minLat, maxLon, maxLat, minScore, asOf, staticOnly);
+  }
 
   if (bboxParam) {
     // Peak-pocket mode for the iOS symbol/icon layer: local maxima >= minScore,
