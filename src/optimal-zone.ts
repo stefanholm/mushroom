@@ -9,11 +9,16 @@
 //   W_rain       = clamp((baseWeight*baseN + (1-baseWeight)*trigN) * broms * dämpning, 0, 1.3)
 //
 // S_opt per cell = W_rain^0.42 * H_static^0.30 * F_season^0.16 * F_climate^0.12
-//   H_static  = staticHabitatScore MED hårda veton (NMD-mask: bara skog tillåts, vatten/hygge/
-//               tätort ger 0; kalhygge ger 0) — regn över stad/sjö/hygge blir aldrig grönt
+//   H_static  = staticHabitatScore MED hårda veton, aggregerat per makrocell med 3x3
+//               sub-provtagning + topp-kvartil-medel (se cellHabitat nedan) så en skogsdunge
+//               i ett måttligt makrocell inte kvävs av punkt-sampling (samma princip som
+//               Tier-1-bakens max/p95). Hårda veton gäller PER SUB-PUNKT: vatten/hygge/tätort/
+//               kalhygge ger aldrig grönt — regn över stad/sjö/hygge blir aldrig zon.
 //   F_season  = latitudjusterad säsong (seasonalFactor, ref 59°N)
 //   F_climate = maxLat-gräns (Limes Norrlandicus-lik) + GDD5-kuvert + nattfrost < -2 °C
 //               enligt artens frostTolerance (sensitive -> 0, moderate -> 0.6, hardy -> 1)
+//   static=1  (HABITAT-läge, året-runt biotop): F_season = 1 och F_climate = 1 (ingen
+//               frost/GDD/maxLat), W_rain + H_static + hårda NMD-veton är oförändrade.
 //
 // EN sammanhängande polygon: 3x3 gauss -> biologiskt golv peak >= 0.46 (annars null)
 // -> adaptiv tröskel -> morfologisk stängning (dilate->erode) -> connected components
@@ -68,6 +73,7 @@ export type OptimalZoneProperties = {
   habitatFactor: number;
 };
 export type OptimalZoneResult = {
+  static: boolean; // true = HABITAT-läge (F_season=F_climate=1)
   mode: "single" | "multi";
   displayRainWindowDays: number;
   optimalZone: {
@@ -77,6 +83,7 @@ export type OptimalZoneResult = {
   } | null;
   meta: Record<string, unknown>;
 };
+export type OptimalZoneOptions = { static?: boolean };
 
 // ---------- per-art regnsignaler på stationsnivå ----------
 function rainSignalsForSpecies(
@@ -124,6 +131,55 @@ function rainSignalsForSpecies(
   return pts;
 }
 
+// ---------- H_static per makrocell: 3x3 sub-provtagning + topp-kvartil ----------
+// Makrocellerna (256x320 över Sverige, ~3x5 km celler) är mycket större än 10-25 m
+// rasterpixlarna, så ett
+// enda punktprov kan missa skogen (cellmitt på en sjö -> H=0 trots skog runtom) eller underskatta
+// ett måttligt cell (på Mac gav detta habitatFactor ~0.10 i makroceller, 0.10^0.30 ~ 0.50, vilket
+// drog ner säsongsarter precis under golvet 0.46). Vi provtar därför 3x3 sub-punkter i cellen.
+// Hårda veton gäller PER SUB-PUNKT: utanför NMD-skog (vatten/hygge/tätort) eller i kalhygge
+// räknas sub-punkten inte alls — en helt veto-täckt cell får H=0 (regn över stad/sjö/hygge blir
+// aldrig grönt). Aggregering = medel av topp-kvartilen av tillåtna positiva värden.
+// Snabbväg: cellmitten tillåten och H >= FAST_H -> använd mitsvärdet direkt (1 anrop).
+const SUB_OFFS = [0.2, 0.5, 0.8];
+const FAST_H = 0.55;
+
+const lonAt = (px: number, fx: number) =>
+  RAIN_BOUNDS.minLon + (px + fx) * (RAIN_BOUNDS.maxLon - RAIN_BOUNDS.minLon) / W;
+const latAt = (py: number, fy: number) =>
+  RAIN_BOUNDS.maxLat - (py + fy) * (RAIN_BOUNDS.maxLat - RAIN_BOUNDS.minLat) / H;
+
+function cellHabitat(store: LayerStore, spKey: string, px: number, py: number): number {
+  const mask = store.mask;
+  const clearcuts = store.vectors.get("avverkningar");
+  const evalAt = (fx: number, fy: number): number | null => {
+    const lon = lonAt(px, fx);
+    const lat = latAt(py, fy);
+    const [e, n] = toSWEREF(lon, lat);
+    if (mask && !(mask.has(e, n) && mask.allows(e, n))) return null; // hårt veto: ej NMD-skog
+    if (clearcuts && clearcuts.contains(e, n)) return null; // hårt veto: kalhygge
+    const h = staticHabitatScore(store, spKey, lon, lat, {
+      forestOk: true, inClearcut: false, excluded: false, roadFactor: 1, forestEdge: false,
+    });
+    return h > 0 ? h : null; // hårda habitat-gates (värd/höjd/…) -> inget habitat här
+  };
+  const center = evalAt(0.5, 0.5);
+  if (center !== null && center >= FAST_H) return center;
+  const vals: number[] = [];
+  for (const fx of SUB_OFFS) {
+    for (const fy of SUB_OFFS) {
+      const v = evalAt(fx, fy);
+      if (v !== null) vals.push(v);
+    }
+  }
+  if (vals.length === 0) return 0;
+  vals.sort((a, b) => b - a);
+  const top = Math.max(1, Math.round(vals.length * 0.25)); // topp-kvartil
+  let s = 0;
+  for (let i = 0; i < top; i++) s += vals[i];
+  return s / top;
+}
+
 // ---------- S_opt-rutnät per art ----------
 async function speciesGrid(
   store: LayerStore,
@@ -131,66 +187,60 @@ async function speciesGrid(
   latest: string,
   spKey: string,
   asOf: Date,
-): Promise<{ grid: Float32Array; rainGrid: Float32Array; peak: number }> {
+  staticOnly = false,
+): Promise<{
+  grid: Float32Array;
+  rainGrid: Float32Array;
+  hGrid: Float32Array;
+  seasonGrid: Float32Array;
+  peak: number;
+}> {
   const sp = SPECIES[spKey];
-  const win = sp.rainWindowDays ?? 28;
-  const dayKeys = Object.keys(rolling.days).sort();
-  const actualDays = Math.min(win, dayKeys.length);
-  const start = addDays(latest, -(actualDays - 1));
-  const totPts = accumulateWindow(rolling, start, latest);
-  const totGrid = interpPointsToGrid(totPts); // ackumulerat mm (för properties)
   const rainGrid = interpPointsToGrid(rainSignalsForSpecies(rolling, sp, latest)); // W_rain 0..1.3
 
-  const [minE, maxN] = toSWEREF(RAIN_BOUNDS.minLon, RAIN_BOUNDS.maxLat);
-  const [maxE, minN] = toSWEREF(RAIN_BOUNDS.maxLon, RAIN_BOUNDS.minLat);
-  const sx = (maxE - minE) / W;
-  const sy = (maxN - minN) / H;
   const grid = new Float32Array(W * H);
-  const mask = store.mask;
-  const clearcuts = store.vectors.get("avverkningar");
+  const hGrid = new Float32Array(W * H);
+  const seasonGrid = new Float32Array(W * H);
   const gddL = store.rasters.get("gdd5");
-  // nattfrost per rad (0.5°-grid, cachad i rain-history)
+  // nattfrost per rad (0.5°-grid, cachad i rain-history); hoppas över helt i static-läge
   const frostByRow = new Map<number, number>();
   for (let py = 0; py < H; py++) {
-    const lat = RAIN_BOUNDS.maxLat - (py + 0.5) * (RAIN_BOUNDS.maxLat - RAIN_BOUNDS.minLat) / H;
-    const key = Math.round(lat * 2) / 2;
-    if (!frostByRow.has(key)) {
-      const t = await minTempLast48hAt(key, (RAIN_BOUNDS.minLon + RAIN_BOUNDS.maxLon) / 2, asOf);
-      let f = 1;
-      if (t !== null && t < -2) {
-        f = sp.frostTolerance === "sensitive" ? 0 : sp.frostTolerance === "moderate" ? 0.6 : 1;
+    const lat = latAt(py, 0.5);
+    const seasonF = staticOnly ? 1 : clamp01(seasonalFactor(sp, lat, asOf));
+    let frostF = 1;
+    if (!staticOnly) {
+      const key = Math.round(lat * 2) / 2;
+      if (!frostByRow.has(key)) {
+        const t = await minTempLast48hAt(key, (RAIN_BOUNDS.minLon + RAIN_BOUNDS.maxLon) / 2, asOf);
+        frostF = t !== null && t < -2
+          ? sp.frostTolerance === "sensitive" ? 0 : sp.frostTolerance === "moderate" ? 0.6 : 1
+          : 1;
+        frostByRow.set(key, frostF);
+      } else {
+        frostF = frostByRow.get(key)!;
       }
-      frostByRow.set(key, f);
     }
-    const frostF = frostByRow.get(key)!;
-    const seasonF = clamp01(seasonalFactor(sp, lat, asOf));
     for (let px = 0; px < W; px++) {
       const k = py * W + px;
-      const lon = RAIN_BOUNDS.minLon + (px + 0.5) * (RAIN_BOUNDS.minLon - RAIN_BOUNDS.minLon + (RAIN_BOUNDS.maxLon - RAIN_BOUNDS.minLon)) / W;
-      const [e, n] = toSWEREF(lon, lat);
-      // hårda veton: utanför NMD-skog (vatten/hygge/tätort) eller i kalhygge -> H = 0
-      const inForest = mask ? mask.has(e, n) && mask.allows(e, n) : true;
-      const inClearcut = clearcuts ? clearcuts.contains(e, n) : false;
-      let H = 0;
-      if (inForest && !inClearcut) {
-        H = staticHabitatScore(store, spKey, lon, lat, {
-          forestOk: true, inClearcut: false, excluded: false, roadFactor: 1, forestEdge: false,
-        });
-      }
-      // klimat: maxLat + GDD5-kuvert
-      let Fclim = frostF;
-      if (sp.maxLat !== undefined && lat > sp.maxLat) Fclim = 0;
-      if (Fclim > 0 && gddL && sp.gddEnvelope) {
+      // H_static med hårda veton + topp-kvartil-aggregering (se cellHabitat)
+      const H = cellHabitat(store, spKey, px, py);
+      // klimat: maxLat + GDD5-kuvert; i static-läge är F_climate alltid 1
+      let Fclim = staticOnly ? 1 : frostF;
+      if (!staticOnly && sp.maxLat !== undefined && lat > sp.maxLat) Fclim = 0;
+      if (!staticOnly && Fclim > 0 && gddL && sp.gddEnvelope) {
+        const lon = lonAt(px, 0.5);
         const g = effectiveGdd5(store, lon, lat);
         if (g !== null && (g < sp.gddEnvelope[0] || g > sp.gddEnvelope[1])) Fclim *= 0.6;
       }
       const wr = rainGrid[k];
       grid[k] = Math.pow(Math.max(0, wr), 0.42) * Math.pow(H, 0.3) * Math.pow(seasonF, 0.16) * Math.pow(Fclim, 0.12);
+      hGrid[k] = H;
+      seasonGrid[k] = seasonF;
     }
   }
   let peak = 0;
   for (const v of grid) if (v > peak) peak = v;
-  return { grid, rainGrid, peak };
+  return { grid, rainGrid, hGrid, seasonGrid, peak };
 }
 
 // ---------- morfologi ----------
@@ -307,51 +357,66 @@ function components(mask: Uint8Array, score: Float32Array): { labels: Int32Array
 }
 
 // Moore-neighbor boundary tracing av ytterringen för komponent `label`.
+// dirs är ordnade medurs (skärm-koordinater, y nedåt): W, NW, N, NE, E, SE, S, SW.
+// Start = första komponenten i skannordning (dess västra granne är garanterat bakgrund).
+// Backtrack-pixeln b är ALLTID en bakgrundspixel (senast skannade innan träffen).
+// Stopp: när tillståndet (px,py,bx,by) upprepas (cykel-detektion, omfattar Jacobs
+// kriterium) — garanterad terminering även för tunna 1–2 px strukturer. maxSteps är
+// ett extra nödspärr.
 function traceBoundary(labels: Int32Array, label: number): [number, number][] {
-  // hitta start: översta-vänstra pixel av komponenten
   let start = -1;
   for (let i = 0; i < W * H; i++) if (labels[i] === label) { start = i; break; }
   if (start === -1) return [];
   const at = (x: number, y: number) => (x < 0 || y < 0 || x >= W || y >= H ? -1 : labels[y * W + x]);
-  const isComp = (x: number, y: number) => at(x, y) === label;
-  const sx = start % W;
-  const sy = Math.floor(start / W);
-  const ring: [number, number][] = [];
-  // 8-riktningar, börja "väster" (dx=-1,dy=0)
-  const dirs = [
+  const dirs: [number, number][] = [
     [-1, 0], [-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1],
   ];
-  let x = sx;
-  let y = sy;
-  let d = 0; // sök från riktning väster
-  const maxSteps = W * H * 4;
+  const dirOf = (dx: number, dy: number) => {
+    for (let i = 0; i < 8; i++) if (dirs[i][0] === dx && dirs[i][1] === dy) return i;
+    return 0;
+  };
+  const sx = start % W;
+  const sy = Math.floor(start / W);
+  let bx = sx - 1, by = sy; // backtrack-pixel (bakgrund)
+  let px = sx, py = sy;
+  const ring: [number, number][] = [];
+  const seen = new Set<string>([`${px},${py},${bx},${by}`]);
+  const maxSteps = W * H * 4 + 16;
   let steps = 0;
-  const startState = `${x},${y},${d}`;
   do {
-    ring.push([x, y]);
-    // Moore: börja sökningen från riktningen efter den vi kom ifrån (backtrack + 2)
-    let found = false;
-    for (let i = 0; i < 8; i++) {
-      const nd = (d + 6 + i) % 8; // backtracka två steg från nuvarande riktning
-      const nx = x + dirs[nd][0];
-      const ny = y + dirs[nd][1];
-      if (isComp(nx, ny)) {
-        x = nx;
-        y = ny;
-        d = nd;
-        found = true;
+    ring.push([px, py]);
+    const bd = dirOf(bx - px, by - py);
+    let moved = false;
+    let lastBgX = bx, lastBgY = by;
+    for (let i = 1; i <= 8; i++) {
+      const nd = (bd + i) % 8; // skanna medurs från backtrack + 1
+      const nx = px + dirs[nd][0];
+      const ny = py + dirs[nd][1];
+      if (at(nx, ny) === label) {
+        bx = lastBgX; by = lastBgY; // ny backtrack = senast skannade bakgrundspixel
+        px = nx; py = ny;
+        moved = true;
         break;
       }
+      lastBgX = nx; lastBgY = ny;
     }
-    if (!found) break; // isolerad pixel
+    if (!moved) break; // isolerad pixel
     steps++;
-  } while (steps < maxSteps && `${x},${y},${d}` !== startState);
+    const state = `${px},${py},${bx},${by}`;
+    if (seen.has(state)) break; // sluten slinga
+    seen.add(state);
+  } while (steps < maxSteps);
   return ring;
 }
 
-// Chaikin corner cutting, 2 pass, på slutna ringen (pixlar -> koordinater senare)
+// Chaikin corner cutting, 2 pass, på slutna ringen (pixlar -> koordinater senare).
+// Nöd-decimering om ringen skulle bli extremt lång (nödspärren i traceBoundary triggad).
 function chaikin(ring: [number, number][], passes = 2): [number, number][] {
   let pts = ring;
+  if (pts.length > 8000) {
+    const stride = Math.ceil(pts.length / 8000);
+    pts = pts.filter((_, i) => i % stride === 0);
+  }
   for (let p = 0; p < passes; p++) {
     if (pts.length < 3) break;
     const out: [number, number][] = [];
@@ -380,7 +445,9 @@ export async function computeOptimalZone(
   store: LayerStore,
   speciesIds: string[],
   asOf: Date,
+  opts: OptimalZoneOptions = {},
 ): Promise<OptimalZoneResult> {
+  const staticOnly = opts.static === true;
   const ids = speciesIds.filter((k) => SPECIES[k]);
   if (ids.length === 0) throw new Error("inga giltiga arter");
   const rolling = await getRollingRaw();
@@ -389,15 +456,19 @@ export async function computeOptimalZone(
 
   const grids: Float32Array[] = [];
   const rainGrids: Float32Array[] = [];
+  const hGrids: Float32Array[] = [];
+  const seasonGrids: Float32Array[] = [];
   let maxWin = 0;
   let maxPeak = 0;
   for (const id of ids) {
     const sp = SPECIES[id];
     maxWin = Math.max(maxWin, sp.rainWindowDays ?? 28);
     maxPeak = Math.max(maxPeak, sp.triggerPeakDays ?? 10);
-    const { grid, rainGrid } = await speciesGrid(store, rolling, latest, id, asOf);
+    const { grid, rainGrid, hGrid, seasonGrid } = await speciesGrid(store, rolling, latest, id, asOf, staticOnly);
     grids.push(grid);
     rainGrids.push(rainGrid);
+    hGrids.push(hGrid);
+    seasonGrids.push(seasonGrid);
   }
 
   // single: exakt artens grid; multi: mjuk union + breddning
@@ -420,10 +491,11 @@ export async function computeOptimalZone(
 
   const displayRainWindowDays = ids.length === 1 ? (SPECIES[ids[0]].rainWindowDays ?? 28) : maxWin;
   const base = {
+    static: staticOnly,
     mode: (ids.length === 1 ? "single" : "multi") as "single" | "multi",
     displayRainWindowDays,
     optimalZone: null as OptimalZoneResult["optimalZone"],
-    meta: { peakScore: Number(peak.toFixed(3)), latest, speciesIds: ids } as Record<string, unknown>,
+    meta: { peakScore: Number(peak.toFixed(3)), latest, speciesIds: ids, static: staticOnly } as Record<string, unknown>,
   };
   if (peak < PEAK_FLOOR) {
     base.meta.reason = "peak under biologiskt golv (ingen falsk grön zon)";
@@ -441,21 +513,26 @@ export async function computeOptimalZone(
     return base;
   }
 
-  // statistik över zonen (före kontur)
-  let sumS = 0, sumRain = 0, sumTot = 0, cnt = 0;
+  // statistik över zonen (före kontur); vid multi medelvärde över alla arters grid
+  let sumS = 0, sumRain = 0, sumTot = 0, sumH = 0, sumSeason = 0, cnt = 0;
+  const nG = rainGrids.length;
   const totPts = accumulateWindow(rolling, addDays(latest, -(displayRainWindowDays - 1)), latest);
   const totGrid = interpPointsToGrid(totPts);
-  const rainMean = rainGrids.length === 1 ? rainGrids[0] : rainGrids[0]; // rapporterar första artens regn vid multi
   for (let k = 0; k < W * H; k++) {
     if (labels[k] !== best) continue;
     sumS += smooth[k];
-    sumRain += rainMean[k] ?? 0;
     sumTot += totGrid[k] ?? 0;
+    for (let g = 0; g < nG; g++) {
+      sumRain += rainGrids[g][k] ?? 0;
+      sumH += hGrids[g][k];
+      sumSeason += seasonGrids[g][k];
+    }
     cnt++;
   }
-  // säsong/habitat-medel över zonen (approximation: medel av artens grid-värden är svårt att
-  // separera här — rapportera peak/mean av S och medel av W_rain)
   const meanS = cnt > 0 ? sumS / cnt : 0;
+  const meanRain = cnt > 0 ? sumRain / (cnt * nG) : 0;
+  const meanH = cnt > 0 ? sumH / (cnt * nG) : 0;
+  const meanSeason = cnt > 0 ? sumSeason / (cnt * nG) : 0;
 
   const ringPx = traceBoundary(labels, best);
   if (ringPx.length < 3) {
@@ -480,8 +557,8 @@ export async function computeOptimalZone(
       effectiveRainMm: Number((cnt > 0 ? sumRain / cnt : 0).toFixed(2)),
       peakScore: Number(peak.toFixed(3)),
       meanScore: Number(meanS.toFixed(3)),
-      seasonFactor: Number(clamp01(seasonalFactor(SPECIES[ids[0]], 59, asOf)).toFixed(2)),
-      habitatFactor: Number(Math.pow(meanS, 1 / 0.3).toFixed(2)), // approx
+      seasonFactor: Number(meanSeason.toFixed(2)), // 1.00 i static-läge
+      habitatFactor: Number(meanH.toFixed(2)), // verkligt H_static-medel över zonen
     },
     geometry: { type: "Polygon", coordinates: [coords] },
   };

@@ -1876,14 +1876,16 @@ app.get("/api/v1/fungi/optimal-zone", async (req, res) => {
   const open = keys.filter((k) => !locked.includes(k));
   if (open.length === 0 && locked.length > 0) return lockedResponse(res, locked);
   const asOf = parseAsOf(String(req.query.date ?? ""));
-  const cacheKey = `${open.sort().join(",")}|${asOf.toISOString().slice(0, 10)}`;
+  // static=1 = HABITAT-läge (året-runt biotop): F_season=F_climate=1, W_rain+H_static kvar
+  const staticOnly = req.query.static === "1";
+  const cacheKey = `${open.sort().join(",")}|${asOf.toISOString().slice(0, 10)}|static=${staticOnly ? "1" : "0"}`;
   const c = zoneCache.get(cacheKey);
   if (c && Date.now() - c.at < 15 * 60 * 1000) {
     return res.json({ ...(c.value as object), cached: true, skipped: locked });
   }
   try {
     const store = await getLayerStore();
-    const result = await computeOptimalZone(store, open, asOf);
+    const result = await computeOptimalZone(store, open, asOf, { static: staticOnly });
     zoneCache.set(cacheKey, { at: Date.now(), value: result });
     res.json({ ...result, skipped: locked, asOf: asOf.toISOString().slice(0, 10) });
   } catch (e) {
