@@ -36,6 +36,16 @@ export type SpeciesProfile = {
   pack?: string;
   // Ackumulerat regnfönster (dagar) som artens Live-regnfaktor baseras på (default 28).
   rainWindowDays?: 14 | 21 | 28 | 42;
+  // Optimalzon-parametrar (src/optimal-zone.ts): trigger = gaussisk vikt kring fördröjningen
+  // till fruktkroppsbildning (dagar bakåt); baseWeight = andel djupfukt vs trigger;
+  // sweetSpotMm = ackumulerad mm i fönstret vid optimal fukt; maxLat = hård nordgräns;
+  // frostTolerance: sensitive/moderate/hardy (nattfrost < -2 °C).
+  triggerPeakDays?: number;
+  triggerSpreadDays?: number;
+  baseWeight?: number;
+  sweetSpotMm?: number;
+  maxLat?: number;
+  frostTolerance?: "sensitive" | "moderate" | "hardy";
 };
 
 export const SPECIES: Record<string, SpeciesProfile> = {
@@ -1351,6 +1361,32 @@ const RAIN_WINDOW_BY_SPECIES: Record<string, 14 | 21 | 28 | 42> = {
 };
 for (const [k, s] of Object.entries(SPECIES)) {
   s.rainWindowDays = RAIN_WINDOW_BY_SPECIES[k] ?? 28;
+}
+
+// Gruppdefaults för optimalzonen, efter artens regnfönster (biologiskt: snabba nedbrytare
+// fruktar snabbt efter regn, långsamma mycel behöver längre lag). Artspecifika overrides nedan.
+const OPTZONE_BY_WINDOW: Record<number, { triggerPeakDays: number; triggerSpreadDays: number; sweetSpotMm: number }> = {
+  14: { triggerPeakDays: 6, triggerSpreadDays: 2.5, sweetSpotMm: 50 },
+  21: { triggerPeakDays: 10, triggerSpreadDays: 3.5, sweetSpotMm: 75 },
+  28: { triggerPeakDays: 14, triggerSpreadDays: 4.0, sweetSpotMm: 100 },
+  42: { triggerPeakDays: 17, triggerSpreadDays: 5.0, sweetSpotMm: 150 },
+};
+// Artspecifika overrides (t.ex. karljohan/trattkantarell behöver längre lag än kantarell)
+const OPTZONE_OVERRIDES: Record<string, Partial<Pick<SpeciesProfile, "triggerPeakDays" | "triggerSpreadDays" | "baseWeight" | "sweetSpotMm" | "maxLat" | "frostTolerance">>> = {
+  karljohan: { triggerPeakDays: 17, triggerSpreadDays: 4.5 },
+  "svart-trumpetsvamp": { triggerPeakDays: 12, triggerSpreadDays: 4 },
+  kantarell: { triggerPeakDays: 13, triggerSpreadDays: 4 },
+  "vinterskivling": { frostTolerance: "hardy" },
+};
+for (const [k, s] of Object.entries(SPECIES)) {
+  const g = OPTZONE_BY_WINDOW[s.rainWindowDays ?? 28];
+  s.triggerPeakDays = OPTZONE_OVERRIDES[k]?.triggerPeakDays ?? g.triggerPeakDays;
+  s.triggerSpreadDays = OPTZONE_OVERRIDES[k]?.triggerSpreadDays ?? g.triggerSpreadDays;
+  s.sweetSpotMm = OPTZONE_OVERRIDES[k]?.sweetSpotMm ?? g.sweetSpotMm;
+  s.baseWeight = OPTZONE_OVERRIDES[k]?.baseWeight ?? 0.55;
+  s.maxLat = OPTZONE_OVERRIDES[k]?.maxLat;
+  s.frostTolerance =
+    OPTZONE_OVERRIDES[k]?.frostTolerance ?? (s.frostSensitive ? "sensitive" : "moderate");
 }
 
 // Live-regnfaktor för en art på en punkt — från det förinterpolerade regn-rutnätet

@@ -350,7 +350,7 @@ function labelFor(startDay: string, endDay: string, suffix = ""): string {
 
 // Ackumulerad summa per station över [start..end]; stationen krävs ha minst MIN_PRESENCE
 // av dygn i fönstret, annars skippas den för just den framen.
-function accumulate(rolling: RollingFile, start: string, end: string): { e: number; n: number; v: number }[] {
+export function accumulateWindow(rolling: RollingFile, start: string, end: string): { e: number; n: number; v: number }[] {
   const pts: { e: number; n: number; v: number }[] = [];
   const dayKeys = Object.keys(rolling.days).filter((d) => d >= start && d <= end).sort();
   if (dayKeys.length === 0) return pts;
@@ -369,6 +369,57 @@ function accumulate(rolling: RollingFile, start: string, end: string): { e: numb
     pts.push({ e, n, v: sum });
   }
   return pts;
+}
+
+// Exponera rå rolling-fil + ackumulering + grid-interpolation för optimal-zone.ts
+export async function getRollingRaw(): Promise<RollingFile> {
+  return getRolling();
+}
+const accumulate = accumulateWindow;
+export { accumulate };
+export function interpPointsToGrid(pts: { e: number; n: number; v: number }[]): Float32Array {
+  return interpField(pts);
+}
+export const RAIN_GRID_W = W;
+export const RAIN_GRID_H = H;
+
+// Dygns-min temperatur senaste 48 h (Metobs parameter 1, timvärden) på 0.5°-grid, 6h-cache.
+const TEMP_PARAM = "1";
+const minTempCache = new Map<string, { at: number; min48: number | null }>();
+export async function minTempLast48hAt(lat: number, lon: number, asOf: Date): Promise<number | null> {
+  const key = `${lat.toFixed(1)},${lon.toFixed(1)},${asOf.toISOString().slice(0, 10)}`;
+  const c = minTempCache.get(key);
+  if (c && Date.now() - c.at < 6 * 3600 * 1000) return c.min48;
+  try {
+    const stations = (await fetchJson(`${METOBS}/parameter/${TEMP_PARAM}.json`, 40000)) as {
+      station?: { key: unknown; summary?: string; active?: boolean }[];
+    };
+    const all: { id: string; lat: number; lon: number }[] = [];
+    for (const s of stations.station ?? []) {
+      const m = /Latitud:\s*(-?[\d.]+)\s+Longitud:\s*(-?[\d.]+)/.exec(s.summary ?? "");
+      if (m && s.active !== false) all.push({ id: String(s.key), lat: Number(m[1]), lon: Number(m[2]) });
+    }
+    const cosLat = Math.cos((lat * Math.PI) / 180);
+    all.sort((a, b) => (a.lat - lat) ** 2 + ((a.lon - lon) * cosLat) ** 2 - ((b.lat - lat) ** 2 + ((b.lon - lon) * cosLat) ** 2));
+    const st = all[0];
+    if (!st) return null;
+    const j = (await fetchJson(`${METOBS}/parameter/${TEMP_PARAM}/station/${st.id}/period/latest-months/data.json`)) as {
+      value?: { to?: number; value?: string }[];
+    };
+    const cutoff = asOf.getTime() - 48 * 3600 * 1000;
+    let min = Infinity;
+    for (const v of j.value ?? []) {
+      if (v.to !== undefined && v.to >= cutoff && v.to <= asOf.getTime()) {
+        const t = Number(v.value);
+        if (Number.isFinite(t) && t < min) min = t;
+      }
+    }
+    const min48 = min === Infinity ? null : min;
+    minTempCache.set(key, { at: Date.now(), min48 });
+    return min48;
+  } catch {
+    return null;
+  }
 }
 
 async function buildManifest(requestedDays: number): Promise<Manifest> {

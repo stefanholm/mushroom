@@ -12,6 +12,7 @@ import { normalizeCode, checksumOk, loadCodes, saveCodes, appendLog, grantLabel,
 import { reportSignal, leaderboard, myScore, nearbyFinds, allFinds, haversineKm, aliasFor, deleteDeviceData } from "./signals.js";
 import { getCloudManifest, getCloudFrame } from "./clouds.js";
 import { getRainManifest, getRainFrame, sampleRainForLive, rainGridsAvailable, warmRainGrids } from "./rain-history.js";
+import { computeOptimalZone } from "./optimal-zone.js";
 
 // Entitlements skickas som ?entitlements=pro,blandad-korg-6,reward:bjorksopp (csv).
 // I produktion ska detta INTE litas på från klienten — validera App Store-kvittot server-side
@@ -1862,6 +1863,33 @@ async function overviewHandler(req: express.Request, res: express.Response) {
 }
 app.get("/api/v1/fungi/overview", overviewHandler);
 app.get("/api/overview", overviewHandler);
+
+// ---------- Optimal zon (gröna zonen) — en sammanhängande polygon, se src/optimal-zone.ts ----------
+const zoneCache = new Map<string, { at: number; value: unknown }>();
+app.get("/api/v1/fungi/optimal-zone", async (req, res) => {
+  const keys = String(req.query.species ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((k) => SPECIES[k]);
+  if (keys.length === 0) return res.status(400).json({ error: "Expected species=id1,id2,..." });
+  const locked = gateSpecies(req, keys);
+  const open = keys.filter((k) => !locked.includes(k));
+  if (open.length === 0 && locked.length > 0) return lockedResponse(res, locked);
+  const asOf = parseAsOf(String(req.query.date ?? ""));
+  const cacheKey = `${open.sort().join(",")}|${asOf.toISOString().slice(0, 10)}`;
+  const c = zoneCache.get(cacheKey);
+  if (c && Date.now() - c.at < 15 * 60 * 1000) {
+    return res.json({ ...(c.value as object), cached: true, skipped: locked });
+  }
+  try {
+    const store = await getLayerStore();
+    const result = await computeOptimalZone(store, open, asOf);
+    zoneCache.set(cacheKey, { at: Date.now(), value: result });
+    res.json({ ...result, skipped: locked, asOf: asOf.toISOString().slice(0, 10) });
+  } catch (e) {
+    res.status(500).json({ error: "optimal-zone kunde inte beräknas", detail: (e as Error).message });
+  }
+});
 
 // ---------- Live molnprognos (SMHI SNOW1gv1, bakade PNG-frames; se src/clouds.ts) ----------
 // Manifest cachas 30 min server-side; frames är immutable (id innehåller referenceTime-hash).
