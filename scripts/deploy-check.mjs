@@ -24,6 +24,27 @@ async function get(path, opts = {}) {
   return { status: r.status, body, headers: r.headers, text };
 }
 
+// --- lokal config-kontroll först: fånga placeholders innan deploy/wrangler gör det ---
+{
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const tomlPath = path.join(root, "worker", "wrangler.toml");
+  if (fs.existsSync(tomlPath)) {
+    const toml = fs.readFileSync(tomlPath, "utf8");
+    const dbId = /database_id\s*=\s*"([^"]+)"/.exec(toml)?.[1] ?? "";
+    const bucket = /bucket_name\s*=\s*"([^"]+)"/.exec(toml)?.[1] ?? "";
+    if (!dbId || dbId.includes("FYLL") || !/^[0-9a-f-]{36}$/.test(dbId)) {
+      report("FAIL", "wrangler.toml database_id", `saknas/placeholder: "${dbId || "(tom)"}" — deploy ger [code: 10021]; sätt riktigt ID från Cloudflare-dash`);
+    } else report("PASS", "wrangler.toml database_id", dbId);
+    if (!bucket || bucket.includes("svampradar-tiles")) report("FAIL", "wrangler.toml bucket_name", `"${bucket}" — ska vara natureradar-data`);
+    else report("PASS", "wrangler.toml bucket_name", bucket);
+  } else {
+    report("WARN", "wrangler.toml", "hittades inte (körs utanför repot?)");
+  }
+}
+
 console.log(`deploy-check mot ${BASE} (art=${SPECIES})\n`);
 
 let r = await get("/manifest.json").catch((e) => ({ status: 0, body: null, error: e }));

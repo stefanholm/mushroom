@@ -11,7 +11,8 @@ inklistrat block — din zsh kör då `#` som argument (sett: `pathspec ':(prefi
 raden faller. Skriv kommentarer på egna rader utan `#`, eller ännu hellre: inga kommentarer alls.
 
 **Binding-namn:** repots `worker/wrangler.toml` binder R2 som `TILES` och kod läser `env.TILES` —
-Gemini-varianten hade `DATA`. Efter pull + `wrangler deploy` matchar det igen.
+Gemini-varianten hade `DATA`. Efter pull + `npx wrangler deploy    # config-kontroll innan: node scripts/deploy-check.mjs kollar wrangler.toml
+#   (database_id maste vara riktigt — annars faller deploy med [code: 10021] och gammal worker ligger kvar)` matchar det igen.
 Du har lokala ändringar i `worker/src/index.ts` + `scripts/bake-malardalen-r2.mjs` (Gemini-varianten,
 med `.bak_20261127_*`-backups). Repot har nu hela kontraktet (bootstrap med shop/unlocked/rainSpans,
 overview med tier-nycklar 55km/18km/6km + goldPeaks, zones från R2, edge-/api/meta). Spara undan:
@@ -35,14 +36,19 @@ npm run bake-overview -- --all-species                     # data/overview/*.jso
 npm run bake-blocks -- --species <arter> --out data/r2/hotspots [--bbox ...]   # 10x10 km-block
 npx tsx scripts/bake-zones.mts --species <arter> --both --out data/r2/zones   # optimalzoner (VIKTIGT)
 npm run bake-tiles -- --species <arter> --bbox ... --zmin 5 --zmax 10         # data/tile-cache/<rev>/
-# root-filer från origin (Node igång lokalt):
-#   /api/v1/manifest -> data/r2/manifest.json ; /api/v1/catalog -> catalog.json ; /api/shop -> shop.json
+# root-filer (manifest/catalog/shop) — utan Node igång, direkt från koden:
+npm run bake-root                          # skriver data/r2/{manifest,catalog,shop}.json (tileRev fran src/server.ts)
+# (alternativt med Node igång: /api/v1/manifest, /api/v1/catalog, /api/shop)
+# Obs: ingen meta.json behövs — Workerns edge-/api/meta byggs från catalog.json.
+# Moln/regn-frames (frames/clouds, frames/rain) bakas av Workerns cron inom 6 h efter deploy;
+#   finns de inte: vanta pa cron eller baka fran origin.
 ```
 **Zoner (`zones/*.json`) måste alltid bakas och synkas** — Workern kan inte räkna optimalzon utan rasters;
 saknas filen blir `optimalZone: null` i appen (loggat `hasZone=false peak=-1`).
 
 ## 2. Synka till R2 (avgränsade delar — många små filer)
 ```bash
+node scripts/sync-r2.mjs --rev r15 --only root,zones,hotspots   # root fran bake-root + zoner/block
 node scripts/sync-r2.mjs --rev r15                      # per delmapp, --transfers 16 --checkers 16
 # eller färdigpaketerat träd (t.ex. /Volumes/HD2021/SvampradarData/r2_ready med domains/...):
 node scripts/sync-r2.mjs --src /Volumes/HD2021/SvampradarData/r2_ready

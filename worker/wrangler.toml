@@ -10,10 +10,11 @@ binding = "TILES"
 bucket_name = "natureradar-data"
 
 # D1: svampradar-db (init: wrangler d1 execute svampradar-db --file=schema.sql)
+# database_id från 2026-11-27 (Cloudflare-dash; deploy failar med [code: 10021] om denna saknas)
 [[d1_databases]]
 binding = "DB"
 database_name = "svampradar-db"
-database_id = "FYLL-I-FRAN-DASHEN"
+database_id = "d588ad45-81e5-4d59-8d77-4914142ca7e1"
 
 # SMHI-cron: baka moln/regn-frames till R2 (kan behöva Workers Paid om >10 ms CPU)
 [triggers]
