@@ -1,0 +1,18 @@
+# Cloudflare Worker framför Svampradar — serverar stora statiska PNG från R2
+# (immutable, 0 kr egress) och proxar resten (/api/*, webb-UI) till Node-originen.
+#
+# Deploy: se worker/README.md
+name = "svampradar"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+# R2-bucket med bakade tiles/ikoner (skapas i Cloudflare-dashen eller:
+#   wrangler r2 bucket create svampradar-tiles)
+[[r2_buckets]]
+binding = "TILES"
+bucket_name = "svampradar-tiles"
+
+[vars]
+# Node-originen (t.ex. https://origin.svampradar.se eller tunnel). Även /api/* går hit —
+# bara stora statiska PNG:er betjänas direkt från R2.
+ORIGIN_URL = "https://origin.example.com"

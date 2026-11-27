@@ -1770,6 +1770,8 @@ async function macroHotspotsResponse(
 }
 
 async function overviewHandler(req: express.Request, res: express.Response) {
+  // Rate limit även på GET: motverkar scraping av hela landet (se docs/IP-PROTECTION.md)
+  if (heavyRateLimited(req, 60)) return res.status(429).json({ error: "För många frågor — vänta en stund." });
   const keys = String(req.query.species ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -1888,6 +1890,7 @@ async function zoneComputeBackground(cacheKey: string, open: string[], asOf: Dat
   }
 }
 app.get("/api/v1/fungi/optimal-zone", async (req, res) => {
+  if (heavyRateLimited(req, 30)) return res.status(429).json({ error: "För många frågor — vänta en stund." });
   const keys = String(req.query.species ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -1923,15 +1926,55 @@ app.get("/api/v1/fungi/optimal-zone", async (req, res) => {
 app.get("/api/v1/bootstrap", bootstrapHandler);
 app.get("/api/bootstrap", bootstrapHandler);
 async function bootstrapHandler(req: express.Request, res: express.Response) {
+  if (heavyRateLimited(req, 60)) return res.status(429).json({ error: "För många frågor — vänta en stund." });
   try {
-    const [meta, clouds, r14, r21, r28, r42] = await Promise.all([
-      buildMetaPayload(req, String(req.query.species ?? "kantarell"), { fast: true }).catch(() => null),
+    const firstSpecies = String(req.query.species ?? "kantarell").split(",")[0].trim() || "kantarell";
+    const [meta, clouds, r14, r21, r28, r42, ovProfile] = await Promise.all([
+      buildMetaPayload(req, SPECIES[firstSpecies] ? firstSpecies : "kantarell", { fast: true }).catch(() => null),
       getCloudManifest().catch(() => null),
       getRainManifest(14).catch(() => null),
       getRainManifest(21).catch(() => null),
       getRainManifest(28).catch(() => null),
       getRainManifest(42).catch(() => null),
+      readPyramidProfile().catch(() => null),
     ]);
+    // Per-art-buntar: ?species=a,b,c (max 6) ger ALLT klienten behöver per vald art i samma
+    // svar — profil, topp-overviewceller, pyramid-profil och optimalzon (via samma SWR-cache
+    // som /api/v1/fungi/optimal-zone). Telefonen ska inte behöva flera anrop eller räkna själv.
+    const want = String(req.query.species ?? "")
+      .split(",").map((s) => s.trim()).filter((k) => SPECIES[k]).slice(0, 6);
+    const lockedF = gateSpecies(req, want);
+    const openF = want.filter((k) => !lockedF.includes(k));
+    const asOfB = parseAsOf(String(req.query.date ?? ""));
+    const staticB = req.query.static === "1";
+    const fungi: Record<string, unknown> = {};
+    for (const id of openF) {
+      const sp = SPECIES[id];
+      const ov = await readOverviewFile(id).catch(() => null);
+      const cells = (ov?.cells ?? [])
+        .slice().sort((a, b) => b.max - a.max).slice(0, 120)
+        .map((c) => ({ lon: c.lon, lat: c.lat, score: Math.round(c.max), e: Math.round(c.e), n: Math.round(c.n) }));
+      const cacheKey = `${id}|${asOfB.toISOString().slice(0, 10)}|static=${staticB ? "1" : "0"}`;
+      const zc = zoneCache.get(cacheKey);
+      let zone: unknown = null;
+      let zonePending = false;
+      if (zc) zone = zc.value;
+      else {
+        zonePending = true;
+        void zoneComputeBackground(cacheKey, [id], asOfB, staticB); // nästa anrop får zonen direkt
+      }
+      fungi[id] = {
+        label: sp.label,
+        season: [sp.seasonStart, sp.seasonEnd],
+        rainWindowDays: sp.rainWindowDays ?? 28,
+        pack: sp.pack ?? null,
+        protected: !!sp.protected,
+        profile: ovProfile?.profiles?.[id] ?? null,
+        overviewCells: cells,
+        zone,
+        zonePending,
+      };
+    }
     res.json({
       api: "v1",
       serverTime: new Date().toISOString(),
@@ -1942,6 +1985,8 @@ async function bootstrapHandler(req: express.Request, res: express.Response) {
       leaderboard: { days: 5, leaderboard: leaderboard(5, 10) },
       clouds,
       rainHistory: { "14": r14, "21": r21, "28": r28, "42": r42 },
+      fungi: want.length > 0 ? fungi : undefined,
+      skippedSpecies: lockedF.length > 0 ? lockedF : undefined,
     });
   } catch (e) {
     res.status(500).json({ error: "bootstrap misslyckades", detail: (e as Error).message });
@@ -1989,6 +2034,7 @@ app.get("/api/v1/weather/rain-history/frame/:id.png", async (req, res) => {
 });
 
 app.get("/api/hotspots", async (req, res) => {
+  if (heavyRateLimited(req, 120)) return res.status(429).json({ error: "För många frågor — vänta en stund." });
   const keys = String(req.query.species ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -2463,17 +2509,23 @@ async function buildMetaPayload(req: express.Request, key: string, opts: { fast?
     frost,
     coolNights7d: coolNights,
     flush,
-    hostFallback: hostFallback(store),
     asOf: asOf.toISOString().slice(0, 10),
-    layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
-    layersTooBig: [...store.rasters.values()].filter((r) => r.tooBig).map((r) => r.id),
-    tileVersion: path.basename(TILES_DIR),
-    forestAreas: f && f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
     forestKnown: store.mask !== null || (f !== null && f.status === "fulfilled" && f.value !== null),
     maskUsed: store.mask !== null,
-    excludedAreas: x && x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
-    forestCount: f && f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
-    exclCount: x && x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
+    // Diagnostik som avslöjar interna lager/datamodell skickas BARA lokalt (DEBUG_API=1) —
+    // i prod får klienten inte veta vilka rasters/vikter som används (docs/IP-PROTECTION.md).
+    ...(process.env.DEBUG_API === "1"
+      ? {
+          hostFallback: hostFallback(store),
+          layersLoaded: [...store.rasters.keys(), ...store.vectors.keys()],
+          layersTooBig: [...store.rasters.values()].filter((r) => r.tooBig).map((r) => r.id),
+          tileVersion: path.basename(TILES_DIR),
+          forestAreas: f && f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
+          excludedAreas: x && x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
+          forestCount: f && f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
+          exclCount: x && x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
+        }
+      : {}),
   };
 }
 
@@ -2642,6 +2694,7 @@ async function renderHabitatTile(
 }
 
 app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
+  if (heavyRateLimited(req, 900)) return res.status(429).send("Too many tile requests");
   const key = req.params.species;
   if (!SPECIES[key]) return res.status(404).json({ error: "Okänd art." });
   const lockedT = gateSpecies(req, [key]);
@@ -2664,6 +2717,7 @@ app.get("/api/tiles/habitat/:species/:z/:x/:y.png", async (req, res) => {
 
 // Multi-species composite tile: per-pixel MAX score across the checked species.
 app.get("/api/tiles/multi/:z/:x/:y.png", async (req, res) => {
+  if (heavyRateLimited(req, 900)) return res.status(429).send("Too many tile requests");
   const keys = String(req.query.species ?? "kantarell")
     .split(",")
     .map((s) => s.trim())
@@ -2927,6 +2981,7 @@ app.get("/api/debug/cell", async (req, res) => {
 });
 
 app.get("/api/tiles/hillshade/:z/:x/:y.png", async (req, res) => {
+  if (heavyRateLimited(req, 900)) return res.status(429).send("Too many tile requests");
   const z = Number(req.params.z);
   const x = Number(req.params.x);
   const y = Number(req.params.y);

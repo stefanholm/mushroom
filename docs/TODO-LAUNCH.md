@@ -2,6 +2,26 @@
 
 Datum: 2026-11-22. Branched `vibe/mistral-chat-df5813` (PR #1, draft).
 
+## 0b. NÄSTA UX-VINSTER — SPÅRADE (glöm ej) ✅ kom ihåg dessa
+
+- [ ] **Cloudflare Worker + R2 framför** — tiles/ikoner servas immutable direkt från R2 nära
+      användaren → snabb cold-start globalt, 0 kr egress; bara Workern blir publik (Node-originen
+      exponeras aldrig — IP-skydd, se `docs/IP-PROTECTION.md`). **Skelett klart:** `worker/`
+      (wrangler.toml + src/index.ts + README.md med deploy-steg och rclone-kommandon).
+      Deploy enligt `worker/README.md`; design i `docs/CLOUDFLARE-DEPLOY.md`.
+- [ ] **App Store Server API-kvitto** (`POST /api/verify-receipt` i Workern, JWS ES256 med `.p8`
+      som Worker-secret → entitlements i D1; ANS v2-webhook för förnyelser) → `shop`/`unlocked`
+      blir auktoritativa direkt vid app-start utan extra rundor; stäng av dev-lägets
+      `?ents=`-trust i prod. Se `docs/PROD-READINESS.md` + `docs/CLOUDFLARE-DEPLOY.md` §2/§7.
+- [ ] **Per-art-bundlar så telefonen inte ska "tänka"** — KLART i backend:
+      `GET /api/v1/bootstrap?species=a,b,c&ents=...` ger nu även `fungi: { <art>: { label, season,
+      rainWindowDays, pack, profile, overviewCells (topp-120), zone (SWR-cachat optimalzon),
+      zonePending } }` + `skippedSpecies`. iOS behöver alltså bara bootstrap + tiles + frames.
+      Nästa steg (valfritt): nedladdningsbar per-art atlas z5–z9 (~12 MB) från R2.
+- [ ] **IP-skydd i prod** — se `docs/IP-PROTECTION.md`: debug-endpoints redan 404 utan
+      `DEBUG_API=1`; `/api/meta` skickar lager-diagnostik bara lokalt; rate limits på
+      hotspots/overview/optimal-zone/bootstrap/tiles; Worker framför så origin är privat.
+
 ## 0. Först: fixa git-state på Macen (pull vägrade nyss pga lokal ändring i src/server.ts)
 
 ```bash

@@ -45,6 +45,20 @@ URL:en innehåller alltid species/bbox/lat/lon/ents/date/static → URLCache sep
 - overview-JSON bakad på disk (bake-overview.mjs) — makro-/api/hotspots vid span > 1.5° läser fil, ingen rasterberäkning.
 - Boot: `warmRainGrids()` + `prewarmWeather()` (PREWARM_POINTS över Sverige) + `prewarmZones()`.
 
-## 6. Nästa steg (ej byggt än)
-- Cloudflare Worker framför: R2 för tiles/frames (immutable), D1 för signals/redeem — då blir även første cold-start snabb globalt.
-- App Store Server API för kvitto (ersätter dev-`ents=`), så shop/unlocked blir auktoritära direkt vid start.
+## 6. Per-art-bundle i bootstrap (telefonen ska inte behöva tänka)
+- `GET /api/v1/bootstrap?species=a,b,c&ents=...` ger utöver §2 även:
+  ```json
+  fungi: { "kantarell": { label, season, rainWindowDays, pack, protected,
+                          profile,                 // från species-pyramid-profile.json
+                          overviewCells: [...],    // topp-120 bakade celler (lon/lat/score/e/n)
+                          zone,                    // samma SWR-cache som optimal-zone (null första gången)
+                          zonePending } },         // true => nästa anrop får zonen direkt
+  skippedSpecies: [...]
+  ```
+- iOS kan alltså hämta allt per vald art i samma bootstrap-anrop; zonen följer med när den är
+  prewarmad/cestad, annars pollas `/api/v1/fungi/optimal-zone` (SWR) en gång.
+
+## 7. Nästa steg (spåras i docs/TODO-LAUNCH.md §0b — glöm ej)
+- Cloudflare Worker + R2 framför: **skelett finns i `worker/`** (se `worker/README.md`) — tiles/ikoner immutable från R2 → snabb cold-start globalt; bara Workern publik (IP-skydd, `docs/IP-PROTECTION.md`).
+- App Store Server API-kvitto i Workern (`.p8` secret) → auktoritativa `shop`/`unlocked` direkt vid start; dev-`ents=`-trust av i prod.
+- Valfritt: nedladdningsbar per-art atlas (z5–z9 ≈ 12 MB) från R2 för offline.
