@@ -11,8 +11,8 @@ r2:natureradar-data/
     ├── manifest.json                        # publikt manifest (tileRev, bounds, endpoints) — från GET /api/v1/manifest
     ├── catalog.json                         # från GET /api/v1/catalog (61 arter, pack, free, klassiker, prices)
     ├── shop.json                            # från GET /api/shop (statisk bas; worker filtrerar ägda per ents)
-    ├── tiles/habitat/<art>/<z>/<x>_<y>.png     # från data/tile-cache/<rev>/habitat/...
-    ├── tiles/multi/<z>/<x>_<y>.png
+    ├── tiles/habitat/<art>/<static|live>/<date|now>/<sens>/<z>/<x>_<y>.png   # = data/tile-cache/<rev>/habitat/<art>/... verbatim (sync-r2 kopierar rakt av)
+    ├── tiles/habitat-multi/<a+b>/<static|live>/<date|now>/<sens>/<z>/<x>_<y>.png   # URL-lager "multi" mappas hit av workern
     ├── tiles/hillshade/<z>/<x>_<y>.png
     ├── icons/<art>.png                      # från public/icons/
     ├── overview/<art>.json                  # från data/overview/ (2 km-celler, bake-overview)
@@ -25,7 +25,9 @@ r2:natureradar-data/
 ```
 
 **URL → R2-nyckel (worker/src/index.ts):**
-- `/api/tiles/<lager>/<z>/<x>/<y>.png` → `domains/fungi/<rev>/tiles/<lager>/<z>/<x>_<y>.png`
+- `/api/tiles/habitat/<art>/<z>/<x>/<y>.png?static=1&sens=0&date=` → `domains/fungi/<rev>/tiles/habitat/<art>/<static|live>/<date|now>/<sens>/<z>/<x>_<y>.png` (workern bygger nyckeln från query-parametrar, samma som Node-cachen; flat nyckel utan variant testas som fallback)
+- `/api/tiles/multi/<z>/<x>/<y>.png?species=a,b` → `.../tiles/habitat-multi/<a+b>/<variant>/<z>/<x>_<y>.png`
+- `/api/tiles/hillshade/<z>/<x>/<y>.png` → `.../tiles/hillshade/<z>/<x>_<y>.png` (inga variant-segment)
 - `/icons/<f>` → `domains/fungi/<rev>/icons/<f>`
 - `/manifest.json`, `/api/v1/manifest` → `.../manifest.json`
 - `/api/hotspots` → läser `hotspots/<art>/*.json` (block efter bbox)

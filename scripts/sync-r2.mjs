@@ -49,7 +49,7 @@ if (SRC) {
 // [namn, lokal källa, mål under REMOTE]
 const PARTS = [
   ["root", path.join(root, "data/r2"), ""],                    // manifest.json, catalog.json, shop.json
-  ["tiles", path.join(root, "data/tile-cache", REV), "tiles"],   // z5-z10 (~250k filer — största delen)
+  ["tiles", path.join(root, "data/tile-cache", REV), "tiles"],   // z5-z10 (~250k filer — största delen). OBS: kopieras VERBATIM — workern bygger samma nyckel från URL+query (tiles/habitat/<art>/<static|live>/<date|now>/<sens>/<z>/<x>_<y>.png)
   ["icons", path.join(root, "public/icons"), "icons"],
   ["overview", path.join(root, "data/overview"), "overview"],
   ["hotspots", path.join(root, "data/r2/hotspots"), "hotspots"], // 10x10 km-block

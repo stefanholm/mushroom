@@ -194,6 +194,20 @@ ck("okänd route proxas till origin (ej worker-404)", r.status !== 404, `status=
   ck("legacy-D1: profiles fick device/data via ALTER", profCols.some((c) => c.name === "device") && profCols.some((c) => c.name === "data"));
 }
 
+// tiles från R2 med Node-cache-struktur (variant-segment static/now/<sens>)
+{
+  const { encodePng } = await import("./src/png.js");
+  const pngBuf = Buffer.from(await encodePng(2, 2, new Uint8Array(2 * 2 * 4).fill(200)));
+  objects.set("domains/fungi/r15/tiles/habitat/kantarell/static/now/0/8/140_75.png", { data: pngBuf, contentType: "image/png", cacheControl: "public, max-age=86400" });
+  objects.set("domains/fungi/r15/tiles/hillshade/8/140_75.png", { data: pngBuf, contentType: "image/png", cacheControl: "public, max-age=31536000, immutable" });
+  r = await call("/api/tiles/habitat/kantarell/8/140/75.png?static=1");
+  ck("tile habitat via variant-nyckel (static/now/0)", r.status === 200 && (r.headers.get("content-type") ?? "").includes("png"), `status=${r.status}`);
+  r = await call("/api/tiles/hillshade/8/140/75.png");
+  ck("tile hillshade (ingen variant)", r.status === 200 && (r.headers.get("content-type") ?? "").includes("png"), `status=${r.status}`);
+  r = await call("/api/tiles/habitat/kantarell/8/140/75.png");
+  ck("tile habitat live utan bakad variant -> ej 200 png från R2 (proxas vidare)", !(r.status === 200 && (r.headers.get("content-type") ?? "").includes("png")), `status=${r.status}`);
+}
+
 // PNG-enkodern (smoke)
 const { encodePng } = await import("./src/png.js");
 const png = await encodePng(4, 4, new Uint8Array(4 * 4 * 4).fill(128));

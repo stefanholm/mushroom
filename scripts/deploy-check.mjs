@@ -90,7 +90,9 @@ report(r.status === 200 ? (r.body?.optimalZone ? "PASS" : "WARN") : "FAIL", "opt
     const rad = (lat * Math.PI) / 180;
     const y = Math.floor(((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * n);
     cands.push(`/api/tiles/hillshade/${z}/${x}/${y}.png`);
+    cands.push(`/api/tiles/habitat/${SPECIES}/${z}/${x}/${y}.png?static=1`);
   }
+  cands.push(`/api/tiles/habitat/${SPECIES}/8/140/75.png?static=1`); // Mälardalen r15
   let hit = null, reported = false;
   for (const p of cands) {
     const rr = await get(p);

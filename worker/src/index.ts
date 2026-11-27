@@ -283,12 +283,33 @@ export default {
       if (request.method === "GET" || request.method === "HEAD") {
         const tile = /^\/api\/tiles\/(.+)\/(\d+)\/(\d+)\.png$/.exec(p);
         if (tile) {
-          const key = `${r2Prefix(env)}/tiles/${tile[1]}/${tile[2]}_${tile[3]}.png`;
-          if (!key.includes("..")) {
+          // R2-nyckeln speglar Node-tile-cachen (sync-r2 kopierar data/tile-cache/<rev>/ rakt av):
+          //   tiles/habitat/<art>/<static|live>/<date|now>/<sens>/<z>/<x>_<y>.png
+          //   tiles/habitat-multi/<a+b>/<static|live>/<date|now>/<sens>/<z>/<x>_<y>.png   (URL-lager "multi")
+          //   tiles/hillshade/<z>/<x>_<y>.png   (inga varianter)
+          const seg = /^(.*)\/(\d+)$/.exec(tile[1]);
+          let layerPath = seg?.[1] ?? tile[1];
+          const z = seg?.[2] ?? "";
+          let variant = "";
+          if (layerPath === "multi") {
+            const sp = (url.searchParams.get("species") ?? "kantarell").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 6).join("+");
+            layerPath = `habitat-multi/${sp}`;
+          }
+          if (layerPath.startsWith("habitat/") || layerPath.startsWith("habitat-multi/")) {
+            const sens = Math.max(-10, Math.min(10, Math.round(Number(url.searchParams.get("sens") ?? 0) || 0)));
+            const dateP = url.searchParams.get("date") ?? "";
+            variant = `${url.searchParams.get("static") === "1" ? "static" : "live"}/${dateP || "now"}/${sens}/`;
+          }
+          const xy = `${tile[2]}_${tile[3]}.png`;
+          const keys = variant
+            ? [`${r2Prefix(env)}/tiles/${layerPath}/${variant}${z}/${xy}`, `${r2Prefix(env)}/tiles/${layerPath}/${z}/${xy}`]
+            : [`${r2Prefix(env)}/tiles/${layerPath}/${z}/${xy}`];
+          for (const key of keys) {
+            if (key.includes("..")) continue;
             const o = await getR2(env, key);
             if (o) return r2Response(o);
-            return await proxyOrigin(request, env); // on-demand-bakning bor kvar på origin i dev
           }
+          return await proxyOrigin(request, env); // on-demand-bakning bor kvar på origin i dev
         }
         if (p.startsWith("/icons/")) {
           const key = `${r2Prefix(env)}/${p.slice(1)}`;
