@@ -110,6 +110,7 @@ ck("overview från R2: tiers 55/18/6km", r.status === 200 && tiers["55km"]?.leng
   `55km=${tiers["55km"]?.length} 18km=${tiers["18km"]?.length} 6km=${tiers["6km"]?.length}`);
 ck("overview: tier-nycklar exakt 55km/18km/6km + goldPeaks + mode", JSON.stringify(Object.keys(tiers).sort()) === '["18km","55km","6km"]' && typeof (r.body as { goldPeaks?: number })?.goldPeaks === "number" && (r.body as { mode?: string })?.mode === "habitat",
   `keys=${Object.keys(tiers)} gold=${(r.body as { goldPeaks?: number })?.goldPeaks} mode=${(r.body as { mode?: string })?.mode}`);
+ck("overview: asOf + minScore finns (Node skickar dem; AppModels kan kräva dem)", typeof (r.body as { asOf?: string })?.asOf === "string" && typeof (r.body as { minScore?: number })?.minScore === "number", `asOf=${(r.body as { asOf?: string })?.asOf} minScore=${(r.body as { minScore?: number })?.minScore}`);
 {
   const c0 = (tiers["6km"] ?? [])[0] as Record<string, unknown> | undefined;
   ck("overview tier-cell har northing/easting/count (OverviewTierSpot)", !!c0 && typeof c0.northing === "number" && typeof c0.easting === "number" && typeof c0.count === "number",

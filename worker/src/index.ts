@@ -266,6 +266,9 @@ async function overviewFromR2(req: Request, env: Env): Promise<Response | null> 
   }
   let goldPeaks = 0;
   for (const arr of Object.values(tiers)) goldPeaks += arr.filter((c) => (c as { gold?: boolean }).gold).length;
+  // asOf + minScore MÅSTE med — Node-originen skickar dem och AppModels.swift kan ha dem icke-optional;
+  // utan dem blir dekodningen keyNotFound ("data missing") även när allt annat är OK.
+  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get("date") ?? "") ? url.searchParams.get("date")! : new Date().toISOString().slice(0, 10);
   return Response.json({
     overviewRevision: `${tileRev(env)}-r2`,
     mode: staticOnly ? "habitat" : "live",
@@ -275,6 +278,8 @@ async function overviewFromR2(req: Request, env: Env): Promise<Response | null> 
     skipped: locked,
     profiles,
     tiers, // nycklar "55km"/"18km"/"6km" — samma kontrakt som Node-originen (AppModels: [String: [OverviewTierSpot]])
+    asOf,
+    minScore,
   }, { headers: { ...SECURITY_HEADERS, "Cache-Control": "public, max-age=60", "Access-Control-Allow-Origin": "*" } });
 }
 
