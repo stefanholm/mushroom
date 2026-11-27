@@ -14,7 +14,7 @@ import { getR2, getR2Json, r2Response, r2Prefix, putR2Json, IMMUTABLE, SECURITY_
 import { toSWEREF } from "./sweref.js";
 import { encodePng } from "./png.js";
 import { bakeWeatherCron, getLiveFactor } from "./smhi.js";
-import { reportSignal, leaderboard, myScore, deleteDevice, resolveEnts, setEnts, getEnts } from "./d1.js";
+import { reportSignal, leaderboard, leaderboardData, myScore, deleteDevice, resolveEnts, setEnts, getEnts } from "./d1.js";
 import type { Env, ExecutionContextLike } from "./cf-types.js";
 
 const SWEDEN = { minLon: 10.5, minLat: 55.0, maxLon: 24.5, maxLat: 69.5 };
@@ -364,41 +364,9 @@ export default {
           // Edge-variant av /api/meta (AppModels.swift kontrakt): produkt-fält från catalog.json.
           // Inget live-väder här (fast) — väder-fälten är null tills origin är inkopplad.
           // OBS: /api/debug/cell finns INTE i prod (404) — iOS måste #if DEBUG-gate:a det.
-          const cat = await catalog(env);
-          if (cat) {
-            const ents = new Set(await resolveEnts(request, env));
-            const key = (url.searchParams.get("species") ?? "kantarell").split(",")[0].trim() || "kantarell";
-            const sp = cat.species.find((s) => s.id === key) ?? cat.species[0];
-            const unlocked = unlockedIds(cat, ents);
-            const year = new Date().getFullYear();
-            return Response.json({
-              species: sp.id,
-              label: sp.label,
-              eatScore: sp.eatScore,
-              protected: sp.protected,
-              season: sp.season,
-              entitlements: [...ents],
-              topSpots: {
-                capped: !canSeeTopSpots(ents) && !isTrial(url, ents),
-                trial: isTrial(url, ents),
-                topHiddenFraction: freeHideFraction(env),
-                passId: `topspots:${year}`,
-                passLabel: `Årskort ${year}`,
-                passPriceSek: 249,
-              },
-              packs: cat.packs.map((pk) => ({ id: pk.id, label: pk.label, priceSek: pk.priceSek, speciesCount: pk.species.length })),
-              freeSpecies: cat.freeSpecies,
-              speciesList: cat.species.map((s) => ({
-                id: s.id, label: s.label, eatScore: s.eatScore, season: s.season,
-                protected: s.protected, pack: s.pack, rainWindowDays: s.rainWindowDays,
-                locked: !unlocked.has(s.id),
-              })),
-              rain14: null, rainFactor: 0.5, seasonFactor: null, gdd5: null, minTemp48h: null, frost: 1, flush: 1,
-              lat: Number(url.searchParams.get("lat") ?? 62.5), lon: Number(url.searchParams.get("lon") ?? 15.5),
-              asOf: new Date().toISOString().slice(0, 10),
-              tileRev: tileRev(env),
-              forestKnown: true, maskUsed: true,
-            }, { headers: { ...SECURITY_HEADERS, "Cache-Control": "public, max-age=60", "Access-Control-Allow-Origin": "*" } });
+          const m = await edgeMetaPayload(env, request);
+          if (m) {
+            return Response.json(m, { headers: { ...SECURITY_HEADERS, "Cache-Control": "public, max-age=60", "Access-Control-Allow-Origin": "*" } });
           }
         }
         if (p === "/api/v1/bootstrap" || p === "/api/bootstrap") {
@@ -457,6 +425,48 @@ export default {
   },
 };
 
+// ---------- edge-/api/meta payload (delas av /api/meta och /api/v1/bootstrap) ----------
+// AppModels.swift kräver icke-optional `meta` i BootstrapResponse — utan den failar hela
+// bootstrap-dekodningen med "The data couldn't be read because it is missing" (keyNotFound).
+async function edgeMetaPayload(env: Env, req: Request): Promise<Record<string, unknown> | null> {
+  const url = new URL(req.url);
+  const cat = await catalog(env);
+  if (!cat) return null;
+  const ents = new Set(await resolveEnts(req, env));
+  const key = (url.searchParams.get("species") ?? "kantarell").split(",")[0].trim() || "kantarell";
+  const sp = cat.species.find((s) => s.id === key) ?? cat.species[0];
+  const unlocked = unlockedIds(cat, ents);
+  const year = new Date().getFullYear();
+  return {
+    species: sp.id,
+    label: sp.label,
+    eatScore: sp.eatScore,
+    protected: sp.protected,
+    season: sp.season,
+    entitlements: [...ents],
+    topSpots: {
+      capped: !canSeeTopSpots(ents) && !isTrial(url, ents),
+      trial: isTrial(url, ents),
+      topHiddenFraction: freeHideFraction(env),
+      passId: `topspots:${year}`,
+      passLabel: `Årskort ${year}`,
+      passPriceSek: 249,
+    },
+    packs: cat.packs.map((pk) => ({ id: pk.id, label: pk.label, priceSek: pk.priceSek, speciesCount: pk.species.length })),
+    freeSpecies: cat.freeSpecies,
+    speciesList: cat.species.map((s) => ({
+      id: s.id, label: s.label, eatScore: s.eatScore, season: s.season,
+      protected: s.protected, pack: s.pack, rainWindowDays: s.rainWindowDays,
+      locked: !unlocked.has(s.id),
+    })),
+    rain14: null, rainFactor: 0.5, seasonFactor: null, gdd5: null, minTemp48h: null, frost: 1, flush: 1,
+    lat: Number(url.searchParams.get("lat") ?? 62.5), lon: Number(url.searchParams.get("lon") ?? 15.5),
+    asOf: new Date().toISOString().slice(0, 10),
+    tileRev: tileRev(env),
+    forestKnown: true, maskUsed: true,
+  };
+}
+
 // ---------- bootstrap i Workern (samma kontrakt som Node) ----------
 async function bootstrapWorker(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
@@ -469,7 +479,9 @@ async function bootstrapWorker(req: Request, env: Env): Promise<Response> {
   const rainHistory: Record<string, unknown> = {};
   for (const d of ["14", "21", "28", "42"]) rainHistory[d] = await getR2Json(env, `${prefix}/frames/rain/manifest-${d}d.json`, 5 * 60_000);
   let leaderboardRes: unknown = null;
-  try { leaderboardRes = await leaderboard(req, env); } catch { /* D1 kan saknas i dev */ }
+  try { leaderboardRes = await leaderboardData(env, Number(url.searchParams.get("days") ?? 5) || 5); } catch { /* D1 kan saknas i dev */ }
+  // meta krävs av AppModels.swift (BootstrapResponse.meta är icke-optional) — samma payload som /api/meta
+  const meta = await edgeMetaPayload(env, req).catch(() => null);
   const unlocked = cat ? [...unlockedIds(cat, ents)] : [];
   // per-art-bundle för ?species=
   const want = (url.searchParams.get("species") ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 6);
@@ -498,9 +510,10 @@ async function bootstrapWorker(req: Request, env: Env): Promise<Response> {
     return Response.json({
       api: "v1",
       tileRev: (manifest?.tileRev as string) ?? tileRev(env),
-      rainSpans: [14, 21, 28, 42],
       serverTime: new Date().toISOString(),
       asOf: new Date().toISOString().slice(0, 10),
+      meta,
+      rainSpans: [14, 21, 28, 42],
       shop,
       unlocked: { entitlements: [...ents], unlocked, svenskaKlassiker: cat.klassiker, svenskaKlassikerActive: canSeeTopSpots(ents), topSpots: canSeeTopSpots(ents) },
       leaderboard: leaderboardRes,

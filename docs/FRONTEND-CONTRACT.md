@@ -15,7 +15,7 @@ Gäller både Node-origin (dev, `http://<mac-ip>:3000`) och Cloudflare-Workern (
 
 | Anrop | Viktiga params | Svar (nycklar iOS läser) |
 |---|---|---|
-| `GET /api/v1/bootstrap` | `species=a,b` (max 6), `ents`, `trial`, `date`, `static` | `{ api, tileRev, rainSpans:[14,21,28,42], serverTime, asOf, shop, unlocked, leaderboard, clouds, rainHistory:{"14".."42"}, fungi:{<art>:{label,season,rainWindowDays,pack,protected,profile,overviewCells,zone,zonePending}}, skippedSpecies? }` |
+| `GET /api/v1/bootstrap` | `species=a,b` (max 6), `ents`, `trial`, `date`, `static` | `{ api, tileRev, serverTime, asOf, meta (samma payload som /api/meta — krävs icke-optional av BootstrapResponse), shop, unlocked, leaderboard:{days, leaderboard:[{alias,s,n}]}, clouds, rainHistory:{"14".."42"}, rainSpans:[14,21,28,42], fungi:{<art>:{label,season,rainWindowDays,pack,protected,profile,overviewCells,zone,zonePending}}, skippedSpecies? }` |
 | `GET /api/v1/manifest` eller `/manifest.json` | — | `{ api, tileRev, bounds, speciesCount, freeSpecies, rainSpans, endpoints }` |
 | `GET /api/meta` | `species`, `lat`, `lon`, `ents`, `fast=1` | `{ species, label, speciesList[61] {id,label,season,pack,locked,rainWindowDays}, packs, freeSpecies, topSpots{capped,trial,topHiddenFraction,passId,passLabel,passPriceSek}, rain14, rainFactor, seasonFactor, gdd5, minTemp48h, frost, flush, asOf, tileRev }` (edge utan origin: väder-fält null) |
 | `GET /api/v1/fungi/overview` | `species=a,b`, `static=1\|0`, `date`, `minScore`, `ents` | `OverviewResponse{ overviewRevision, mode, capped, trial, goldPeaks, profiles, tiers }` — **tiers-nycklar är exakt `"55km"`, `"18km"`, `"6km"`**, varje post `OverviewTierSpot{species,lat,lon,northing,easting,score,count,gold}` |

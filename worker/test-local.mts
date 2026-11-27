@@ -124,6 +124,12 @@ ck("bootstrap: tileRev + fungi bundle", r.status === 200 && (r.body as { tileRev
   `cells=${f?.overviewCells?.length} win=${f?.rainWindowDays} zonePending=${f?.zonePending}`);
 ck("bootstrap: shop + unlocked + leaderboard", !!(r.body as { shop?: unknown; unlocked?: { unlocked?: string[] } })?.shop && (r.body as { unlocked?: { unlocked?: string[] } })?.unlocked?.unlocked?.includes("kantarell"));
 ck("bootstrap: rainSpans [14,21,28,42] (AppModels)", JSON.stringify((r.body as { rainSpans?: number[] })?.rainSpans) === "[14,21,28,42]");
+{
+  const bMeta = (r.body as { meta?: { speciesList?: unknown[]; tileRev?: string; topSpots?: unknown } })?.meta;
+  ck("bootstrap: meta finns (BootstrapResponse.meta icke-optional) med speciesList+tileRev", !!bMeta && Array.isArray(bMeta.speciesList) && bMeta.speciesList.length === 61 && typeof bMeta.tileRev === "string" && !!bMeta.topSpots);
+  const lb = (r.body as { leaderboard?: { days?: number; leaderboard?: unknown } })?.leaderboard;
+  ck("bootstrap: leaderboard har {days, leaderboard:[]} (ej serialiserat Response)", !!lb && typeof lb.days === "number" && Array.isArray(lb.leaderboard));
+}
 
 // edge /api/meta från catalog.json (AppModels.swift-kontrakt)
 r = await call("/api/meta?species=kantarell&ents=all");

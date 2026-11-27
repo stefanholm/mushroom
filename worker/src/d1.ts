@@ -118,15 +118,20 @@ export async function reportSignal(req: Request, env: Env): Promise<Response> {
   return Response.json({ ok: true });
 }
 
-export async function leaderboard(req: Request, env: Env): Promise<Response> {
+export async function leaderboardData(env: Env, days: number): Promise<{ days: number; leaderboard: { alias: string; s: number; n: number }[] }> {
   await ensureSchema(env);
-  const url = new URL(req.url);
-  const days = Math.max(1, Math.min(30, Number(url.searchParams.get("days") ?? 5) || 5));
-  const since = Date.now() - days * DAY_MS;
+  const d = Math.max(1, Math.min(30, days || 5));
+  const since = Date.now() - d * DAY_MS;
   const rows = await env.DB.prepare(
     "SELECT alias, SUM(score) AS s, COUNT(*) AS n FROM signals WHERE app_id=? AND at>=? GROUP BY alias ORDER BY s DESC LIMIT 10",
   ).bind(env.APP_ID ?? "svampradar", since).all<{ alias: string; s: number; n: number }>();
-  return Response.json({ days, leaderboard: rows.results });
+  return { days: d, leaderboard: rows.results };
+}
+
+export async function leaderboard(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  const days = Math.max(1, Math.min(30, Number(url.searchParams.get("days") ?? 5) || 5));
+  return Response.json(await leaderboardData(env, days));
 }
 
 export async function myScore(req: Request, env: Env): Promise<Response> {
