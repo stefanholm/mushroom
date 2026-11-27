@@ -100,7 +100,7 @@ report(r.status === 200 ? (r.body?.optimalZone ? "PASS" : "WARN") : "FAIL", "opt
     if (rr.status !== 404 && rr.status !== 200) { report("FAIL", "tile png", `status=${rr.status} ${p}`); reported = true; break; }
   }
   if (hit) report("PASS", "tile png", `200 png via ${hit}`);
-  else if (!reported) report("WARN", "tile png", `404 pa alla kandidater (${cands.join(", ")}) — kör: node scripts/sync-r2.mjs --rev r15 --only tiles,icons (data/tile-cache/r15 + public/icons måste finnas lokalt)`);
+  else if (!reported) report("WARN", "tile png", `404 pa alla kandidater (${cands.join(", ")}) — diagnostik: rclone lsf r2:natureradar-data/domains/fungi/r15/tiles/ | head + find data/tile-cache/r15 -name '*.png' | wc -l ; sedan: node scripts/sync-r2.mjs --rev r15 --only tiles (se att den INTE skriver 'hoppar över')`);
 }
 
 r = await get(`/icons/${SPECIES}.png`);
