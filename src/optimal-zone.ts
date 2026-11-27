@@ -5,7 +5,9 @@
 //   triggerScore = gaussisk vikt kring artens fruktkropps-fördröjning (triggerPeakDays),
 //                  låg vikt åt dag 0–1 (gaussen ger det naturligt)
 //   torkbroms    = senaste 14 d < 2 mm -> 0.35, annars ramp till 1 vid 8 mm
-//   översvämning = mjuk dämpning när ackumulerat > sweetSpotMm
+//   översvämning = floodDamping (se nedan): full vikt tom 1.25x sweetSpotMm, sedan
+//                  smoothstep ner till 0.15-0.20 vid >= 2.2x sweetSpotMm — vattenmättade
+//                  kärnor hamnar under zon-tröskeln så zonen flyttar till väldränerade flanker
 //   W_rain       = clamp((baseWeight*baseN + (1-baseWeight)*trigN) * broms * dämpning, 0, 1.3)
 //
 // S_opt per cell = W_rain^0.42 * H_static^0.30 * F_season^0.16 * F_climate^0.12
@@ -85,8 +87,24 @@ export type OptimalZoneResult = {
 };
 export type OptimalZoneOptions = { static?: boolean };
 
+// ---------- överblöts-dämpning (ren, testbar) ----------
+// x = ackumulerat mm / sweetSpotMm. x <= 1.25 -> 1 (ingen straffning i normalt blött läge).
+// x >= 2.2 -> golvet 0.15 + 0.05*floodTolerance (fukttåliga arter ~0.20, torrmarksarter ~0.15).
+// Däremellan smoothstep. Kraftigt dränkta celler (x >= 2.2) får alltså W_rain <= 1.3*0.20,
+// vilket efter ^0.42 hamnar under det biologiska golvet när habitat/säsong är normalt.
+export function floodDamping(totalMm: number, sweetMm: number, floodTolerance = 0.5): number {
+  const x = totalMm / Math.max(1, sweetMm);
+  if (x <= 1.25) return 1;
+  const floor = 0.15 + 0.05 * Math.min(1, Math.max(0, floodTolerance));
+  if (x >= 2.2) return floor;
+  const t = (x - 1.25) / (2.2 - 1.25);
+  const s = t * t * (3 - 2 * t); // smoothstep 0..1
+  return 1 - s * (1 - floor);
+}
+
 // ---------- per-art regnsignaler på stationsnivå ----------
-function rainSignalsForSpecies(
+// (exporterad för enhetstester — ren funktion av rolling-filen)
+export function rainSignalsForSpecies(
   rolling: { days: Record<string, Record<string, number>>; stations: Record<string, { lat: number; lon: number }> },
   sp: SpeciesProfile,
   latest: string,
@@ -121,9 +139,9 @@ function rainSignalsForSpecies(
     if (present / actualDays < 0.6) continue;
     const baseN = Math.min(1.3, baseRaw / sweet);
     const trigN = Math.min(1.3, trigRaw / (sweet * 0.4));
-    // torkbroms på senaste 14 d + mjuk översvämningsdämpning över sweet spot
+    // torkbroms på senaste 14 d + skarp överblöts-dämpning (1.25x->2.2x sweetSpotMm)
     const brake = recent14 < 2 ? 0.35 : Math.min(1, recent14 / 8);
-    const flood = total <= sweet ? 1 : Math.max(0.55, 1 - (total / sweet - 1) * 0.35);
+    const flood = floodDamping(total, sweet, sp.floodTolerance ?? 0.5);
     const wRain = Math.min(1.3, (baseW * baseN + (1 - baseW) * trigN) * brake * flood);
     const [e, n] = toSWEREF(st.lon, st.lat);
     pts.push({ e, n, v: wRain });

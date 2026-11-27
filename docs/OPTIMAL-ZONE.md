@@ -6,8 +6,16 @@ Biologiskt exakt optimalzon per vald art/arter, som **en enda sammanhängande Ge
 - **Två-fasigt regn** per art ur `rolling-42d.json` (stationsnivå → IDW till 256×320-rutnät):
   `baseScore` (djupfukt, age-decay `exp(-daysAgo/(win/2))`) + `triggerScore` (gauss kring
   `triggerPeakDays`, `triggerSpreadDays`; dag 0–1 får låg vikt naturligt). Torkbroms på senaste
-  14 d (<2 mm → ×0.35), mjuk översvämningsdämpning över `sweetSpotMm`.
-  `W_rain = clamp((baseWeight·baseN + (1-baseWeight)·trigN)·broms·dämpning, 0, 1.3)`
+  14 d (<2 mm → ×0.35). **Överblöts-dämpning `floodDamping` (skärpt):** full vikt tom
+  `1.25 × sweetSpotMm`, sedan smoothstep ner till golvet `0.15 + 0.05·floodTolerance`
+  vid `≥ 2.2 × sweetSpotMm` — art-differentierat via `floodTolerance` i `src/habitat.ts`
+  (fukttåliga: trattkantarell/blek-taggsvamp 0.95, svart-trumpetsvamp 0.9, vinterskivling 0.85,
+  karljohan 0.8; torrmarks-/tallarter: jattemusseron/tallblodriska/tallskrubb 0.2,
+  fjallig-blacksvamp/stolt-fjallskivling 0.25; kantarell 0.35; default 0.5).
+  Vattenmättade kärnor får därmed `W_rain ≤ 1.3·0.20 ≈ 0.26` (→ `^0.42 ≈ 0.56`) mot måttliga
+  flanker `W_rain ≈ 0.65` (→ `^0.42 ≈ 0.84`), så zonen flyttar till de väldränerade flankerna
+  istället för att sitta på absolut regnmax.
+  `W_rain = clamp((baseWeight·baseN + (1-baseWeight)·trigN)·broms·flood, 0, 1.3)`
 - **`S_opt = W_rain^0.42 · H_static^0.30 · F_season^0.16 · F_climate^0.12`** per cell.
   Hårda veton i H_static via NMD-masken (endast skog 111–117/121–127 tillåts; vatten/hygge/
   tätort/kalhygge → 0). `F_season` latitudjusterad (ref 59°N). `F_climate` = `maxLat`-gräns +
@@ -62,6 +70,11 @@ GET /api/v1/fungi/optimal-zone?species=id1,id2&date=YYYY-MM-DD&ents=...&static=1
 - `static=0`: trattkantarell 2026-10-10 zon (peak 0.725); vinterskivling today zon (0.587,
   habitatFactor 0.76 efter 3×3 topp-kvartil-kalibrering); blomkalssvamp 2026-09-20 zon (0.546);
   blomkalssvamp today `null` (peak 0, nov); kantarell today `null` (peak 0) — ingen falsk zon
+- floodDamping enhetstestad 10/10 (1.0 tom 1.25×, smoothstep, golv 0.15–0.20 vid ≥2.2×) +
+  syntetiska stationssignaler 5/5: extremblöt station (15 mm/dygn) får W_rain 0.25
+  (vinterskivling), 0.257 (trattkantarell), 0.208 (jattemusseron) vs måttligt blöt (4 mm/dygn)
+  W_rain 0.65 — art-differentiering och flank-preferens verifierad; station med <60 % dygn
+  närvaro skippas fortfarande
 - `static=1`: samma arter ger zon även i nov (blomkalssvamp today peak 0.58), svaret har
   `static: true` och `properties.seasonFactor = 1`; kantarell today static=1 zon (0.803)
 - EN stängd ring (1 `coordinates`-ring, första == sista punkt, 45–257 punkter) i alla fall;

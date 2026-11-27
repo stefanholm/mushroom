@@ -39,13 +39,16 @@ export type SpeciesProfile = {
   // Optimalzon-parametrar (src/optimal-zone.ts): trigger = gaussisk vikt kring fördröjningen
   // till fruktkroppsbildning (dagar bakåt); baseWeight = andel djupfukt vs trigger;
   // sweetSpotMm = ackumulerad mm i fönstret vid optimal fukt; maxLat = hård nordgräns;
-  // frostTolerance: sensitive/moderate/hardy (nattfrost < -2 °C).
+  // frostTolerance: sensitive/moderate/hardy (nattfrost < -2 °C);
+  // floodTolerance 0..1 (default 0.5) styr golvet för överblöts-dämpningen i optimalzonen:
+  // fukttåliga arter (trattkantarell, blek-taggsvamp) ~0.9, torrmarks-/tallarter ~0.2.
   triggerPeakDays?: number;
   triggerSpreadDays?: number;
   baseWeight?: number;
   sweetSpotMm?: number;
   maxLat?: number;
   frostTolerance?: "sensitive" | "moderate" | "hardy";
+  floodTolerance?: number;
 };
 
 export const SPECIES: Record<string, SpeciesProfile> = {
@@ -1372,11 +1375,20 @@ const OPTZONE_BY_WINDOW: Record<number, { triggerPeakDays: number; triggerSpread
   42: { triggerPeakDays: 17, triggerSpreadDays: 5.0, sweetSpotMm: 150 },
 };
 // Artspecifika overrides (t.ex. karljohan/trattkantarell behöver längre lag än kantarell)
-const OPTZONE_OVERRIDES: Record<string, Partial<Pick<SpeciesProfile, "triggerPeakDays" | "triggerSpreadDays" | "baseWeight" | "sweetSpotMm" | "maxLat" | "frostTolerance">>> = {
-  karljohan: { triggerPeakDays: 17, triggerSpreadDays: 4.5 },
-  "svart-trumpetsvamp": { triggerPeakDays: 12, triggerSpreadDays: 4 },
-  kantarell: { triggerPeakDays: 13, triggerSpreadDays: 4 },
-  "vinterskivling": { frostTolerance: "hardy" },
+const OPTZONE_OVERRIDES: Record<string, Partial<Pick<SpeciesProfile, "triggerPeakDays" | "triggerSpreadDays" | "baseWeight" | "sweetSpotMm" | "maxLat" | "frostTolerance" | "floodTolerance">>> = {
+  karljohan: { triggerPeakDays: 17, triggerSpreadDays: 4.5, floodTolerance: 0.8 },
+  "svart-trumpetsvamp": { triggerPeakDays: 12, triggerSpreadDays: 4, floodTolerance: 0.9 },
+  kantarell: { triggerPeakDays: 13, triggerSpreadDays: 4, floodTolerance: 0.35 },
+  "vinterskivling": { frostTolerance: "hardy", floodTolerance: 0.85 },
+  // fukttåliga arter klarar vattenmättnad bättre
+  trattkantarell: { floodTolerance: 0.95 },
+  "blek-taggsvamp": { floodTolerance: 0.95 },
+  // torrmarks-/tallarter straffas hårdare vid överblötning
+  jattemusseron: { floodTolerance: 0.2 },
+  tallblodriska: { floodTolerance: 0.2 },
+  tallskrubb: { floodTolerance: 0.2 },
+  "fjallig-blacksvamp": { floodTolerance: 0.25 },
+  "stolt-fjallskivling": { floodTolerance: 0.25 },
 };
 for (const [k, s] of Object.entries(SPECIES)) {
   const g = OPTZONE_BY_WINDOW[s.rainWindowDays ?? 28];
@@ -1387,6 +1399,7 @@ for (const [k, s] of Object.entries(SPECIES)) {
   s.maxLat = OPTZONE_OVERRIDES[k]?.maxLat;
   s.frostTolerance =
     OPTZONE_OVERRIDES[k]?.frostTolerance ?? (s.frostSensitive ? "sensitive" : "moderate");
+  s.floodTolerance = OPTZONE_OVERRIDES[k]?.floodTolerance ?? 0.5;
 }
 
 // Live-regnfaktor för en art på en punkt — från det förinterpolerade regn-rutnätet
