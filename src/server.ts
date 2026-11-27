@@ -2032,6 +2032,7 @@ async function bootstrapHandler(req: express.Request, res: express.Response) {
       leaderboard: { days: 5, leaderboard: leaderboard(5, 10) },
       clouds,
       rainHistory: { "14": r14, "21": r21, "28": r28, "42": r42 },
+      rainSpans: [14, 21, 28, 42], // samma kontrakt som Workern (AppModels läser detta)
       fungi: want.length > 0 ? fungi : undefined,
       skippedSpecies: lockedF.length > 0 ? lockedF : undefined,
     });
@@ -2559,6 +2560,7 @@ async function buildMetaPayload(req: express.Request, key: string, opts: { fast?
     asOf: asOf.toISOString().slice(0, 10),
     forestKnown: store.mask !== null || (f !== null && f.status === "fulfilled" && f.value !== null),
     maskUsed: store.mask !== null,
+    tileRev: TILE_VERSION, // publik cache-nyckel (samma som /api/v1/manifest) — läcker inga lager
     // Diagnostik som avslöjar interna lager/datamodell skickas BARA lokalt (DEBUG_API=1) —
     // i prod får klienten inte veta vilka rasters/vikter som används (docs/IP-PROTECTION.md).
     ...(process.env.DEBUG_API === "1"
