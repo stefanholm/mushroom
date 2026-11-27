@@ -19,6 +19,7 @@ overview med tier-nycklar 55km/18km/6km + goldPeaks, zones från R2, edge-/api/m
 cd ~/Projects/mushroom
 git stash push -m "gemini-worker-variant" -- worker/src/index.ts scripts/bake-malardalen-r2.mjs
 git pull --no-edit
+npm install   # efter pull: nya beroenden (t.ex. compression); undvik npx-install-prompten
 git stash show -p stash@{0} | head -50   # jämför; droppa om repots variant duger
 ```
 (`-m` FÖRE `--`.) Block-nycklar måste vara `<bx>_<by>` i SWEREF 10 km-meter (så skriver

@@ -156,10 +156,22 @@ async function hotspotsFromR2(req: Request, env: Env): Promise<Response | null> 
   }
   for (const p of all) if (!pickedSet.has(p) && picked.length < maxP) { picked.push(p); pickedSet.add(p); }
   const { pins, capped, goldPeaks } = applyGoldCap(picked, ents, url, env);
+  const catById = new Map(cat.species.map((s) => [s.id, s]));
   return Response.json({
-    hotspots: pins,
+    // samma fältshape som Node (HotspotItem: lat, lon, species, label, eatScore, score, gold)
+    hotspots: pins.map((p) => ({
+      lat: p.lat,
+      lon: p.lon,
+      species: p.species,
+      label: catById.get(p.species)?.label ?? p.species,
+      eatScore: catById.get(p.species)?.eatScore ?? null,
+      score: p.score,
+      gold: p.gold === true ? true : undefined,
+    })),
     skipped: locked,
     meta: {
+      count: pins.length,
+      minScore,
       source: "r2-blocks",
       capped, goldPeaks,
       topHiddenFraction: freeHideFraction(env),
@@ -195,7 +207,7 @@ async function overviewFromR2(req: Request, env: Env): Promise<Response | null> 
     const ov = (await getR2Json(env, `${prefix}/overview/${sp}.json`, 10 * 60_000)) as OverviewFile | null;
     if (!ov?.cells) continue;
     profiles[sp] = profile?.profiles?.[sp] ?? null;
-    const tierMaps = new Map<string, Map<string, { species: string; lat: number; lon: number; score: number; count: number; gold: boolean }>>();
+    const tierMaps = new Map<string, Map<string, { species: string; lat: number; lon: number; northing: number; easting: number; score: number; count: number; gold: boolean }>>();
     for (const [label] of TIER_SIZES) tierMaps.set(label, new Map());
     for (const c of ov.cells) {
       let score = c.max;
@@ -205,7 +217,12 @@ async function overviewFromR2(req: Request, env: Env): Promise<Response | null> 
         const m = tierMaps.get(label)!;
         const k = `${Math.floor(c.e / size)},${Math.floor(c.n / size)}`;
         const prev = m.get(k);
-        if (!prev || score > prev.score) m.set(k, { species: sp, lat: c.lat, lon: c.lon, score, count: 1, gold: false });
+        // samma fältshape som Node (OverviewTierSpot kräver northing/easting):
+        if (!prev || score > prev.score) {
+          m.set(k, { species: sp, lat: c.lat, lon: c.lon, northing: c.n, easting: c.e, score, count: (prev?.count ?? 0) + 1, gold: false });
+        } else {
+          prev.count += 1;
+        }
       }
     }
     for (const [label, m] of tierMaps) {

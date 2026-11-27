@@ -87,6 +87,11 @@ r = await call("/api/hotspots?bbox=17.3,58.9,18.5,59.7&static=1&species=kantarel
 const pins = (r.body as { hotspots?: unknown[] })?.hotspots ?? [];
 ck("hotspots från R2-block 200", r.status === 200 && pins.length > 0, `pins=${pins.length} source=${(r.body as { meta?: { source?: string } })?.meta?.source}`);
 ck("alla pins inom bbox och >= minScore", pins.every((p) => (p as { lon: number; lat: number; score: number }).lon >= 17.3 && (p as { lon: number }).lon <= 18.5 && (p as { score: number }).score >= 55));
+{
+  const p0 = pins[0] as Record<string, unknown> | undefined;
+  ck("pin har label/eatScore (HotspotItem) + meta.count", !!p0 && typeof p0.label === "string" && "eatScore" in p0 && typeof (r.body as { meta?: { count?: number } })?.meta?.count === "number",
+    `pin0=${JSON.stringify(p0)} count=${(r.body as { meta?: { count?: number } })?.meta?.count}`);
+}
 
 // hotspots låst utan ents (kantarell ej free)
 r = await call("/api/hotspots?bbox=17.3,58.9,18.5,59.7&static=1&species=kantarell");
@@ -102,6 +107,11 @@ ck("overview från R2: tiers 55/18/6km", r.status === 200 && tiers["55km"]?.leng
   `55km=${tiers["55km"]?.length} 18km=${tiers["18km"]?.length} 6km=${tiers["6km"]?.length}`);
 ck("overview: tier-nycklar exakt 55km/18km/6km + goldPeaks + mode", JSON.stringify(Object.keys(tiers).sort()) === '["18km","55km","6km"]' && typeof (r.body as { goldPeaks?: number })?.goldPeaks === "number" && (r.body as { mode?: string })?.mode === "habitat",
   `keys=${Object.keys(tiers)} gold=${(r.body as { goldPeaks?: number })?.goldPeaks} mode=${(r.body as { mode?: string })?.mode}`);
+{
+  const c0 = (tiers["6km"] ?? [])[0] as Record<string, unknown> | undefined;
+  ck("overview tier-cell har northing/easting/count (OverviewTierSpot)", !!c0 && typeof c0.northing === "number" && typeof c0.easting === "number" && typeof c0.count === "number",
+    `ex=${JSON.stringify(c0)}`);
+}
 ck("overview profile med", !!(r.body as { profiles?: Record<string, unknown> })?.profiles?.kantarell);
 
 // bootstrap i worker
