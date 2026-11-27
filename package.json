@@ -20,7 +20,9 @@
     "microclimate": "node scripts/make-microclimate-structure-layers.mjs",
     "water-dist": "node scripts/compute-water-dist.mjs",
     "redeem": "tsx scripts/redeem.mjs",
-    "icons": "tsx scripts/make-icons.mjs"
+    "icons": "tsx scripts/make-icons.mjs",
+    "bake-blocks": "tsx scripts/bake-hotspot-blocks.mts",
+    "bake-zones": "tsx scripts/bake-zones.mts"
   },
   "dependencies": {
     "@mistralai/mistralai": "^3.5.0",

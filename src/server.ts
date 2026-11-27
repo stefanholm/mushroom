@@ -1925,6 +1925,52 @@ app.get("/api/v1/fungi/optimal-zone", async (req, res) => {
 // Kartdata (hotspots/tiles/overview/optimal-zone) hämtas fortfarande per vy som vanligt.
 app.get("/api/v1/bootstrap", bootstrapHandler);
 app.get("/api/bootstrap", bootstrapHandler);
+
+// Publikt manifest — styr cache-busting (tileRev) i klienten utan att läcka interna
+// lager (tileVersion i /api/meta är fortfarande DEBUG_API-gated). Workern servar samma
+// struktur från R2 som manifest.json (se docs/R2-LAYOUT.md).
+app.get("/api/v1/manifest", manifestHandler);
+app.get("/manifest.json", manifestHandler);
+
+// Publikt katalog — det Workern behöver för att vara origin-fri (R2: catalog.json).
+// Innehåller bara produkt-info (labels/säsong/pack/pris/free), aldrig vikter eller lager.
+app.get("/api/v1/catalog", (req, res) => {
+  res.set("Cache-Control", "public, max-age=300");
+  res.json({
+    api: "v1",
+    generatedAt: new Date().toISOString(),
+    tileRev: TILE_VERSION,
+    freeSpecies: FREE_SPECIES,
+    klassiker: SVENSKA_KLASSIKER_SPECIES,
+    packs: Object.values(PACKS).map((p) => ({ id: p.id, label: p.label, priceSek: p.priceSek, species: p.species, kind: p.kind, forSale: p.forSale !== false })),
+    singlePriceSek: SINGLE_PRICE_SEK,
+    species: Object.entries(SPECIES).map(([id, s]) => ({
+      id, label: s.label, season: [s.seasonStart, s.seasonEnd], pack: s.pack ?? null,
+      protected: !!s.protected, eatScore: s.eatScore, rainWindowDays: s.rainWindowDays ?? 28,
+    })),
+  });
+});
+async function manifestHandler(req: express.Request, res: express.Response) {
+  res.set("Cache-Control", "public, max-age=300");
+  res.json({
+    api: "v1",
+    tileRev: TILE_VERSION, // publikt, avsiktligt: "r15" osv — cache-nyckel, inte intern metadata
+    generatedAt: new Date().toISOString(),
+    bounds: [SWEDEN_BBOX.minLon, SWEDEN_BBOX.minLat, SWEDEN_BBOX.maxLon, SWEDEN_BBOX.maxLat],
+    speciesCount: Object.keys(SPECIES).length,
+    freeSpecies: FREE_SPECIES,
+    rainSpans: [14, 21, 28, 42],
+    endpoints: {
+      bootstrap: "/api/v1/bootstrap",
+      overview: "/api/v1/fungi/overview",
+      optimalZone: "/api/v1/fungi/optimal-zone",
+      hotspots: "/api/hotspots",
+      clouds: "/api/v1/weather/clouds/manifest",
+      rainHistory: "/api/v1/weather/rain-history/manifest",
+      tiles: "/api/tiles/{habitat|multi|hillshade}/...",
+    },
+  });
+}
 async function bootstrapHandler(req: express.Request, res: express.Response) {
   if (heavyRateLimited(req, 60)) return res.status(429).json({ error: "För många frågor — vänta en stund." });
   try {
@@ -1977,6 +2023,7 @@ async function bootstrapHandler(req: express.Request, res: express.Response) {
     }
     res.json({
       api: "v1",
+      tileRev: TILE_VERSION, // publik cache-nyckel (se /api/v1/manifest) — läcker inga lager
       serverTime: new Date().toISOString(),
       asOf: new Date().toISOString().slice(0, 10),
       meta,

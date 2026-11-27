@@ -1,51 +1,77 @@
-# worker/ — Cloudflare Worker framför Svampradar (R2 + origin-proxy)
+# worker/ — Cloudflare Worker framför Svampradar (origin-fri: R2 + D1 + SMHI-cron)
 
-**Varför (UX):** stora PNG (tiles/ikoner) serveras direkt från R2 nära användaren med
-`Cache-Control: immutable` → snabb cold-start globalt, 0 kr egress (R2 gratisnivå 10 GB).
-**IP-skydd:** bara Workern blir publik; Node-originen (`ORIGIN_URL`) exponeras aldrig
-(det är där alla beräkningar/vikter finns — se `docs/IP-PROTECTION.md`).
+**Varför:** iPhonen hämtar färdiga produkter (PNG-tiles, JSON-block, frames) från svensk edge med
+`immutable` + 0 kr egress → snabbare än iMacen. **IP-skydd:** bara Workern är publik — Node-originen
+med alla vikter/formler (`src/habitat.ts`, `optimal-zone.ts`) exponeras aldrig, och rasters lämnar
+aldrig Macen (se `docs/IP-PROTECTION.md`, layout i `docs/R2-LAYOUT.md`).
 
-## Deploy-steg
+## Vad Workern gör (src/index.ts)
+- **R2 direkt (immutable):** tiles, ikoner, `manifest.json`, overview-JSON, 10×10 km hotspot-block,
+  moln/regn-frames + manifest, förbakade `zones/*.json` (optimalzon — bakas av origin, rasters i molnet aldrig).
+- **Byggt i Workern:** `/api/hotspots` (slår ihop synliga block, live-faktor från `weather/live.json`,
+  rättvis artkvot + gold-cap), `/api/v1/fungi/overview`, `/api/v1/bootstrap` (per-art-bundle `fungi`),
+  `/api/shop`, `/api/unlocked` (ents från D1 eller `?ents=` i dev).
+- **D1:** `/api/report-signal`, `/api/leaderboard`, `/api/leaderboard/score`, `DELETE /api/privacy/delete`,
+  `POST /api/verify-receipt` (dev-stub; prod = App Store Server API, se nedan). Schema: `schema.sql` (alltid `app_id`).
+- **Cron** (`0 */6 * * *`): `bakeWeatherCron` — SMHI SNOW1gv1 moln + Metobs param 5 regn → PNG-frames
+  + manifest + `weather/live.json` till R2. Kan behöva Workers Paid ($5/mån) om >10 ms CPU; R2-egress 0 kr ändå.
+- **Fallback:** allt annat (chat, redeem, reward, admin, on-demand tiles z11+, live optimalzon) proxas
+  till `ORIGIN_URL` om satt (dev). I prod: lämna `ORIGIN_URL` tom — då 404 (origin är privat).
 
+## Lokalt test utan Cloudflare
 ```bash
-# 0. En gång: Cloudflare-konto + Wrangler
-npm i -g wrangler && wrangler login
-
-# 1. R2-bucket (matchar wrangler.toml)
-wrangler r2 bucket create svampradar-tiles
-
-# 2. Baka tiles på Macen (z5–z10 alla arter + hillshade z5–z13), sedan synka till R2:
-npm run bake-tiles -- --all-species --bbox 10.9,55.3,24.2,69.1 --zmin 5 --zmax 10
-rclone config            # eller: wrangler r2 object put --bulk
-rclone sync data/tile-cache/r15/ r2://svampradar-tiles/tiles/
-rclone sync public/icons r2://svampradar-tiles/icons/
-# (URL /api/tiles/habitat/<art>/<z>/<x>/<y>.png mappas av Workern till R2-nyckeln
-#  tiles/habitat/<art>/<z>/<x>_<y>.png — samma layout som på disk.)
-
-# 3. Sätt origin (Node-servern, t.ex. på Mac via tunnel eller liten VPS):
-wrangler secret put ORIGIN_URL   # eller [vars] i wrangler.toml
-#   ORIGIN_URL = "https://din-node-origin.example.com"
-
-# 4. Deploya + custom domain (gratis HTTPS)
-cd worker && wrangler deploy
-#   Cloudflare-dash: Workers & Pages → din worker → Settings → Triggers → Custom Domain
-#   t.ex. api.svampradar.se  (peka DNS på Cloudflare, proxy orange-cloud ON)
-
-# 5. iOS: byt serverBaseURL till https://api.svampradar.se (ta bort NSAllowsArbitraryLoads
-#    i release — HTTPS føljer med; behåll NSAllowsLocalNetworking för dev-Mac)
+npx tsx worker/test-local.mts /tmp/r2seed   # mock R2 (katalog) + mock D1 (node:sqlite) — 19 tester
 ```
 
-## Routing i Workern (`src/index.ts`)
-| Begäran | Var den svaras |
-|---|---|
-| `/api/tiles/<lager>/<z>/<x>/<y>.png` | R2 `tiles/<lager>/<z>/<x>_<y>.png` (immutable) |
-| `/icons/<fil>.png` | R2 `icons/<fil>.png` (immutable) |
-| `/api/*`, `/`, `/vendor/*` (inkl. moln/regn-frames) | proxy → `ORIGIN_URL` (frames är redan immutable hos origin → CDN-cachar dem på edge) |
+## Deploy — Mälardalen först (utan iMac igång)
+```bash
+npm i -g wrangler && wrangler login
+cd worker
+wrangler r2 bucket create svampradar-tiles
+wrangler d1 create svampradar && wrangler d1 execute svampradar --file=schema.sql
+# fyll wrangler.toml: database_id från kommandot ovan
 
-## Nästa steg när detta är uppe (spåras i docs/TODO-LAUNCH.md §0b)
-- `POST /api/verify-receipt` i Workern: App Store Server API (JWS ES256, `.p8` som Worker-secret)
-  → auktoritativa entitlements i D1 → `/api/shop` + `/api/unlocked` blir korrekta direkt vid start
-  utan extra rundor; dev-lägets `?ents=`-trust stängs av i prod.
-- App Store Server Notifications v2-webhook → D1 (förnyelser/återbetalningar).
-- Flytta även moln/regn-frames till R2 (`frames/clouds/<id>`, `frames/rain/<id>`) när volymen växer.
-- D1 för signals/redeem/referrals (i stället för node:sqlite på origin).
+# 1. Baka på Macen (nuvarande data räcker för Mälardalen-test):
+npm run bake-overview -- --all-species            # data/overview/*.json
+npx tsx scripts/bake-hotspot-blocks.mts --species <fria+toppar> --out data/r2/hotspots --minScore 55 --bbox 17.3,58.9,18.5,59.7
+npx tsx scripts/bake-zones.mts --species <sammak> --both --out data/r2/zones
+npm run bake-tiles -- --species <...> --bbox 17.3,58.9,18.5,59.7 --zmin 5 --zmax 10   # data/tile-cache/r15/
+# manifest/catalog/shop från origin:
+curl -s http://127.0.0.1:3000/api/v1/manifest > data/r2/manifest.json
+curl -s http://127.0.0.1:3000/api/v1/catalog  > data/r2/catalog.json
+curl -s http://127.0.0.1:3000/api/shop         > data/r2/shop.json
+
+# 2. Synka till R2 (layout: docs/R2-LAYOUT.md)
+REV=r15
+rclone sync data/tile-cache/$REV/  r2://svampradar-tiles/domains/fungi/$REV/tiles/
+rclone sync public/icons            r2://svampradar-tiles/domains/fungi/$REV/icons/
+rclone sync data/overview           r2://svampradar-tiles/domains/fungi/$REV/overview/
+rclone sync data/r2/hotspots        r2://svampradar-tiles/domains/fungi/$REV/hotspots/
+rclone sync data/r2/zones           r2://svampradar-tiles/domains/fungi/$REV/zones/
+rclone copy data/r2/manifest.json data/r2/catalog.json data/r2/shop.json r2://svampradar-tiles/domains/fungi/$REV/
+
+# 3. Deploya Workern + custom domain (gratis HTTPS)
+wrangler deploy
+# Dash: Workers → svampradar → Triggers → Custom Domain = api.svampradar.se (orange cloud ON)
+# Workern proxar okända routes till ORIGIN_URL — sätt den tom i prod (privat origin)
+
+# 4. iOS: serverBaseURL = https://api.svampradar.se ; ta bort hårdkodad IP + NSAllowsArbitraryLoads
+#    i Release (#if DEBUG behåller dev-Mac), ta bort /api/debug/cell + testkoordinater ur Release.
+#    Testa: stäng av Macen helt — appen ska fungera helt via Cloudflare.
+```
+
+## Hela Sverige (efter Mälardalen-testet)
+1. Komplettera saknade rikstäckande lager på SSD (`canonical_gis/`): SLU Skogliga grunddata,
+   SLU Markfuktighet (DTW), 25–50 m DEM (+slope/aspect/twi), rasterisera `sgu_jordart_raw.gpkg`.
+   Warpa scoring-rasters `gdalwarp -tr 50 50` (annars >12,4 G px/lager).
+2. `npm run validate` (AUC) → skicka till Gemini med docs/AUDIT.md + MODEL-DEEP-DIVE.md.
+3. Baka över natten: `npm run bake-overview -- --all-species`, `npm run bake-blocks -- --all`,
+   `npm run bake-tiles -- --all-species --zmin 5 --zmax 10`, `bake-zones --all --both` → `data/r2/`,
+   synka till `r16/`, byt sist `tileRev` i manifest.json + `TILE_REV` i wrangler.toml, `wrangler deploy`.
+
+## Nästa (spåras i docs/TODO-LAUNCH.md §0b)
+- `POST /api/verify-receipt` i prod: App Store Server API (JWS ES256, `.p8` som Worker-secret) →
+  auktoritativa ents i D1 direkt vid start (shop/unlocked utan extra rundor); ANS v2-webhook för förnyelser.
+- D1 för reward_ledger/referrals (från node:sqlite/referrals.json på origin).
+- Moln/regn-frames kan senare servas direkt från R2 även de (de ligger redan där efter cron).
+- PMTiles i stället för lösa PNG-tiles när z11+ ska med (61 filer totalt).

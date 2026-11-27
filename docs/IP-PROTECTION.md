@@ -22,6 +22,14 @@ Hotspots är produkten, men **modellen** (vikter, faktorer, lager, trösklar i `
 - **Entitlement-gating överallt** (`gateSpecies`/`capMeta`): låsta arter ger 403/skipped, så
   även heatmaps för exklusiva arter inte kan probas gratis.
 
+## Med origin-fri Worker (`worker/` — klart i kod, deploy enligt `worker/README.md`)
+- Workern servar tiles/ikoner/overview/hotspot-block/zones/frames direkt från R2 och bygger
+  `/api/hotspots`, `/api/v1/fungi/overview`, `/api/v1/bootstrap`, `/api/shop`, `/api/unlocked`
+  själv; signaler/topplista går via D1. **Rasters och scoringskod finns ALDRIG i molnet** —
+  `zones/*.json` är förbakade polygoner (origin/Mac), aldrig rålager.
+- Sätt `ORIGIN_URL=""` i prod så Workern 404:ar allt den inte själv hanterar — Node-originen
+  (med `src/habitat.ts`, vikter, `floodDamping`) blir då helt privat bakom tunnel/allowlist.
+
 ## När Cloudflare Worker är uppe (`worker/`, se `worker/README.md`)
 - Bara Workern blir publik (custom domain + HTTPS). **Node-originen (`ORIGIN_URL`) exponeras
   aldrig** — Workern proxar `/api/*` men är det enda publika ansiktet utåt; origin kan

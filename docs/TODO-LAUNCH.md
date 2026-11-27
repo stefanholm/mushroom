@@ -4,11 +4,14 @@ Datum: 2026-11-22. Branched `vibe/mistral-chat-df5813` (PR #1, draft).
 
 ## 0b. NÄSTA UX-VINSTER — SPÅRADE (glöm ej) ✅ kom ihåg dessa
 
-- [ ] **Cloudflare Worker + R2 framför** — tiles/ikoner servas immutable direkt från R2 nära
-      användaren → snabb cold-start globalt, 0 kr egress; bara Workern blir publik (Node-originen
-      exponeras aldrig — IP-skydd, se `docs/IP-PROTECTION.md`). **Skelett klart:** `worker/`
-      (wrangler.toml + src/index.ts + README.md med deploy-steg och rclone-kommandon).
-      Deploy enligt `worker/README.md`; design i `docs/CLOUDFLARE-DEPLOY.md`.
+- [~] **Cloudflare Worker + R2 framför** — **origin-fri Worker klar i `worker/`** (R2 tiles/ikoner/
+      manifest/overview/hotspot-block/zones/frames + D1 signaler/topplista/privacy + SMHI-cron;
+      `worker/test-local.mts` = 19 lokala tester utan Cloudflare). Bara Workern publik → origin privat
+      (IP-skydd, `docs/IP-PROTECTION.md`). Layout: `docs/R2-LAYOUT.md`; deploy-runbook (Mälardalen
+      först, sedan hela Sverige): `worker/README.md`. Baka på Macen: `npm run bake-blocks` (10×10 km
+      block), `npm run bake-zones` (optimalzon till R2), `bake-tiles`/`bake-overview`. Återstår:
+      skapa bucket+D1 i dash, `wrangler deploy`, custom domain, byt `serverBaseURL` i iOS, ta bort
+      dev-IP/`NSAllowsArbitraryLoads` i Release. Design: `docs/CLOUDFLARE-DEPLOY.md`.
 - [ ] **App Store Server API-kvitto** (`POST /api/verify-receipt` i Workern, JWS ES256 med `.p8`
       som Worker-secret → entitlements i D1; ANS v2-webhook för förnyelser) → `shop`/`unlocked`
       blir auktoritativa direkt vid app-start utan extra rundor; stäng av dev-lägets
