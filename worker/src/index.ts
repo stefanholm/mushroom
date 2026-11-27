@@ -37,7 +37,12 @@ interface OverviewFile { cells: { e: number; n: number; lon: number; lat: number
 interface ZoneFile { [k: string]: unknown }
 
 async function catalog(env: Env): Promise<Catalog | null> {
-  return (await getR2Json(env, `${r2Prefix(env)}/catalog.json`, 5 * 60_000)) as Catalog | null;
+  const prefix = r2Prefix(env);
+  const c = (await getR2Json(env, `${prefix}/catalog.json`, 5 * 60_000)) as Catalog | null;
+  if (c?.species?.length) return c;
+  // fallback: äldre paket hade meta.json — acceptera den om den har species-array
+  const m = (await getR2Json(env, `${prefix}/meta.json`, 60_000)) as Catalog | null;
+  return m?.species?.length ? m : null;
 }
 
 // Enkel unlock-logik portad från src/habitat.ts (klassiker vid årskort/pro, annars pack/all/species:/reward:)
@@ -291,6 +296,12 @@ export default {
             const o = await getR2(env, key);
             if (o) return r2Response(o);
           }
+        }
+        if (p === "/api/v1/catalog") {
+          // debug-hjälp + deploy-check: R2 catalog.json (utan den 404:ar shop/unlocked/overview/hotspots)
+          const o = await getR2(env, `${r2Prefix(env)}/catalog.json`);
+          if (o) return r2Response(o, 200);
+          return Response.json({ error: "catalog.json saknas i R2 — kör npm run bake-root && node scripts/sync-r2.mjs --only root" }, { status: 404 });
         }
         if (p === "/manifest.json" || p === "/api/v1/manifest") {
           const o = await getR2(env, `${r2Prefix(env)}/manifest.json`);

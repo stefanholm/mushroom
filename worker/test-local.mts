@@ -77,10 +77,12 @@ async function call(path: string, init?: RequestInit) {
   return { status: res.status, body, headers: res.headers };
 }
 
-// manifest från R2
+// manifest + catalog från R2
 let r = await call("/manifest.json");
 ck("manifest.json från R2", r.status === 200 && (r.body as { tileRev?: string })?.tileRev === "r15", `tileRev=${(r.body as { tileRev?: string })?.tileRev}`);
 ck("manifest immutable? (json -> max-age=300)", r.headers.get("cache-control")?.includes("max-age=300") === true);
+r = await call("/api/v1/catalog");
+ck("GET /api/v1/catalog från R2", r.status === 200 && (r.body as { species?: unknown[] })?.species?.length === 61, `arter=${(r.body as { species?: unknown[] })?.species?.length}`);
 
 // hotspots från R2-block (kantarell, ents=all)
 r = await call("/api/hotspots?bbox=17.3,58.9,18.5,59.7&static=1&species=kantarell&ents=all&maxP=50&minScore=55");

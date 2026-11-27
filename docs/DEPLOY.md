@@ -6,6 +6,24 @@ Layout i bucketten: `docs/R2-LAYOUT.md`. Denna sida är hela flödet på ett st�
 
 ## 0. Innan du pull:ar på Macen (git-krock)
 
+**Pull-krock på worker/wrangler.toml?** Repot har nu samma database_id — gör:
+`git checkout -- worker/wrangler.toml` (efter att du kollat `git diff worker/wrangler.toml`),
+sedan `git pull --no-edit && npm install`. Verifiera alltid efter pull: `git log --oneline -1`
+ska visa senaste SHA (annars saknas nya scripts som `bake-root`).
+
+**R2 root-filer heter `catalog.json`** (inte `meta.json` — gamla paket). Saknas catalog.json i R2
+404:ar shop/unlocked/overview/hotspots/meta i Workern (de behöver katalogen). Workern har fallback
+till meta.json, men kör hellre: `npm run bake-root` innan `sync-r2 --only root`.
+
+**Uppladdning är ADDITIV (rclone copy)** — `sync-r2.mjs` använder copy default så en saknad lokal
+mapp aldrig raderar R2 (lärdom: `rclone sync` tömde r15-root när bake-root inte körts). `--delete`
+finns kvar men bara för hel revisionsväxling.
+
+**D1 måste ha schemat:** `cd worker && npx wrangler d1 execute svampradar-db --remote --file=schema.sql`
+Om `signals` redan finns med andra kolumner: `npx wrangler d2 ...` nej — kör
+`npx wrangler d1 execute svampradar-db --remote --command "DROP TABLE IF EXISTS signals; DROP TABLE IF EXISTS devices;"`
+och sedan schema.sql igen. (502 på report-signal = schema-mismatch.)
+
 **VARNING vid paste av kommandon i zsh:** lägg ALDRIG till `kommentar` efter ett kommando i ett
 inklistrat block — din zsh kör då `#` som argument (sett: `pathspec ':(prefix:0)#' ...`), och hela
 raden faller. Skriv kommentarer på egna rader utan `#`, eller ännu hellre: inga kommentarer alls.

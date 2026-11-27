@@ -8,6 +8,11 @@
 //   node scripts/sync-r2.mjs --src /Volumes/HD2021/SvampradarData/r2_ready   # färdigpaketerat träd
 //       (--src synkar hela trädet, dvs det som ligger under <src>/domains -> r2:natureradar-data/domains)
 //   node scripts/sync-r2.mjs --rev r16 --remote r2:natureradar-data     # annan rclone-remote
+//   node scripts/sync-r2.mjs --rev r16 --delete            # VARNING: rclone sync (raderar remote-extras)
+//
+// VIKTIGT (lärdom 2026-11-27): default är ADDITIV upload (rclone copy) — aldrig `sync`, för sync
+// raderar allt i målet som saknas lokalt (vi råkade tömma domains/fungi/r15/ root när lokal
+// data/r2 saknade bake-root-filerna). Använd --delete ENDAST vid hel revisionsväxling.
 //
 // Förväntar sig rclone-remote "r2" -> bucket natureradar-data (rclone config).
 // Baka alltid i /Volumes/HD2021/SvampradarData/r2_ready/ och byt DEFAULT_TILE_REV i
@@ -32,7 +37,7 @@ const REMOTE = `${REMOTE_ROOT}/domains/fungi/${REV}`;
 if (SRC) {
   const srcDomains = path.join(SRC, "domains");
   if (!fs.existsSync(srcDomains)) { console.error(`--src ${SRC}: hittar ingen ${srcDomains}`); process.exit(1); }
-  const cmd = ["rclone", "sync", srcDomains + "/", `${REMOTE_ROOT}/domains/`, "--transfers", "16", "--checkers", "16", "--stats", "30s"];
+  const cmd = ["rclone", args.includes("--delete") ? "sync" : "copy", srcDomains + "/", `${REMOTE_ROOT}/domains/`, "--transfers", "16", "--checkers", "16", "--stats", "30s"];
   console.log(`=== --src: ${srcDomains} -> ${REMOTE_ROOT}/domains/`);
   if (dry) { console.log("  " + cmd.join(" ")); process.exit(0); }
   const t = Date.now();
@@ -55,7 +60,9 @@ const todo = only.length > 0 ? PARTS.filter(([n]) => only.includes(n)) : PARTS;
 for (const [name, src, dst] of todo) {
   if (!fs.existsSync(src)) { console.log(`hoppar över ${name}: ${src} saknas`); continue; }
   const target = dst ? `${REMOTE}/${dst}/` : `${REMOTE}/`;
-  const cmd = ["rclone", "sync", src + "/", target, "--transfers", "16", "--checkers", "16", "--stats", "10s", "--progress"];
+  const del = args.includes("--delete");
+  const cmd = ["rclone", del ? "sync" : "copy", src + "/", target, "--transfers", "16", "--checkers", "16", "--stats", "10s"];
+  if (del) cmd.push("--progress");
   console.log(`\n=== ${name}: ${src} -> ${target}`);
   if (dry) { console.log("  " + cmd.join(" ")); continue; }
   const t = Date.now();

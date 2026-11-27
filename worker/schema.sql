@@ -26,3 +26,19 @@ CREATE TABLE IF NOT EXISTS devices (
 );
 
 -- Framtida: reward_ledger(app_id, device, kind, species, at) för betyg/referral-claims.
+CREATE TABLE IF NOT EXISTS profiles (
+  app_id TEXT NOT NULL,
+  device TEXT NOT NULL,
+  data TEXT NOT NULL DEFAULT '{}',
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (app_id, device)
+);
+CREATE TABLE IF NOT EXISTS reward_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  app_id TEXT NOT NULL,
+  device TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  species TEXT,
+  at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reward_app ON reward_ledger(app_id, device);

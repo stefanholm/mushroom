@@ -51,6 +51,10 @@ let r = await get("/manifest.json").catch((e) => ({ status: 0, body: null, error
 if (r.status === 200 && r.body?.tileRev) report("PASS", "manifest.json", `tileRev=${r.body.tileRev}`);
 else report("FAIL", "manifest.json", `status=${r.status}`);
 
+r = await get("/api/v1/catalog");
+if (r.status === 200 && r.body?.species?.length === 61) report("PASS", "catalog.json i R2", `arter=${r.body.species.length}`);
+else report("FAIL", "catalog.json i R2", `status=${r.status} — UTAN catalog 404:ar shop/unlocked/overview/hotspots/meta! Kör: npm run bake-root && node scripts/sync-r2.mjs --rev r15 --only root`);
+
 r = await get(`/api/v1/bootstrap?species=${SPECIES}&ents=all`);
 if (r.status === 200 && r.body?.shop && r.body?.unlocked && Array.isArray(r.body?.rainSpans) && r.body?.fungi?.[SPECIES]) {
   report("PASS", "bootstrap", `rainSpans=${r.body.rainSpans} fungi=${Object.keys(r.body.fungi ?? {}).join(",")} zone=${r.body.fungi[SPECIES].zone ? "JA" : "null/pending"}`);
@@ -67,7 +71,7 @@ report(r.status === 200 && tk.includes("55km") && tk.includes("18km") && tk.incl
 r = await get(`/api/hotspots?bbox=${BBOX}&static=1&species=${SPECIES}&ents=all&maxP=20`);
 const n = r.body?.hotspots?.length ?? -1;
 report(r.status === 200 && n > 0 ? "PASS" : r.status === 200 ? "WARN" : "FAIL", "hotspots",
-  `status=${r.status} pins=${n} source=${r.body?.meta?.source ?? "-"} (0 pins = block saknas/nyckelschema fel — kör bake-blocks + sync-r2)`);
+  `status=${r.status} pins=${n} source=${r.body?.meta?.source ?? "-"} ${r.status === 404 ? "(404 = catalog saknas ELLER worker ej deployad — se catalog-checken ovan)" : "(0 pins = block saknas/nyckelschema fel — kör bake-blocks + sync-r2)"}`);
 
 r = await get(`/api/v1/fungi/optimal-zone?species=${SPECIES}&static=1&ents=all`);
 report(r.status === 200 ? (r.body?.optimalZone ? "PASS" : "WARN") : "FAIL", "optimal-zone",
@@ -89,7 +93,7 @@ r = await get(`/api/hotspots?bbox=${BBOX}&static=1&species=kantarell`, {});
 report(r.status === 403 ? "PASS" : "WARN", "403 låst art utan ents", `status=${r.status} (kantarell ska ge 403 för free)`);
 
 r = await get(`/api/report-signal`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ device: "deploycheck", species: SPECIES, lat: 59.3, lon: 18.1, score: 50 }) });
-report(r.status === 200 && r.body?.ok ? "PASS" : "WARN", "report-signal (D1)", `status=${r.status}`);
+report(r.status === 200 && r.body?.ok ? "PASS" : "WARN", "report-signal (D1)", `status=${r.status} body=${JSON.stringify(r.body).slice(0, 120)} ${r.status === 502 ? "(kolla att D1 har schemat: npx wrangler d1 execute svampradar-db --file=worker/schema.sql --remote)" : ""}`);
 
 console.log(`\n${pass} PASS, ${warn} WARN, ${fail} FAIL — ${BASE}`);
 process.exit(fail > 0 ? 1 : 0);
