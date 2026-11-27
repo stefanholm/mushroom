@@ -5,6 +5,13 @@ Live just nu (2026-11-27): Worker `https://svampradar.natureradar-se.workers.dev
 Layout i bucketten: `docs/R2-LAYOUT.md`. Denna sida är hela flödet på ett ställe.
 
 ## 0. Innan du pull:ar på Macen (git-krock)
+
+**VARNING vid paste av kommandon i zsh:** lägg ALDRIG till `kommentar` efter ett kommando i ett
+inklistrat block — din zsh kör då `#` som argument (sett: `pathspec ':(prefix:0)#' ...`), och hela
+raden faller. Skriv kommentarer på egna rader utan `#`, eller ännu hellre: inga kommentarer alls.
+
+**Binding-namn:** repots `worker/wrangler.toml` binder R2 som `TILES` och kod läser `env.TILES` —
+Gemini-varianten hade `DATA`. Efter pull + `wrangler deploy` matchar det igen.
 Du har lokala ändringar i `worker/src/index.ts` + `scripts/bake-malardalen-r2.mjs` (Gemini-varianten,
 med `.bak_20261127_*`-backups). Repot har nu hela kontraktet (bootstrap med shop/unlocked/rainSpans,
 overview med tier-nycklar 55km/18km/6km + goldPeaks, zones från R2, edge-/api/meta). Spara undan:
@@ -17,6 +24,8 @@ git stash show -p stash@{0} | head -50   # jämför; droppa om repots variant du
 (`-m` FÖRE `--`.) Block-nycklar måste vara `<bx>_<by>` i SWEREF 10 km-meter (så skriver
 `npm run bake-blocks`); om Gemini-scriptet skrev andra nycklar (t.ex. lon/lat-offset) → baka om blocken
 med `bake-hotspot-blocks.mts`, annars hittar Workern inga pins ("inga svampar").
+
+Se även `docs/FRONTEND-CONTRACT.md` — exakt vad iOS ska skicka (endpoints, params, svar, failproof).
 
 ## 1. Baka (på Macen, rasters finns där — aldrig i molnet)
 ```bash
