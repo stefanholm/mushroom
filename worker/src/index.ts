@@ -33,7 +33,30 @@ interface Catalog {
   species: CatalogSpecies[];
 }
 interface BlockFile { art: string; bx: number; by: number; pins: { lon: number; lat: number; s: number }[] }
-interface OverviewFile { cells: { e: number; n: number; lon: number; lat: number; max: number }[] }
+interface OverviewFile { cells: { e: number; n: number; lon: number; lat: number; max: number }[]; generatedAt?: string }
+
+// Default-pyramid-profil när overview/species-pyramid-profile.json saknas i R2 — workern skickar då
+// ALDRIG null som profil-värde (AppModels.swift: profiles är [String: SpeciesPyramidProfile], icke-optional).
+function defaultProfile(sp: string, ov: OverviewFile | null): Record<string, unknown> {
+  const cells = ov?.cells ?? [];
+  const nationalCells: Record<string, number> = {};
+  for (const size of [140000, 55000, 18000, 6000, 2000]) {
+    nationalCells[`${size / 1000}km`] = new Set(cells.map((c) => `${Math.floor(c.e / size)},${Math.floor(c.n / size)}`)).size;
+  }
+  let top = 0, p95 = 0;
+  if (cells.length > 0) {
+    top = cells.reduce((m, c) => Math.max(m, c.max), 0);
+    const sorted = cells.map((c) => c.max).sort((a, b) => a - b);
+    p95 = sorted[Math.floor(0.95 * (sorted.length - 1))];
+  }
+  return {
+    nationalCells,
+    topScore: Number(top.toFixed(1)),
+    p95Score: Number(p95.toFixed(1)),
+    rarityWeight: 1,
+    updatedAt: ov?.generatedAt ?? new Date().toISOString(),
+  };
+}
 interface ZoneFile { [k: string]: unknown }
 
 async function catalog(env: Env): Promise<Catalog | null> {
@@ -211,7 +234,7 @@ async function overviewFromR2(req: Request, env: Env): Promise<Response | null> 
   for (const sp of open) {
     const ov = (await getR2Json(env, `${prefix}/overview/${sp}.json`, 10 * 60_000)) as OverviewFile | null;
     if (!ov?.cells) continue;
-    profiles[sp] = profile?.profiles?.[sp] ?? null;
+    profiles[sp] = profile?.profiles?.[sp] ?? defaultProfile(sp, ov);
     const tierMaps = new Map<string, Map<string, { species: string; lat: number; lon: number; northing: number; easting: number; score: number; count: number; gold: boolean }>>();
     for (const [label] of TIER_SIZES) tierMaps.set(label, new Map());
     for (const c of ov.cells) {
@@ -523,7 +546,7 @@ async function bootstrapWorker(req: Request, env: Env): Promise<Response> {
       const zone = (await getR2Json(env, `${prefix}/zones/${id}-${date}-${st}.json`, 60_000)) as ZoneFile | null;
       fungi[id] = {
         label: sp.label, season: sp.season, rainWindowDays: sp.rainWindowDays, pack: sp.pack, protected: sp.protected,
-        profile: profile?.profiles?.[id] ?? null,
+        profile: profile?.profiles?.[id] ?? defaultProfile(id, ov),
         overviewCells: cells,
         zone, zonePending: zone ? false : true,
       };

@@ -115,7 +115,25 @@ ck("overview: tier-nycklar exakt 55km/18km/6km + goldPeaks + mode", JSON.stringi
   ck("overview tier-cell har northing/easting/count (OverviewTierSpot)", !!c0 && typeof c0.northing === "number" && typeof c0.easting === "number" && typeof c0.count === "number",
     `ex=${JSON.stringify(c0)}`);
 }
-ck("overview profile med", !!(r.body as { profiles?: Record<string, unknown> })?.profiles?.kantarell);
+{
+  const pr = (r.body as { profiles?: Record<string, Record<string, unknown> | null> })?.profiles?.kantarell;
+  ck("overview profile: aldrig null (defaultProfile-fallback), har nationalCells+topScore",
+    !!pr && typeof pr === "object" && !!pr.nationalCells && typeof pr.topScore === "number",
+    `profile=${pr ? JSON.stringify(pr).slice(0, 80) : "null"}`);
+}
+// repro av live-buggen: overview-fil finns men species-pyramid-profile.json saknas i R2 -> defaultProfile, ej null
+{
+  const cat = objects.get("domains/fungi/r15/catalog.json");
+  const ov = objects.get("domains/fungi/r15/overview/kantarell.json");
+  if (cat && ov) {
+    objects.set("domains/fungi/r16/catalog.json", cat);
+    objects.set("domains/fungi/r16/overview/kantarell.json", ov);
+    const envR16: Env = { ...env, DEFAULT_TILE_REV: "r16" };
+    r = await call("/api/v1/fungi/overview?species=kantarell&static=1&ents=all", undefined, envR16);
+    const pr = (r.body as { profiles?: Record<string, Record<string, unknown> | null> })?.profiles?.kantarell;
+    ck("overview utan pyramid-fil i R2 (r16): profil = defaultProfile-objekt, ej null", r.status === 200 && !!pr && typeof pr === "object" && !!pr.nationalCells, `status=${r.status} profile=${pr ? "objekt" : String(pr)}`);
+  }
+}
 
 // bootstrap i worker
 r = await call("/api/v1/bootstrap?species=kantarell&ents=all");
