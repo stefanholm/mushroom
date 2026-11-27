@@ -1,5 +1,7 @@
 # worker/ — Cloudflare Worker framför Svampradar (origin-fri: R2 + D1 + SMHI-cron)
 
+**Live (2026-11-27):** `https://svampradar.natureradar-se.workers.dev` — R2 `natureradar-data`, D1 `svampradar-db`, Mälardalen `r15` synkat, iOS pekar hit.
+
 **Varför:** iPhonen hämtar färdiga produkter (PNG-tiles, JSON-block, frames) från svensk edge med
 `immutable` + 0 kr egress → snabbare än iMacen. **IP-skydd:** bara Workern är publik — Node-originen
 med alla vikter/formler (`src/habitat.ts`, `optimal-zone.ts`) exponeras aldrig, och rasters lämnar
@@ -27,9 +29,9 @@ npx tsx worker/test-local.mts /tmp/r2seed   # mock R2 (katalog) + mock D1 (node:
 ```bash
 npm i -g wrangler && wrangler login
 cd worker
-wrangler r2 bucket create svampradar-tiles
-wrangler d1 create svampradar && wrangler d1 execute svampradar --file=schema.sql
-# fyll wrangler.toml: database_id från kommandot ovan
+wrangler r2 bucket create natureradar-data   # redan skapad (rclone-remote "r2")
+wrangler d1 create svampradar-db && wrangler d1 execute svampradar-db --file=schema.sql   # redan skapad
+# fyll wrangler.toml: database_id från dash; bucket = natureradar-data; D1 = svampradar-db
 
 # 1. Baka på Macen (nuvarande data räcker för Mälardalen-test):
 npm run bake-overview -- --all-species            # data/overview/*.json
@@ -41,22 +43,30 @@ curl -s http://127.0.0.1:3000/api/v1/manifest > data/r2/manifest.json
 curl -s http://127.0.0.1:3000/api/v1/catalog  > data/r2/catalog.json
 curl -s http://127.0.0.1:3000/api/shop         > data/r2/shop.json
 
-# 2. Synka till R2 (layout: docs/R2-LAYOUT.md)
+# 2. Synka till R2 (layout: docs/R2-LAYOUT.md) — i avgränsade delar, hög parallellitet:
+node scripts/sync-r2.mjs --rev r15            # eller --only tiles,hotspots,... ; --dry för torr körning
 REV=r15
-rclone sync data/tile-cache/$REV/  r2://svampradar-tiles/domains/fungi/$REV/tiles/
-rclone sync public/icons            r2://svampradar-tiles/domains/fungi/$REV/icons/
-rclone sync data/overview           r2://svampradar-tiles/domains/fungi/$REV/overview/
-rclone sync data/r2/hotspots        r2://svampradar-tiles/domains/fungi/$REV/hotspots/
-rclone sync data/r2/zones           r2://svampradar-tiles/domains/fungi/$REV/zones/
-rclone copy data/r2/manifest.json data/r2/catalog.json data/r2/shop.json r2://svampradar-tiles/domains/fungi/$REV/
+rclone sync data/tile-cache/$REV/  r2:natureradar-data/domains/fungi/$REV/tiles/
+rclone sync public/icons            r2:natureradar-data/domains/fungi/$REV/icons/
+rclone sync data/overview           r2:natureradar-data/domains/fungi/$REV/overview/
+rclone sync data/r2/hotspots        r2:natureradar-data/domains/fungi/$REV/hotspots/
+rclone sync data/r2/zones           r2:natureradar-data/domains/fungi/$REV/zones/
+rclone copy data/r2/manifest.json data/r2/catalog.json data/r2/shop.json r2:natureradar-data/domains/fungi/$REV/
 
 # 3. Deploya Workern + custom domain (gratis HTTPS)
 wrangler deploy
+# TLS-noting: NYA *.workers.dev-subdomäner kan ge TLS handshake-fel (-1200) i iOS första minuterna
+# tills kantcertifikat sprids — verifiera alltid med curl på Macen innan du felsöker i Swift.
+# Custom domain när det är dags: api.natureradar.se (orange cloud ON).
+# Säkerhet: om en R2-nyckel råkar synas i terminal/logg — revokera+rotera direkt i dash
+# (aldrig skriva secrets i kommandon som loggas).
 # Dash: Workers → svampradar → Triggers → Custom Domain = api.svampradar.se (orange cloud ON)
 # Workern proxar okända routes till ORIGIN_URL — sätt den tom i prod (privat origin)
 
-# 4. iOS: serverBaseURL = https://api.svampradar.se ; ta bort hårdkodad IP + NSAllowsArbitraryLoads
-#    i Release (#if DEBUG behåller dev-Mac), ta bort /api/debug/cell + testkoordinater ur Release.
+# 4. iOS: serverBaseURL = Worker-URL (nu https://svampradar.natureradar-se.workers.dev);
+#    ta bort hårdkodad IP + NSAllowsArbitraryLoads i Release (#if DEBUG behåller dev-Mac).
+#    /api/debug/cell finns INTE i prod-Workern (404 — IP-skydd) → iOS måste #if DEBUG-gate:a anropet.
+#    Edge-/api/meta svarar från catalog.json (produkt-fält; väder-fält null utan origin).
 #    Testa: stäng av Macen helt — appen ska fungera helt via Cloudflare.
 ```
 

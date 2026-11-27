@@ -65,7 +65,7 @@ const DB = {
   },
 };
 
-const env: Env = { TILES: TILES as never, DB: DB as never, TILE_REV: "r15", APP_ID: "svampradar", FREE_HIDE_FRACTION: "0.3", ORIGIN_URL: "http://127.0.0.1:3100" };
+const env: Env = { TILES: TILES as never, DB: DB as never, DEFAULT_TILE_REV: "r15", APP_ID: "svampradar", FREE_HIDE_FRACTION: "0.3", ORIGIN_URL: "http://127.0.0.1:3100" };
 
 let pass = 0, fail = 0;
 const ck = (n: string, c: boolean, x = "") => { if (c) { pass++; console.log("OK  ", n, x); } else { fail++; console.log("FAIL", n, x); } };
@@ -108,6 +108,13 @@ const f = (r.body as { fungi?: Record<string, { overviewCells?: unknown[]; zoneP
 ck("bootstrap: tileRev + fungi bundle", r.status === 200 && (r.body as { tileRev?: string })?.tileRev === "r15" && !!f && f.overviewCells!.length > 0,
   `cells=${f?.overviewCells?.length} win=${f?.rainWindowDays} zonePending=${f?.zonePending}`);
 ck("bootstrap: shop + unlocked + leaderboard", !!(r.body as { shop?: unknown; unlocked?: { unlocked?: string[] } })?.shop && (r.body as { unlocked?: { unlocked?: string[] } })?.unlocked?.unlocked?.includes("kantarell"));
+
+// edge /api/meta från catalog.json (AppModels.swift-kontrakt)
+r = await call("/api/meta?species=kantarell&ents=all");
+ck("edge /api/meta: speciesList 61 + tileRev + topSpots", r.status === 200 && (r.body as { speciesList?: unknown[] })?.speciesList?.length === 61 && (r.body as { tileRev?: string })?.tileRev === "r15" && !!(r.body as { topSpots?: unknown })?.topSpots,
+  `species=${(r.body as { species?: string })?.species} tileRev=${(r.body as { tileRev?: string })?.tileRev}`);
+r = await call("/api/meta?species=kantarell");
+ck("edge /api/meta utan ents: kantarell locked i speciesList", (r.body as { speciesList?: { id: string; locked: boolean }[] })?.speciesList?.find((s) => s.id === "kantarell")?.locked === true);
 
 // unlocked via ents
 r = await call("/api/unlocked?device=dev1&ents=topspots.2026");

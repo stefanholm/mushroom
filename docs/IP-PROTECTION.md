@@ -52,3 +52,5 @@ Hotspots är produkten, men **modellen** (vikter, faktorer, lager, trösklar i `
 - [ ] Cloudflare Rate Limiting/WAF på `/api/*`
 - [ ] `.p8` och andra secrets bara som Worker-secrets (aldrig i repo/.env i prod)
 - [ ] Repo:t privat; `.env` git-ignored (är det)
+- [ ] **R2/API-nycklar:** om en nyckel råkat synas i terminal/logg — revokera+rotera direkt i
+      Cloudflare-dash; skriv aldrig secrets i kommandon som loggas (använd `wrangler secret put`)

@@ -4,7 +4,7 @@ import type { Env, R2BucketLike } from "./cf-types.js";
 export const R2_PREFIX_DEFAULT = "domains/fungi";
 
 export function r2Prefix(env: Env): string {
-  const rev = env.TILE_REV ?? "r16";
+  const rev = env.DEFAULT_TILE_REV ?? env.TILE_REV ?? "r15";
   return `${R2_PREFIX_DEFAULT}/${rev}`;
 }
 

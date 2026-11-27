@@ -1,9 +1,11 @@
-# R2-LAYOUT — bucket `svampradar-tiles`, hur allt är strukturerat
+# R2-LAYOUT — bucket `natureradar-data` (rclone-remote `r2:`), hur allt är strukturerat
+
+Live just nu (2026-11-27): Worker på `https://svampradar.natureradar-se.workers.dev`, Mälardalen-paket `r15` synkat, iOS pekar på Worker-URL:en.
 
 En bucket, prefix per domän + revision (immutable deploy: baka till NY mapp, byt `tileRev` sist):
 
 ```
-r2://svampradar-tiles/
+r2:natureradar-data/
 ├── promo/family.json                        # korsmarknadsföring mellan appar (utan nytt App Store-släpp)
 └── domains/fungi/<TILE_REV>/                # t.ex. r15 idag, r16 vid nästa helbake
     ├── manifest.json                        # publikt manifest (tileRev, bounds, endpoints) — från GET /api/v1/manifest
@@ -33,19 +35,26 @@ r2://svampradar-tiles/
 - moln/regn-manifest+frames → `frames/...`
 
 ## Synk-kommandon (från Mac, efter bakning)
+Baka alltid nya revisioner i `/Volumes/HD2021/SvampradarData/r2_ready/` (med `canonical_gis/` och
+`gdalwarp -tr 50 50` på scoring-rasters). Synka i avgränsade delmängder med hög parallellitet —
+tiotusentals små JSON-filer i EN stor sync är långsamt (lärdom 2026-11-27):
 ```bash
+node scripts/sync-r2.mjs --rev r16                      # alla delar, --transfers 16 --checkers 16 per del
+node scripts/sync-r2.mjs --rev r16 --only hotspots,zones  # bara utvalda delar
+node scripts/sync-r2.mjs --rev r16 --dry                # torr körning
 REV=r16
-rclone sync data/tile-cache/$REV/        r2://svampradar-tiles/domains/fungi/$REV/tiles/
-rclone sync public/icons                  r2://svampradar-tiles/domains/fungi/$REV/icons/
-rclone sync data/overview                 r2://svampradar-tiles/domains/fungi/$REV/overview/
-rclone sync data/r2/hotspots              r2://svampradar-tiles/domains/fungi/$REV/hotspots/
-rclone sync data/r2/zones                 r2://svampradar-tiles/domains/fungi/$REV/zones/
-# manifest/catalog/shop: hämta från origin först
-curl -s $ORIGIN/api/v1/manifest > data/r2/manifest.json
-curl -s $ORIGIN/api/v1/catalog  > data/r2/catalog.json
-curl -s $ORIGIN/api/shop         > data/r2/shop.json
-rclone sync data/r2/manifest.json data/r2/catalog.json data/r2/shop.json r2://svampradar-tiles/domains/fungi/$REV/
+rclone sync data/tile-cache/$REV/  r2:natureradar-data/domains/fungi/$REV/tiles/    --transfers 16 --checkers 16
+rclone sync public/icons            r2:natureradar-data/domains/fungi/$REV/icons/
+rclone sync data/overview           r2:natureradar-data/domains/fungi/$REV/overview/
+rclone sync data/r2/hotspots        r2:natureradar-data/domains/fungi/$REV/hotspots/ --transfers 16 --checkers 16
+rclone sync data/r2/zones           r2:natureradar-data/domains/fungi/$REV/zones/
+# manifest/catalog/shop: hämta från origin först (t.ex. via webbläsare eller node-fetch på Macen)
+#   GET /api/v1/manifest -> data/r2/manifest.json ; GET /api/v1/catalog -> catalog.json ; GET /api/shop -> shop.json
+rclone copy data/r2/manifest.json data/r2/catalog.json data/r2/shop.json r2:natureradar-data/domains/fungi/$REV/
 ```
+
+**Immutable deploy:** byt `DEFAULT_TILE_REV` i `worker/wrangler.toml` (och `tileRev` i manifest.json)
+FÖRST när hela revisionen är synkad, sedan `cd worker && wrangler deploy`. Rulla tillbaka = byt tillbaka.
 
 ## Gratisgränser att passa (0 kr/mån)
 - R2: 10 GB lagring, **0 kr egress**, 10M Class A (läs)/mån, **1M Class A-skrivningar/mån** — baka bara z5–z10 (~250k filer), aldrig z11 (~970k). Hotspot-block ~4,5k filer. På sikt PMTiles (61 filer).

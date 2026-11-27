@@ -4,7 +4,7 @@ Datum: 2026-11-22. Branched `vibe/mistral-chat-df5813` (PR #1, draft).
 
 ## 0b. NÄSTA UX-VINSTER — SPÅRADE (glöm ej) ✅ kom ihåg dessa
 
-- [~] **Cloudflare Worker + R2 framför** — **origin-fri Worker klar i `worker/`** (R2 tiles/ikoner/
+- [x] **Cloudflare Worker + R2 framför — DEPLOYAD 2026-11-27** (`https://svampradar.natureradar-se.workers.dev`, R2 `natureradar-data`, D1 `svampradar-db`, Mälardalen `r15` synkat, iOS pekar på Worker). — **origin-fri Worker klar i `worker/`** (R2 tiles/ikoner/
       manifest/overview/hotspot-block/zones/frames + D1 signaler/topplista/privacy + SMHI-cron;
       `worker/test-local.mts` = 19 lokala tester utan Cloudflare). Bara Workern publik → origin privat
       (IP-skydd, `docs/IP-PROTECTION.md`). Layout: `docs/R2-LAYOUT.md`; deploy-runbook (Mälardalen
@@ -24,6 +24,13 @@ Datum: 2026-11-22. Branched `vibe/mistral-chat-df5813` (PR #1, draft).
 - [ ] **IP-skydd i prod** — se `docs/IP-PROTECTION.md`: debug-endpoints redan 404 utan
       `DEBUG_API=1`; `/api/meta` skickar lager-diagnostik bara lokalt; rate limits på
       hotspots/overview/optimal-zone/bootstrap/tiles; Worker framför så origin är privat.
+
+### Lärdomar från första deploy (2026-11-27 — handoff)
+- Uploada tiotusentals små JSON-block i avgränsade delmängder: `node scripts/sync-r2.mjs --rev r16 [--only hotspots,zones]` (--transfers 16 --checkers 16 per del).
+- Baka nya revisioner i `/Volumes/HD2021/SvampradarData/r2_ready/`; byt `DEFAULT_TILE_REV` i `worker/wrangler.toml` FÖRST när hela revisionen är synkad.
+- Nya `*.workers.dev`-subdomäner kan ge TLS `-1200` i iOS första minuterna — verifiera med curl innan Swift-felsökning.
+- `/api/debug/cell` 404:ar i prod-Workern (IP-skydd) — iOS måste `#if DEBUG`-gatea det. Edge-`/api/meta` svarar från `catalog.json`.
+- Om en R2-nyckel syns i terminal/logg: revokera+rotera direkt i Cloudflare-dash.
 
 ## 0. Först: fixa git-state på Macen (pull vägrade nyss pga lokal ändring i src/server.ts)
 

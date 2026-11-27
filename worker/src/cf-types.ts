@@ -24,7 +24,8 @@ export interface Env {
   TILES: R2BucketLike;
   DB: D1DatabaseLike;
   ORIGIN_URL?: string;
-  TILE_REV?: string;
+  DEFAULT_TILE_REV?: string; // aktiv revision (wrangler vars) — byt sist vid ny bake
+  TILE_REV?: string; // bakåtkompat
   APP_ID?: string;
   FREE_HIDE_FRACTION?: string;
 }

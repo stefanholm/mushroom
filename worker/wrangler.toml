@@ -1,29 +1,30 @@
 # Cloudflare Worker framför Svampradar — origin-fri (R2 + D1 + SMHI-cron).
-# Deploy: se worker/README.md
+# Deploy: se worker/README.md  (live just nu: https://svampradar.natureradar-se.workers.dev)
 name = "svampradar"
 main = "src/index.ts"
 compatibility_date = "2026-11-01"
 
-# R2-bucket med allt bakat innehåll (prefix domains/fungi/<TILE_REV>/... i bucketten)
+# R2-bucket (rclone-remote "r2" pekar på denna): natureradar-data
 [[r2_buckets]]
 binding = "TILES"
-bucket_name = "svampradar-tiles"
+bucket_name = "natureradar-data"
 
-# D1: signaler/topplista/ents (app_id sätts från dag 1 — schema.sql)
+# D1: svampradar-db (init: wrangler d1 execute svampradar-db --file=schema.sql)
 [[d1_databases]]
 binding = "DB"
-database_name = "svampradar"
-database_id = "SKAPA-I-DASHEN-ELLER-VIA-WRANGLER"
+database_name = "svampradar-db"
+database_id = "FYLL-I-FRAN-DASHEN"
 
 # SMHI-cron: baka moln/regn-frames till R2 (kan behöva Workers Paid om >10 ms CPU)
 [triggers]
 crons = ["0 */6 * * *"]
 
 [vars]
-# Publik cache-revision — samma som TILE_VERSION i Node ("r15" idag, "r16" vid nästa helbake)
-TILE_REV = "r15"
-# App-id i D1-tabellerna (så Bärradar/Blomradar/Pollenradar kan dela DB)
+# AKTIV revision — byt till "r16" osv FÖRST när hela revisionen är synkad till R2
+# (immutable deploy: baka ny mapp, testa, byt sist DEFAULT_TILE_REV, wrangler deploy)
+DEFAULT_TILE_REV = "r15"
+# App-id i D1-tabellerna (Bärradar/Blomradar/Pollenradar delar DB utan kollisioner)
 APP_ID = "svampradar"
 FREE_HIDE_FRACTION = "0.3"
-# Dev-fallback: om satt proxas okända routes hit (Node på Macen). Lämna tom i prod.
+# Dev-fallback: om satt proxas okända routes hit (Node på Macen). TOM i prod (origin privat).
 ORIGIN_URL = ""

@@ -22,7 +22,10 @@ const BLOCK_M = 10000;
 const MACRO_SPAN = 1.5;
 const MAXP_MACRO = 180;
 
-interface CatalogSpecies { id: string; label: string; season: [number, number]; pack: string | null; protected: boolean; rainWindowDays: number; }
+interface CatalogSpecies { id: string; label: string; season: [number, number]; pack: string | null; protected: boolean; rainWindowDays: number; eatScore: number; }
+function tileRev(env: Env): string {
+  return env.DEFAULT_TILE_REV ?? env.TILE_REV ?? "r15";
+}
 interface Catalog {
   freeSpecies: string[];
   klassiker: string[];
@@ -273,7 +276,7 @@ export default {
           const o = await getR2(env, `${r2Prefix(env)}/manifest.json`);
           if (o) return r2Response(o, 200);
           return Response.json(
-            { api: "v1", tileRev: env.TILE_REV ?? "r16", generatedAt: new Date().toISOString(), bounds: [SWEDEN.minLon, SWEDEN.minLat, SWEDEN.maxLon, SWEDEN.maxLat] },
+            { api: "v1", tileRev: tileRev(env), generatedAt: new Date().toISOString(), bounds: [SWEDEN.minLon, SWEDEN.minLat, SWEDEN.maxLon, SWEDEN.maxLat] },
             { headers: { ...SECURITY_HEADERS, "Cache-Control": "public, max-age=300" } },
           );
         }
@@ -324,6 +327,47 @@ export default {
               const body = await new Response(o.body).json();
               return Response.json({ ...(body as object), cached: true, asOf: date }, { headers: { ...SECURITY_HEADERS, "Cache-Control": "public, max-age=60" } });
             }
+          }
+        }
+        if (p === "/api/meta") {
+          // Edge-variant av /api/meta (AppModels.swift kontrakt): produkt-fält från catalog.json.
+          // Inget live-väder här (fast) — väder-fälten är null tills origin är inkopplad.
+          // OBS: /api/debug/cell finns INTE i prod (404) — iOS måste #if DEBUG-gate:a det.
+          const cat = await catalog(env);
+          if (cat) {
+            const ents = new Set(await resolveEnts(request, env));
+            const key = (url.searchParams.get("species") ?? "kantarell").split(",")[0].trim() || "kantarell";
+            const sp = cat.species.find((s) => s.id === key) ?? cat.species[0];
+            const unlocked = unlockedIds(cat, ents);
+            const year = new Date().getFullYear();
+            return Response.json({
+              species: sp.id,
+              label: sp.label,
+              eatScore: sp.eatScore,
+              protected: sp.protected,
+              season: sp.season,
+              entitlements: [...ents],
+              topSpots: {
+                capped: !canSeeTopSpots(ents) && !isTrial(url, ents),
+                trial: isTrial(url, ents),
+                topHiddenFraction: freeHideFraction(env),
+                passId: `topspots:${year}`,
+                passLabel: `Årskort ${year}`,
+                passPriceSek: 249,
+              },
+              packs: cat.packs.map((pk) => ({ id: pk.id, label: pk.label, priceSek: pk.priceSek, speciesCount: pk.species.length })),
+              freeSpecies: cat.freeSpecies,
+              speciesList: cat.species.map((s) => ({
+                id: s.id, label: s.label, eatScore: s.eatScore, season: s.season,
+                protected: s.protected, pack: s.pack, rainWindowDays: s.rainWindowDays,
+                locked: !unlocked.has(s.id),
+              })),
+              rain14: null, rainFactor: 0.5, seasonFactor: null, gdd5: null, minTemp48h: null, frost: 1, flush: 1,
+              lat: Number(url.searchParams.get("lat") ?? 62.5), lon: Number(url.searchParams.get("lon") ?? 15.5),
+              asOf: new Date().toISOString().slice(0, 10),
+              tileRev: tileRev(env),
+              forestKnown: true, maskUsed: true,
+            }, { headers: { ...SECURITY_HEADERS, "Cache-Control": "public, max-age=60", "Access-Control-Allow-Origin": "*" } });
           }
         }
         if (p === "/api/v1/bootstrap" || p === "/api/bootstrap") {
@@ -422,7 +466,7 @@ async function bootstrapWorker(req: Request, env: Env): Promise<Response> {
     }
     return Response.json({
       api: "v1",
-      tileRev: manifest?.tileRev ?? env.TILE_REV ?? "r16",
+      tileRev: (manifest?.tileRev as string) ?? tileRev(env),
       serverTime: new Date().toISOString(),
       asOf: new Date().toISOString().slice(0, 10),
       shop,
@@ -436,7 +480,7 @@ async function bootstrapWorker(req: Request, env: Env): Promise<Response> {
   }
   // utan katalog: bara manifest-bas
   return Response.json({
-    api: "v1", tileRev: manifest?.tileRev ?? env.TILE_REV ?? "r16",
+    api: "v1", tileRev: (manifest?.tileRev as string) ?? tileRev(env),
     serverTime: new Date().toISOString(), asOf: new Date().toISOString().slice(0, 10),
     clouds, rainHistory,
   }, { headers: { ...SECURITY_HEADERS, "Cache-Control": "public, max-age=60" } });
