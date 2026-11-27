@@ -55,6 +55,12 @@ git stash drop
       `gdalwarp -tr 50 50` (10 m hel-Sverige ≈ 12.4 G px/layer ryms inte i minnet — servern varnar
       högljutt och sätter `layersTooBig` i `/api/meta` om något är för stort); DEM till 10–25 m;
       NMD-masken kan vara 10 m (nedprovas automatiskt nu, se `518a6b5`). Kontrollera EPSG:3006 på allt.
+- [ ] **Vatten-separation (rapporterat 2026-11-28: pins kan hamna i sjöar i r15):** r15-vetot är bara
+      NMD-klasserna 61/62 + 50 m dilation (`data/layers/manifest.json` → `mask.waterClasses`/`waterBufferM`).
+      För r16: lägg till OSM-vattenmasken från SSD:n (`canonical_gis/04_vatten_osm/water_mask_10m.tif`,
+      ev. `water_dist_100m.tif` som mjuk faktor) som hårt veto i masken + kustmask (Natural Earth 10m),
+      sedan baka om overview/blocks/zones/tiles för r16 — då försvinner svampar ur vatten överallt.
+      Verifiera efter r16: stickprov i några sjöar (Mälaren, Vänern, Vättern) ska ge 0 pins.
 - [ ] `npm run validate` (AUC) — nu snabb via batch-endpointen; skicka rapporten till Gemini
       tillsammans med `docs/AUDIT.md` + `docs/MODEL-DEEP-DIVE.md`
 - [ ] Baka statiska tiles: `npm run bake-tiles -- --all-species --bbox 10.9,55.3,24.2,69.1 --zmin 5 --zmax 10`
