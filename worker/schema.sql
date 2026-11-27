@@ -1,5 +1,13 @@
 -- D1-schema för Svampradar-Workern. app_id finns från dag 1 så systerappar
 -- (bärradar, blomradar, pollenradar) kan dela samma databas utan kollisioner.
+--
+-- LEGACY-MIGRATION: om körningen failar med "no such column: ..." finns en gammal
+-- tabell med annat schema (t.ex. profiles(app_id, device_uuid, username, points, ...)).
+-- Pre-launch är det säkert att droppa och köra om, t.ex.:
+--   npx wrangler d1 execute svampradar-db --remote --command "DROP TABLE IF EXISTS profiles;"
+--   npx wrangler d1 execute svampradar-db --remote --file=worker/schema.sql
+-- Workern själv-healar saknade kolumner via ALTER TABLE ADD COLUMN (se src/d1.ts),
+-- men detta CLI-schema kräver att tabellerna antingen saknas eller har rätt kolumner.
 CREATE TABLE IF NOT EXISTS signals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   app_id TEXT NOT NULL,

@@ -93,7 +93,7 @@ r = await get(`/api/hotspots?bbox=${BBOX}&static=1&species=kantarell`, {});
 report(r.status === 403 ? "PASS" : "WARN", "403 låst art utan ents", `status=${r.status} (kantarell ska ge 403 för free)`);
 
 r = await get(`/api/report-signal`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ device: "deploycheck", species: SPECIES, lat: 59.3, lon: 18.1, score: 50 }) });
-report(r.status === 200 && r.body?.ok ? "PASS" : "WARN", "report-signal (D1)", `status=${r.status} body=${JSON.stringify(r.body).slice(0, 120)} ${r.status === 502 ? "(kolla att D1 har schemat: npx wrangler d1 execute svampradar-db --file=worker/schema.sql --remote)" : ""}`);
+report(r.status === 200 && r.body?.ok ? "PASS" : "WARN", "report-signal (D1)", `status=${r.status} body=${JSON.stringify(r.body).slice(0, 120)} ${r.status === 502 ? "(502 = D1 legacy-schema eller saknat schema — kör: npx wrangler d1 execute svampradar-db --remote --command \"DROP TABLE IF EXISTS signals; DROP TABLE IF EXISTS devices; DROP TABLE IF EXISTS profiles; DROP TABLE IF EXISTS reward_ledger;\" följt av: npx wrangler d1 execute svampradar-db --remote --file=worker/schema.sql)" : ""}`);
 
 console.log(`\n${pass} PASS, ${warn} WARN, ${fail} FAIL — ${BASE}`);
 process.exit(fail > 0 ? 1 : 0);

@@ -2,31 +2,43 @@
 // Node-originen (src/signals.ts), med kolumnen app_id från dag 1 (systerappar).
 import type { D1DatabaseLike, Env } from "./cf-types.js";
 
-export const SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS signals (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  app_id TEXT NOT NULL,
-  device TEXT NOT NULL,
-  alias TEXT NOT NULL,
-  species TEXT NOT NULL,
-  lat REAL NOT NULL, lon REAL NOT NULL,
-  grid_lat REAL NOT NULL, grid_lon REAL NOT NULL,
-  score REAL NOT NULL, kind TEXT NOT NULL DEFAULT 'report',
-  at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_signals_app ON signals(app_id, at);
-CREATE INDEX IF NOT EXISTS idx_signals_grid ON signals(app_id, grid_lat, grid_lon);
-CREATE TABLE IF NOT EXISTS devices (
-  app_id TEXT NOT NULL, device TEXT NOT NULL, ents TEXT NOT NULL DEFAULT '[]',
-  updated_at INTEGER NOT NULL, PRIMARY KEY (app_id, device)
-);
-`;
+// VIKTIGT: använd ALDRIG env.DB.exec(flerradig SQL) i workern. Riktiga D1 kastar
+// "D1_EXEC_ERROR: Error in line 1: ... incomplete input" på flerradiga multi-sats-strängar
+// (node:sqlite i test-local.mts accepterar dem — därför passerade detta lokalt men 502:ade live).
+// Kör i stället varje sats för sig via prepare().run(), idempotent via try/catch.
+const SCHEMA_STATEMENTS: string[] = [
+  "CREATE TABLE IF NOT EXISTS signals (id INTEGER PRIMARY KEY AUTOINCREMENT, app_id TEXT NOT NULL, device TEXT NOT NULL, alias TEXT NOT NULL, species TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL, grid_lat REAL NOT NULL, grid_lon REAL NOT NULL, score REAL NOT NULL, kind TEXT NOT NULL DEFAULT 'report', at INTEGER NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS devices (app_id TEXT NOT NULL, device TEXT NOT NULL, ents TEXT NOT NULL DEFAULT '[]', updated_at INTEGER NOT NULL, PRIMARY KEY (app_id, device))",
+  "CREATE TABLE IF NOT EXISTS profiles (app_id TEXT NOT NULL, device TEXT NOT NULL, data TEXT NOT NULL DEFAULT '{}', updated_at INTEGER NOT NULL, PRIMARY KEY (app_id, device))",
+  "CREATE TABLE IF NOT EXISTS reward_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, app_id TEXT NOT NULL, device TEXT NOT NULL, kind TEXT NOT NULL, species TEXT, at INTEGER NOT NULL)",
+];
+// Själv-helande migration för legacy-tabeller (t.ex. gammal profiles(app_id, device_uuid, username, points, ...)):
+// ALTER TABLE ADD COLUMN failar med "duplicate column name" när kolumnen redan finns — fångas och hoppas över.
+const MIGRATION_STATEMENTS: string[] = [
+  ...["app_id TEXT NOT NULL DEFAULT 'svampradar'", "device TEXT NOT NULL DEFAULT ''", "alias TEXT NOT NULL DEFAULT ''", "species TEXT NOT NULL DEFAULT ''", "lat REAL NOT NULL DEFAULT 0", "lon REAL NOT NULL DEFAULT 0", "grid_lat REAL NOT NULL DEFAULT 0", "grid_lon REAL NOT NULL DEFAULT 0", "score REAL NOT NULL DEFAULT 0", "kind TEXT NOT NULL DEFAULT 'report'", "at INTEGER NOT NULL DEFAULT 0"].map((c) => `ALTER TABLE signals ADD COLUMN ${c}`),
+  ...["app_id TEXT NOT NULL DEFAULT 'svampradar'", "device TEXT NOT NULL DEFAULT ''", "ents TEXT NOT NULL DEFAULT '[]'", "updated_at INTEGER NOT NULL DEFAULT 0"].map((c) => `ALTER TABLE devices ADD COLUMN ${c}`),
+  ...["app_id TEXT NOT NULL DEFAULT 'svampradar'", "device TEXT NOT NULL DEFAULT ''", "data TEXT NOT NULL DEFAULT '{}'", "updated_at INTEGER NOT NULL DEFAULT 0"].map((c) => `ALTER TABLE profiles ADD COLUMN ${c}`),
+  ...["app_id TEXT NOT NULL DEFAULT 'svampradar'", "device TEXT NOT NULL DEFAULT ''", "kind TEXT NOT NULL DEFAULT ''", "species TEXT", "at INTEGER NOT NULL DEFAULT 0"].map((c) => `ALTER TABLE reward_ledger ADD COLUMN ${c}`),
+];
+// Index sist — efter att kolumnerna garanterat finns (annars "no such column" på legacy-tabeller).
+const INDEX_STATEMENTS: string[] = [
+  "CREATE INDEX IF NOT EXISTS idx_signals_app ON signals(app_id, at)",
+  "CREATE INDEX IF NOT EXISTS idx_signals_grid ON signals(app_id, grid_lat, grid_lon)",
+  "CREATE INDEX IF NOT EXISTS idx_reward_app ON reward_ledger(app_id, device)",
+];
 
-let schemaReady = false;
+const schemaReady = new WeakSet<object>();
 async function ensureSchema(env: Env): Promise<void> {
-  if (schemaReady) return;
-  await env.DB.exec(SCHEMA_SQL);
-  schemaReady = true;
+  if (schemaReady.has(env)) return;
+  for (const sql of [...SCHEMA_STATEMENTS, ...MIGRATION_STATEMENTS, ...INDEX_STATEMENTS]) {
+    try {
+      await env.DB.prepare(sql).run();
+    } catch (e) {
+      // "already exists" / "duplicate column name" / "index ... already exists" — idempotent, OK att hoppa över.
+      console.warn("[d1] hoppade över schema-sats:", sql.slice(0, 70), "—", String(e).slice(0, 100));
+    }
+  }
+  schemaReady.add(env);
 }
 
 const DAY_MS = 86400000;
@@ -49,8 +61,11 @@ export async function getEnts(env: Env, device: string): Promise<string[]> {
 export async function setEnts(env: Env, device: string, ents: string[]): Promise<void> {
   if (!device) return;
   await ensureSchema(env);
-  await env.DB.prepare("INSERT INTO devices(app_id, device, ents, updated_at) VALUES(?,?,?,?) ON CONFLICT(app_id, device) DO UPDATE SET ents=excluded.ents, updated_at=excluded.updated_at")
-    .bind(env.APP_ID ?? "svampradar", device, JSON.stringify(ents), Date.now()).run();
+  const app = env.APP_ID ?? "svampradar";
+  // DELETE+INSERT i stället för UPSERT: fungerar oavsett hur en legacy-tabells PK råkar se ut.
+  await env.DB.prepare("DELETE FROM devices WHERE app_id=? AND device=?").bind(app, device).run();
+  await env.DB.prepare("INSERT INTO devices(app_id, device, ents, updated_at) VALUES(?,?,?,?)")
+    .bind(app, device, JSON.stringify(ents), Date.now()).run();
 }
 
 // ?ents= från klienten accepteras bara i dev (ORIGIN_URL satt). I prod kommer ents från

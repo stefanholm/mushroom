@@ -18,7 +18,9 @@ export interface D1PreparedStatementLike {
 }
 export interface D1DatabaseLike {
   prepare(sql: string): D1PreparedStatementLike;
-  exec(sql: string): Promise<unknown>;
+  // OBS: exec() finns medvetet INTE med i typningen — riktiga D1 kastar
+  // "D1_EXEC_ERROR: ... incomplete input" på flerradiga multi-sats-strängar.
+  // Kör alltid EN sats i taget via prepare().run() (se d1.ts ensureSchema).
 }
 export interface Env {
   TILES: R2BucketLike;

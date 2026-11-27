@@ -48,7 +48,8 @@ const TILES = {
 // --- mock D1 över node:sqlite ---
 const db = new DatabaseSync(":memory:");
 const DB = {
-  exec(sql: string) { db.exec(sql); return Promise.resolve(); },
+  // OBS: medvetet ingen exec() här — riktiga D1 vägrar flerradig SQL via exec()
+  // ("incomplete input"), så workern får bara använda prepare().run() per sats.
   prepare(sql: string) {
     const stmt = db.prepare(sql);
     let vals: unknown[] = [];
@@ -69,8 +70,8 @@ const env: Env = { TILES: TILES as never, DB: DB as never, DEFAULT_TILE_REV: "r1
 
 let pass = 0, fail = 0;
 const ck = (n: string, c: boolean, x = "") => { if (c) { pass++; console.log("OK  ", n, x); } else { fail++; console.log("FAIL", n, x); } };
-async function call(path: string, init?: RequestInit) {
-  const res = await worker.fetch(new Request("https://api.svampradar.se" + path, init), env, { waitUntil() {} } as never);
+async function call(path: string, init?: RequestInit, envOverride?: Env) {
+  const res = await worker.fetch(new Request("https://api.svampradar.se" + path, init), envOverride ?? env, { waitUntil() {} } as never);
   let body: unknown = null;
   const text = await res.text();
   try { body = JSON.parse(text); } catch { body = text.slice(0, 40); }
@@ -154,6 +155,37 @@ ck("okänd route proxas till origin (ej worker-404)", r.status !== 404, `status=
   const envNoOrigin: Env = { ...env, ORIGIN_URL: "" };
   const res2 = await worker.fetch(new Request("https://api.svampradar.se/api/chat", { method: "POST", body: "{}" }), envNoOrigin, { waitUntil() {} } as never);
   ck("utan ORIGIN_URL: 404 från Workern", res2.status === 404, `status=${res2.status}`);
+}
+
+// Legacy-D1 själv-heal: tabeller med GAMMAL kolumnuppsättning (t.ex. profiles(app_id, device_uuid, ...))
+// ska migreras i workern (per-sats prepare/run + ALTER ADD COLUMN) — aldrig 502 "incomplete input".
+{
+  const legacyDb = new DatabaseSync(":memory:");
+  legacyDb.exec("CREATE TABLE signals (id INTEGER PRIMARY KEY AUTOINCREMENT, device TEXT NOT NULL, species TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL, score REAL NOT NULL, at INTEGER NOT NULL)");
+  legacyDb.exec("CREATE TABLE profiles (app_id TEXT NOT NULL, device_uuid TEXT NOT NULL, username TEXT, points INTEGER DEFAULT 0, updated_at INTEGER NOT NULL)");
+  legacyDb.exec("CREATE TABLE reward_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, app_id TEXT NOT NULL, kind TEXT NOT NULL, species TEXT, at INTEGER NOT NULL)");
+  legacyDb.exec("INSERT INTO signals(device, species, lat, lon, score, at) VALUES('legacy-dev','kantarell',59.3,18.1,50," + (Date.now() - 3600000) + ")");
+  const legacyDB = {
+    prepare(sql: string) {
+      const stmt = legacyDb.prepare(sql);
+      let vals: unknown[] = [];
+      return {
+        bind(...v: unknown[]) { vals = v; return this; },
+        async first(col?: string) { const row = stmt.get(...(vals as never[])) as Record<string, unknown> | null; return row ? ((col ? row[col] : row) as never) : null; },
+        async all() { return { results: stmt.all(...(vals as never[])) as never[] }; },
+        async run() { stmt.run(...(vals as never[])); return {}; },
+      };
+    },
+  };
+  const envLegacy: Env = { ...env, DB: legacyDB as never };
+  r = await call("/api/report-signal", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ device: "dev2", species: "blek-taggsvamp", lat: 59.4, lon: 18.2, score: 90 }) }, envLegacy);
+  ck("legacy-D1: report-signal själv-healar (ej 502 incomplete input)", r.status === 200 && (r.body as { ok?: boolean })?.ok === true, `status=${r.status} body=${JSON.stringify(r.body).slice(0, 90)}`);
+  r = await call("/api/leaderboard?device=dev2", undefined, envLegacy);
+  ck("legacy-D1: leaderboard 200 ser legacy-raden via app_id", r.status === 200 && ((r.body as { leaderboard?: unknown[] })?.leaderboard?.length ?? 0) >= 1, `status=${r.status}`);
+  const cols = legacyDb.prepare("PRAGMA table_info(signals)").all() as { name: string }[];
+  ck("legacy-D1: signals fick app_id/alias via ALTER", cols.some((c) => c.name === "app_id") && cols.some((c) => c.name === "alias"));
+  const profCols = legacyDb.prepare("PRAGMA table_info(profiles)").all() as { name: string }[];
+  ck("legacy-D1: profiles fick device/data via ALTER", profCols.some((c) => c.name === "device") && profCols.some((c) => c.name === "data"));
 }
 
 // PNG-enkodern (smoke)

@@ -19,10 +19,14 @@ till meta.json, men kör hellre: `npm run bake-root` innan `sync-r2 --only root`
 mapp aldrig raderar R2 (lärdom: `rclone sync` tömde r15-root när bake-root inte körts). `--delete`
 finns kvar men bara för hel revisionsväxling.
 
-**D1 måste ha schemat:** `cd worker && npx wrangler d1 execute svampradar-db --remote --file=schema.sql`
-Om `signals` redan finns med andra kolumner: `npx wrangler d2 ...` nej — kör
-`npx wrangler d1 execute svampradar-db --remote --command "DROP TABLE IF EXISTS signals; DROP TABLE IF EXISTS devices;"`
-och sedan schema.sql igen. (502 på report-signal = schema-mismatch.)
+**D1 måste ha schemat:** `npx wrangler d1 execute svampradar-db --remote --file=worker/schema.sql`
+Om någon tabell redan finns med andra kolumner (legacy, t.ex. gammal `profiles(app_id, device_uuid, ...)`
+→ CLI failar med `no such column: ...`): droppa alla fyra och kör om (pre-launch, ingen data att spara):
+`npx wrangler d1 execute svampradar-db --remote --command "DROP TABLE IF EXISTS signals; DROP TABLE IF EXISTS devices; DROP TABLE IF EXISTS profiles; DROP TABLE IF EXISTS reward_ledger;"`
+och sedan `--file=worker/schema.sql` igen. (502 på report-signal = schema-mismatch.)
+Workern själv-healar dessutom saknade kolumner vid körning via `ALTER TABLE ADD COLUMN` (se `worker/src/d1.ts`
+`ensureSchema`) — men använd ALDRIG `env.DB.exec()` med flerradig SQL i workern: riktiga D1 kastar
+`D1_EXEC_ERROR: ... incomplete input` (node:sqlite i testarna gör inte det, vilket maskerade felet lokalt).
 
 **VARNING vid paste av kommandon i zsh:** lägg ALDRIG till `kommentar` efter ett kommando i ett
 inklistrat block — din zsh kör då `#` som argument (sett: `pathspec ':(prefix:0)#' ...`), och hela
