@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import compression from "compression";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -132,6 +133,9 @@ const client = new Mistral({ apiKey: process.env.MISTRAL_API_KEY });
 
 const app = express();
 app.use(express.json({ limit: "256kb" })); // API:t behöver små bodies; tiles/filer är GET
+// Gzip för JSON-svar (hotspots/overview/bootstrap) — stora vinster på mobilnät.
+// PNG-tiles (image/png) är inte "compressible" och hoppas över automatiskt.
+app.use(compression({ threshold: 1024 }));
 
 // Grundläggande säkerhetsheaders (i prod ännu striktare via Cloudflare Workers).
 app.use((req, res, next) => {
@@ -1865,7 +1869,24 @@ app.get("/api/v1/fungi/overview", overviewHandler);
 app.get("/api/overview", overviewHandler);
 
 // ---------- Optimal zon (gröna zonen) — en sammanhängande polygon, se src/optimal-zone.ts ----------
+// Cache med stale-while-revalidate: ett gammalt svar serveras DIREKT (aldrig vänta på
+// omberäkning) och om TTL gått ut triggas omberäkning i bakgrunden. ZONE_TTL_MS styr TTL.
+const ZONE_TTL_MS = Math.max(1000, Number(process.env.ZONE_TTL_MS ?? 15 * 60 * 1000) || 15 * 60 * 1000);
 const zoneCache = new Map<string, { at: number; value: unknown }>();
+const zoneInflight = new Set<string>();
+async function zoneComputeBackground(cacheKey: string, open: string[], asOf: Date, staticOnly: boolean): Promise<void> {
+  if (zoneInflight.has(cacheKey)) return;
+  zoneInflight.add(cacheKey);
+  try {
+    const store = await getLayerStore();
+    const result = await computeOptimalZone(store, open, asOf, { static: staticOnly });
+    zoneCache.set(cacheKey, { at: Date.now(), value: result });
+  } catch (e) {
+    console.error("optimal-zone bakgrundsberäkning misslyckades:", (e as Error).message);
+  } finally {
+    zoneInflight.delete(cacheKey);
+  }
+}
 app.get("/api/v1/fungi/optimal-zone", async (req, res) => {
   const keys = String(req.query.species ?? "")
     .split(",")
@@ -1880,8 +1901,10 @@ app.get("/api/v1/fungi/optimal-zone", async (req, res) => {
   const staticOnly = req.query.static === "1";
   const cacheKey = `${open.sort().join(",")}|${asOf.toISOString().slice(0, 10)}|static=${staticOnly ? "1" : "0"}`;
   const c = zoneCache.get(cacheKey);
-  if (c && Date.now() - c.at < 15 * 60 * 1000) {
-    return res.json({ ...(c.value as object), cached: true, skipped: locked });
+  if (c) {
+    // SWR: servera direkt; om TTL gått ut, beräkna om i bakgrunden (en gång åt gången)
+    if (Date.now() - c.at >= ZONE_TTL_MS) void zoneComputeBackground(cacheKey, open, asOf, staticOnly);
+    return res.json({ ...(c.value as object), cached: true, cacheAgeMs: Date.now() - c.at, skipped: locked });
   }
   try {
     const store = await getLayerStore();
@@ -1892,6 +1915,38 @@ app.get("/api/v1/fungi/optimal-zone", async (req, res) => {
     res.status(500).json({ error: "optimal-zone kunde inte beräknas", detail: (e as Error).message });
   }
 });
+
+// ---------- Bootstrap: EN round-trip vid app-start ----------
+// Buntar det som är billigt och cachat server-side (meta fast=1 utan väder, shop, unlocked,
+// moln-manifest, regn-manifest alla spann, leaderboard) — sparar 5-6 rundor på mobilnät.
+// Kartdata (hotspots/tiles/overview/optimal-zone) hämtas fortfarande per vy som vanligt.
+app.get("/api/v1/bootstrap", bootstrapHandler);
+app.get("/api/bootstrap", bootstrapHandler);
+async function bootstrapHandler(req: express.Request, res: express.Response) {
+  try {
+    const [meta, clouds, r14, r21, r28, r42] = await Promise.all([
+      buildMetaPayload(req, String(req.query.species ?? "kantarell"), { fast: true }).catch(() => null),
+      getCloudManifest().catch(() => null),
+      getRainManifest(14).catch(() => null),
+      getRainManifest(21).catch(() => null),
+      getRainManifest(28).catch(() => null),
+      getRainManifest(42).catch(() => null),
+    ]);
+    res.json({
+      api: "v1",
+      serverTime: new Date().toISOString(),
+      asOf: new Date().toISOString().slice(0, 10),
+      meta,
+      shop: buildShopPayload(req),
+      unlocked: buildUnlockedPayload(req),
+      leaderboard: { days: 5, leaderboard: leaderboard(5, 10) },
+      clouds,
+      rainHistory: { "14": r14, "21": r21, "28": r28, "42": r42 },
+    });
+  } catch (e) {
+    res.status(500).json({ error: "bootstrap misslyckades", detail: (e as Error).message });
+  }
+}
 
 // ---------- Live molnprognos (SMHI SNOW1gv1, bakade PNG-frames; se src/clouds.ts) ----------
 // Manifest cachas 30 min server-side; frames är immutable (id innehåller referenceTime-hash).
@@ -2335,15 +2390,22 @@ function heatColor(heat: number): [number, number, number, number] {
 
 app.get("/api/meta", async (req, res) => {
   const key = String(req.query.species ?? "kantarell");
+  if (!SPECIES[key]) return res.status(400).json({ error: "Okänd art." });
+  res.json(await buildMetaPayload(req, key));
+});
+
+// Payload för /api/meta — delas även av /api/v1/bootstrap (där opts.fast=true för att
+// slippa vänta på SMHI-väder vid app-start).
+async function buildMetaPayload(req: express.Request, key: string, opts: { fast?: boolean } = {}): Promise<Record<string, unknown>> {
   const species = SPECIES[key];
-  if (!species) return res.status(400).json({ error: "Okänd art." });
+  if (!species) throw new Error("Okänd art.");
   const asOf = parseAsOf(String(req.query.date ?? ""));
   const mLat = Number.isFinite(Number(req.query.lat)) ? Number(req.query.lat) : 62.5;
   const mLon = Number.isFinite(Number(req.query.lon)) ? Number(req.query.lon) : 15.5;
   const store = await getLayerStore();
   // Väderhämtningar parallellt (SMHI) så /api/meta inte står och väntar seriellt.
   // ?fast=1 hoppar över väder helt (cache eller null) — räcker för artlista/GDD i klienten.
-  const fast = req.query.fast === "1";
+  const fast = opts.fast === true || req.query.fast === "1";
   const [rain14, minTemp, coolNights] = fast
     ? [null, null, null]
     : await Promise.all([
@@ -2365,7 +2427,7 @@ app.get("/api/meta", async (req, res) => {
   const flush = flushFactor(coolNights);
   const gdd5 = effectiveGdd5(store, mLon, mLat);
   const nearbyActivity = await buildNearbyActivity(mLat, mLon, req, capMeta(req));
-  res.json({
+  return {
     nearbyActivity,
     species: key,
     label: species.label,
@@ -2412,8 +2474,8 @@ app.get("/api/meta", async (req, res) => {
     excludedAreas: x && x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
     forestCount: f && f.status === "fulfilled" ? (f.value?.length ?? 0) : 0,
     exclCount: x && x.status === "fulfilled" ? (x.value?.polys.length ?? 0) : 0,
-  });
-});
+  };
+}
 
 async function renderHabitatTile(
   keys: string[],
@@ -2953,7 +3015,7 @@ app.get("/api/tiles/hillshade/:z/:x/:y.png", async (req, res) => {
 });
 
 // Affärs-katalog för StoreKit-vyn (ingen species-param behövs).
-app.get("/api/shop", (req, res) => {
+function buildShopPayload(req: express.Request): Record<string, unknown> {
   // ägande beräknas från ?ents= (i prod: från server-validerat kvitto) — stycklistan/topplistan
   // visar då bara arter användaren INTE redan har PERMANENT. Årskortets Svenska Klassiker är
   // temporära, så t.ex. kantarell syns fortfarande i singel-listan för årskort-användare
@@ -2961,7 +3023,7 @@ app.get("/api/shop", (req, res) => {
   const ents = resolveEntitlements(req);
   const owned = (id: string) => isSpeciesPermanentlyOwned(id, ents);
   const allSingles = Object.entries(SPECIES).filter(([id, s]) => s.pack && isValidSingleClaim(id));
-  res.json({
+  return {
     packs: Object.values(PACKS)
       .filter((p) => p.forSale)
       .map((p) => {
@@ -3011,7 +3073,10 @@ app.get("/api/shop", (req, res) => {
     singlesTotal: allSingles.length,
     maxRewardClaims: MAX_REWARD_CLAIMS,
     singlesNote: "Efter att du använt dina gratis-upplåsningar via betyg (max " + MAX_REWARD_CLAIMS + ") kan du köpa vilken låst art som helst enskilt för " + SINGLE_PRICE_SEK + " kr.",
-  });
+  };
+}
+app.get("/api/shop", (req, res) => {
+  res.json(buildShopPayload(req));
 });
 
 // Dev-läge: köp enskild svamp (39 kr). I produktion: StoreKit-produkt per art + server-validerat kvitto.
@@ -3024,15 +3089,18 @@ app.post("/api/single/claim", (req, res) => {
 });
 
 // Vilka arter är upplåsta för dessa entitlements? (klienten kan synka detta efter köp)
-app.get("/api/unlocked", (req, res) => {
+function buildUnlockedPayload(req: express.Request): Record<string, unknown> {
   const ents = resolveEntitlements(req);
-  res.json({
+  return {
     entitlements: [...ents],
     unlocked: Object.keys(SPECIES).filter((id) => isSpeciesUnlocked(id, ents)),
     svenskaKlassiker: SVENSKA_KLASSIKER_SPECIES,
     svenskaKlassikerActive: ents.has("pro") || ents.has("topspots") || [...ents].some((e) => e.startsWith("topspots:")),
     topSpots: canSeeTopSpots(req),
-  });
+  };
+}
+app.get("/api/unlocked", (req, res) => {
+  res.json(buildUnlockedPayload(req));
 });
 
 // --- Referral-koder (dev-läge, in-memory; i produktion i DB) ---
@@ -3273,6 +3341,11 @@ app.listen(port, () => {
   console.log(`Chat app running at http://localhost:${port}`);
   // Värm regn-rutnäten (rolling-42d.json) i bakgrunden så Live-läge får grid-baserad regnfaktor direkt
   void warmRainGrids().catch((e) => console.error("warmRainGrids misslyckades:", (e as Error).message));
+  // Förvärm optimalzonen för gratis-/toppartisterna (båda lägen) så första kartvyn är omedelbar.
+  // PREWARM_ZONES=0 stänger av; PREWARM_ZONE_MAX begränsar antal arter (default 10).
+  if ((process.env.PREWARM_ZONES ?? "1") === "1") {
+    void prewarmZones().catch((e) => console.error("prewarmZones misslyckades:", (e as Error).message));
+  }
   (async () => {
     try {
       const dir = path.join(here, "..", "data", "osm");
@@ -3326,6 +3399,32 @@ async function prewarmWeather(): Promise<void> {
     await getObsIndex().catch(() => {});
     await minTempLast48h(lat, lon, new Date());
   }
+}
+
+// Förvärm zoneCache för de arter som visas först (FREE_SPECIES + TOP_PICKS), båda lägen.
+// Körs sekventiellt i bakgrunden efter boot — blockerar aldrig lyssnaren eller första anropet.
+async function prewarmZones(): Promise<void> {
+  const max = Math.max(1, Number(process.env.PREWARM_ZONE_MAX ?? 10) || 10);
+  const ids = [...new Set([...FREE_SPECIES, ...TOP_PICKS])].filter((k) => SPECIES[k]).slice(0, max);
+  const asOf = new Date();
+  const store = await getLayerStore();
+  let n = 0;
+  for (const staticOnly of [false, true]) {
+    for (const id of ids) {
+      const cacheKey = `${id}|${asOf.toISOString().slice(0, 10)}|static=${staticOnly ? "1" : "0"}`;
+      if (zoneCache.has(cacheKey) || zoneInflight.has(cacheKey)) continue;
+      try {
+        const t = Date.now();
+        const result = await computeOptimalZone(store, [id], asOf, { static: staticOnly });
+        zoneCache.set(cacheKey, { at: Date.now(), value: result });
+        n++;
+        console.log(`prewarm zone ${id} static=${staticOnly ? 1 : 0} klar på ${Date.now() - t} ms (peak=${(result.meta as Record<string, unknown>).peakScore})`);
+      } catch (e) {
+        console.error(`prewarm zone ${id} misslyckades:`, (e as Error).message);
+      }
+    }
+  }
+  console.log(`prewarm zones klar: ${n} art/läge-kombinationer i zoneCache`);
 }
 
 setInterval(() => void prewarmWeather(), 6 * 3600 * 1000);

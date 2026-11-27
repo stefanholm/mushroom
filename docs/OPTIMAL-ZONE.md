@@ -62,7 +62,10 @@ GET /api/v1/fungi/optimal-zone?species=id1,id2&date=YYYY-MM-DD&ents=...&static=1
 //   effectiveRainMm, peakScore, meanScore, seasonFactor,   // 1.00 i static-läge (zon-medel annars)
 //   habitatFactor }                                       // verkligt H_static-zon-medel (3x3 topp-kvartil)
 // Feature.geometry: { type: "Polygon", coordinates: [ [ [lon,lat], ... ] ] }  (1 stängd ring)
-403 om alla arter låsta; 400 utan giltig art; 15 min cache per artkombination+datum+static.
+403 om alla arter låsta; 400 utan giltig art. Cache per artkombination+datum+static med
+**stale-while-revalidate**: cache-hit svarar direkt med `cached: true` + `cacheAgeMs` (NYtt fält),
+TTL default 15 min (`ZONE_TTL_MS`), då omberäknas i bakgrunden. Boot förvärmer zoner för
+FREE_SPECIES+TOP_PICKS i båda lägen (`PREWARM_ZONES=0` stänger av). Se docs/UX-PERF.md.
 /api/hotspots oberört.
 ```
 
