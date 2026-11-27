@@ -100,6 +100,8 @@ r = await call("/api/v1/fungi/overview?species=kantarell&static=1&ents=all&minSc
 const tiers = (r.body as { tiers?: Record<string, unknown[]> })?.tiers ?? {};
 ck("overview från R2: tiers 55/18/6km", r.status === 200 && tiers["55km"]?.length > 0 && tiers["6km"]?.length > 0,
   `55km=${tiers["55km"]?.length} 18km=${tiers["18km"]?.length} 6km=${tiers["6km"]?.length}`);
+ck("overview: tier-nycklar exakt 55km/18km/6km + goldPeaks + mode", JSON.stringify(Object.keys(tiers).sort()) === '["18km","55km","6km"]' && typeof (r.body as { goldPeaks?: number })?.goldPeaks === "number" && (r.body as { mode?: string })?.mode === "habitat",
+  `keys=${Object.keys(tiers)} gold=${(r.body as { goldPeaks?: number })?.goldPeaks} mode=${(r.body as { mode?: string })?.mode}`);
 ck("overview profile med", !!(r.body as { profiles?: Record<string, unknown> })?.profiles?.kantarell);
 
 // bootstrap i worker
@@ -108,6 +110,7 @@ const f = (r.body as { fungi?: Record<string, { overviewCells?: unknown[]; zoneP
 ck("bootstrap: tileRev + fungi bundle", r.status === 200 && (r.body as { tileRev?: string })?.tileRev === "r15" && !!f && f.overviewCells!.length > 0,
   `cells=${f?.overviewCells?.length} win=${f?.rainWindowDays} zonePending=${f?.zonePending}`);
 ck("bootstrap: shop + unlocked + leaderboard", !!(r.body as { shop?: unknown; unlocked?: { unlocked?: string[] } })?.shop && (r.body as { unlocked?: { unlocked?: string[] } })?.unlocked?.unlocked?.includes("kantarell"));
+ck("bootstrap: rainSpans [14,21,28,42] (AppModels)", JSON.stringify((r.body as { rainSpans?: number[] })?.rainSpans) === "[14,21,28,42]");
 
 // edge /api/meta från catalog.json (AppModels.swift-kontrakt)
 r = await call("/api/meta?species=kantarell&ents=all");

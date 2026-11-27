@@ -5,6 +5,9 @@
 //   node scripts/sync-r2.mjs --rev r16                     # allt under data/r2 + tile-cache
 //   node scripts/sync-r2.mjs --rev r16 --only hotspots,zones # bara utvalda delar
 //   node scripts/sync-r2.mjs --rev r16 --dry               # visa kommandon utan att köra
+//   node scripts/sync-r2.mjs --src /Volumes/HD2021/SvampradarData/r2_ready   # färdigpaketerat träd
+//       (--src synkar hela trädet, dvs det som ligger under <src>/domains -> r2:natureradar-data/domains)
+//   node scripts/sync-r2.mjs --rev r16 --remote r2:natureradar-data     # annan rclone-remote
 //
 // Förväntar sig rclone-remote "r2" -> bucket natureradar-data (rclone config).
 // Baka alltid i /Volumes/HD2021/SvampradarData/r2_ready/ och byt DEFAULT_TILE_REV i
@@ -21,7 +24,22 @@ const arg = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 && args[
 const REV = arg("rev", "r15");
 const dry = args.includes("--dry");
 const only = arg("only", "").split(",").map((s) => s.trim()).filter(Boolean);
-const REMOTE = `r2:natureradar-data/domains/fungi/${REV}`;
+const SRC = arg("src", "");
+const REMOTE_ROOT = arg("remote", "r2:natureradar-data");
+const REMOTE = `${REMOTE_ROOT}/domains/fungi/${REV}`;
+
+// --src: färdigpaketerat träd (t.ex. r2_ready med domains/fungi/<rev>/...) — synka hela domains/
+if (SRC) {
+  const srcDomains = path.join(SRC, "domains");
+  if (!fs.existsSync(srcDomains)) { console.error(`--src ${SRC}: hittar ingen ${srcDomains}`); process.exit(1); }
+  const cmd = ["rclone", "sync", srcDomains + "/", `${REMOTE_ROOT}/domains/`, "--transfers", "16", "--checkers", "16", "--stats", "30s"];
+  console.log(`=== --src: ${srcDomains} -> ${REMOTE_ROOT}/domains/`);
+  if (dry) { console.log("  " + cmd.join(" ")); process.exit(0); }
+  const t = Date.now();
+  execFileSync(cmd[0], cmd.slice(1), { stdio: "inherit" });
+  console.log(`KLART på ${((Date.now() - t) / 1000).toFixed(0)} s. Byt DEFAULT_TILE_REV="${REV}" sist, sedan: cd worker && wrangler deploy`);
+  process.exit(0);
+}
 
 // [namn, lokal källa, mål under REMOTE]
 const PARTS = [

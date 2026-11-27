@@ -219,14 +219,17 @@ async function overviewFromR2(req: Request, env: Env): Promise<Response | null> 
       });
     }
   }
+  let goldPeaks = 0;
+  for (const arr of Object.values(tiers)) goldPeaks += arr.filter((c) => (c as { gold?: boolean }).gold).length;
   return Response.json({
-    overviewRevision: new Date().toISOString(),
+    overviewRevision: `${tileRev(env)}-r2`,
     mode: staticOnly ? "habitat" : "live",
     capped: !canSeeTopSpots(ents) && !isTrial(url, ents),
     trial: isTrial(url, ents),
+    goldPeaks,
     skipped: locked,
     profiles,
-    tiers,
+    tiers, // nycklar "55km"/"18km"/"6km" — samma kontrakt som Node-originen (AppModels: [String: [OverviewTierSpot]])
   }, { headers: { ...SECURITY_HEADERS, "Cache-Control": "public, max-age=60", "Access-Control-Allow-Origin": "*" } });
 }
 
@@ -467,6 +470,7 @@ async function bootstrapWorker(req: Request, env: Env): Promise<Response> {
     return Response.json({
       api: "v1",
       tileRev: (manifest?.tileRev as string) ?? tileRev(env),
+      rainSpans: [14, 21, 28, 42],
       serverTime: new Date().toISOString(),
       asOf: new Date().toISOString().slice(0, 10),
       shop,
@@ -480,7 +484,7 @@ async function bootstrapWorker(req: Request, env: Env): Promise<Response> {
   }
   // utan katalog: bara manifest-bas
   return Response.json({
-    api: "v1", tileRev: (manifest?.tileRev as string) ?? tileRev(env),
+    api: "v1", tileRev: (manifest?.tileRev as string) ?? tileRev(env), rainSpans: [14, 21, 28, 42],
     serverTime: new Date().toISOString(), asOf: new Date().toISOString().slice(0, 10),
     clouds, rainHistory,
   }, { headers: { ...SECURITY_HEADERS, "Cache-Control": "public, max-age=60" } });
