@@ -69,4 +69,25 @@ for (const [name, src, dst] of todo) {
   execFileSync(cmd[0], cmd.slice(1), { stdio: "inherit" });
   console.log(`=== ${name} klar på ${((Date.now() - t) / 1000).toFixed(0)} s`);
 }
+
+// frames (väder bakat från origin/Node): data/clouds + data/rain-history -> frames/clouds + frames/rain
+// (workerns cron skriver samma nycklar direkt till R2 — detta är för manuell bakning från Macen)
+if (only.length === 0 || only.includes("frames")) {
+  const pairs = [
+    [path.join(root, "data/clouds/manifest.json"), `${REMOTE}/frames/clouds/manifest.json`], // fil -> fil
+    [path.join(root, "data/clouds/frames"), `${REMOTE}/frames/clouds/`],                     // dir -> dir
+    [path.join(root, "data/rain-history"), `${REMOTE}/frames/rain/`],                       // manifest-*.json + <d>d/
+  ];
+  for (const [src, dst] of pairs) {
+    if (!fs.existsSync(src)) { console.log(`hoppar över frames: ${src} saknas (kör Node-bakningen först)`); continue; }
+    const isFile = src.endsWith(".json");
+    const del = args.includes("--delete");
+    const cmd = ["rclone", del ? "sync" : "copy", isFile ? src : src + "/", dst, "--transfers", "16", "--checkers", "16", "--stats", "10s"];
+    console.log(`\n=== frames: ${src} -> ${dst}`);
+    if (dry) { console.log("  " + cmd.join(" ")); continue; }
+    const t = Date.now();
+    execFileSync(cmd[0], cmd.slice(1), { stdio: "inherit" });
+    console.log(`=== frames klar på ${((Date.now() - t) / 1000).toFixed(0)} s`);
+  }
+}
 console.log(`\nKLART rev=${REV}. Byt DEFAULT_TILE_REV="${REV}" i worker/wrangler.toml och kör: cd worker && wrangler deploy`);

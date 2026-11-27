@@ -18,6 +18,14 @@ till meta.json, men kör hellre: `npm run bake-root` innan `sync-r2 --only root`
 **Uppladdning är ADDITIV (rclone copy)** — `sync-r2.mjs` använder copy default så en saknad lokal
 mapp aldrig raderar R2 (lärdom: `rclone sync` tömde r15-root när bake-root inte körts). `--delete`
 finns kvar men bara för hel revisionsväxling.
+**Rclone gotcha vid råa kommandon:** `rclone copy src dst` lägger käll-MAPPEN i dst — vill du ha
+innehållet, avsluta båda med `/`: `rclone copy /Volma/.../tiles/ r2:natureradar-data/domains/fungi/r15/tiles/`.
+`sync-r2.mjs` gör detta rätt åt dig (src + "/"); använd alltid skriptet i första hand.
+**Saknade delar i R2 (t.ex. tiles/icons 404):** `node scripts/sync-r2.mjs --rev r15 --only tiles,icons`
+(kräver lokala `data/tile-cache/r15/` + `public/icons/`; baka om med `npm run bake-tiles -- --bbox 17.3,58.9,18.5,59.7 --zmin 5 --zmax 10` vid behov).
+**Väder-frames utan att vänta på cron:** baka från origin (Node) och `node scripts/sync-r2.mjs --rev r15 --only frames`
+(mappar `data/clouds` → `frames/clouds`, `data/rain-history` → `frames/rain`). Cron `0 */6 * * *`
+bakar samma nycklar direkt till R2 inom 6 h (nästa körning 00:00 UTC).
 
 **D1 måste ha schemat:** `npx wrangler d1 execute svampradar-db --remote --file=worker/schema.sql`
 Om någon tabell redan finns med andra kolumner (legacy, t.ex. gammal `profiles(app_id, device_uuid, ...)`

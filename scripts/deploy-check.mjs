@@ -50,6 +50,7 @@ console.log(`deploy-check mot ${BASE} (art=${SPECIES})\n`);
 let r = await get("/manifest.json").catch((e) => ({ status: 0, body: null, error: e }));
 if (r.status === 200 && r.body?.tileRev) report("PASS", "manifest.json", `tileRev=${r.body.tileRev}`);
 else report("FAIL", "manifest.json", `status=${r.status}`);
+const MANIFEST = r.status === 200 ? r.body : null;
 
 r = await get("/api/v1/catalog");
 if (r.status === 200 && r.body?.species?.length === 61) report("PASS", "catalog.json i R2", `arter=${r.body.species.length}`);
@@ -77,8 +78,31 @@ r = await get(`/api/v1/fungi/optimal-zone?species=${SPECIES}&static=1&ents=all`)
 report(r.status === 200 ? (r.body?.optimalZone ? "PASS" : "WARN") : "FAIL", "optimal-zone",
   `status=${r.status} zone=${r.body?.optimalZone ? "JA" : "null"} (null OK utanför säsong, men vid static=1 bör zones/*.json vara synkad — kör bake-zones + sync)`);
 
-r = await get(`/api/tiles/hillshade/8/136/84.png`);
-report(r.status === 200 && (r.headers.get("content-type") ?? "").includes("png") ? "PASS" : r.status === 404 ? "WARN" : "FAIL", "tile png", `status=${r.status} type=${r.headers.get("content-type")}`);
+// tile-probe: prova flera kandidater (hardcoded default + manifest-bounds-center + Mälardalen r15)
+// sa WARN bara betyder "inga tiles i nagot probat omrade" (r15 täcker t.ex. bara Mälardalen)
+{
+  const cands = ["/api/tiles/hillshade/8/136/84.png", "/api/tiles/hillshade/8/140/75.png"];
+  const b = MANIFEST?.bounds;
+  if (Array.isArray(b) && b.length === 4 && b.every((v) => Number.isFinite(Number(v)))) {
+    const z = 8, n = 2 ** z;
+    const lon = (Number(b[0]) + Number(b[2])) / 2, lat = (Number(b[1]) + Number(b[3])) / 2;
+    const x = Math.floor(((lon + 180) / 360) * n);
+    const rad = (lat * Math.PI) / 180;
+    const y = Math.floor(((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * n);
+    cands.push(`/api/tiles/hillshade/${z}/${x}/${y}.png`);
+  }
+  let hit = null, reported = false;
+  for (const p of cands) {
+    const rr = await get(p);
+    if (rr.status === 200 && (rr.headers.get("content-type") ?? "").includes("png")) { hit = p; break; }
+    if (rr.status !== 404 && rr.status !== 200) { report("FAIL", "tile png", `status=${rr.status} ${p}`); reported = true; break; }
+  }
+  if (hit) report("PASS", "tile png", `200 png via ${hit}`);
+  else if (!reported) report("WARN", "tile png", `404 pa alla kandidater (${cands.join(", ")}) — kör: node scripts/sync-r2.mjs --rev r15 --only tiles,icons (data/tile-cache/r15 + public/icons måste finnas lokalt)`);
+}
+
+r = await get(`/icons/${SPECIES}.png`);
+report(r.status === 200 && (r.headers.get("content-type") ?? "").includes("png") ? "PASS" : r.status === 404 ? "WARN" : "FAIL", "icon png", `status=${r.status} type=${r.headers.get("content-type")} (404 = icons ej synkade: node scripts/sync-r2.mjs --rev r15 --only icons)`);
 
 r = await get(`/api/v1/weather/clouds/manifest`);
 report(r.status === 200 && (r.body?.frames?.length ?? 0) > 0 ? "PASS" : r.status === 404 || r.status === 502 ? "WARN" : "FAIL", "clouds manifest", `status=${r.status} frames=${r.body?.frames?.length}`);
