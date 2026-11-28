@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mushroom</title>
+    <link rel="stylesheet" href="/vendor/maplibre/maplibre-gl.css" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main>
+      <nav>
+        <button id="tab-chat" class="tab active" type="button">Chatt</button>
+        <button id="tab-map" class="tab" type="button">Karta</button>
+        <button id="tab-settings" class="tab" type="button">Inställningar</button>
+        <button id="tab-shop" class="tab" type="button">🛍️ Affär</button>
+      </nav>
+
+      <section id="pane-chat">
+        <h1>Mushroom Chat &mdash; mistral-small-latest</h1>
+        <div id="messages"></div>
+        <form id="form">
+          <input id="input" autocomplete="off" placeholder="Fråga något om svamp..." required />
+          <button id="send" type="submit">Skicka</button>
+        </form>
+      </section>
+
+      <section id="pane-map" hidden>
+        <div class="map-controls">
+          <div id="speciesPills" class="pills"></div>
+          <button id="savePng" type="button" title="Spara kartvyn som PNG">Spara PNG</button>
+          <button id="carBtn" type="button" class="car-btn" title="Spara bilens position (eller ta bort den vid andra trycket)"><span class="car-ico" aria-hidden="true">🚗</span><span>Hitta bilen</span></button>
+          <span id="carInfo"></span>
+          <div id="speciesInfo" class="species-info"></div>
+          <label>
+            Opacitet
+            <input id="opacity" type="range" min="0" max="100" value="65" />
+          </label>
+          <label>
+            <input id="staticOnly" type="checkbox" />
+            Endast habitat (utan väder/säsong)
+          </label>
+          <label>
+            Datum
+            <input id="dateSlider" type="range" min="0" max="110" value="0" />
+            <span id="dateLabel">nu</span>
+          </label>
+          <label>
+            Sensitivitet
+            <input id="sens" type="range" min="-10" max="10" value="0" step="1" />
+            <span id="sensLabel">70</span>
+          </label>
+          <span class="basemap-switch">
+            Karta:
+            <button type="button" class="bm active" data-basemap="topo">Terräng</button>
+            <button type="button" class="bm" data-basemap="osm">OSM</button>
+            <button type="button" class="bm" data-basemap="sat">Satellit</button>
+          </span>
+          <label>
+            <input id="hillshade" type="checkbox" />
+            Terrängskugga
+          </label>
+          <label title="Visar arter med dödligt giftiga förväxlingsarter (murklor, champinjoner, vårmusseron, spindelskivlingar m.fl.) — alltid med varning">
+            <input id="expertMode" type="checkbox" />
+            Expertläge
+          </label>
+          <span id="meta"></span>
+        </div>
+        <div id="map"></div>
+        <div id="inspect" hidden></div>
+        <p class="disclaimer">
+          Säkerhet: ät aldrig svamp du inte är 100 % säker på. Förväxlingsarter kan vara dödligt
+          giftiga (t.ex. toppig giftspindling). Vid misstanke om förgiftning kontakta
+          Giftinformationscentralen, tel 112 vid akuta symtom.
+        </p>
+      </section>
+
+      <section id="pane-settings" hidden>
+        <h2>Inställningar</h2>
+        <div class="settings-card">
+          <label class="settings-row">
+            <span>
+              <strong>Stigar (vandrings- &amp; skogsstigar)</strong>
+              <small>Visa eller dölj stiglagret på kartan</small>
+            </span>
+            <input id="trails" type="checkbox" />
+          </label>
+        </div>
+
+        <div class="settings-card" id="adminCard">
+          <h3>🛠 Admin — inlösenkoder</h3>
+          <div id="adminLock">
+            <div class="redeem-row">
+              <input id="adminPin" type="password" autocomplete="off" placeholder="Admin-PIN" />
+              <button id="adminUnlockBtn" type="button" class="shop-buy-btn">Lås upp</button>
+            </div>
+            <span id="adminStatus" class="shop-sub"></span>
+          </div>
+          <div id="adminPanel" hidden>
+            <h4>Skapa inlösenkod</h4>
+            <div class="redeem-row">
+              <select id="adminGrantType">
+                <option value="species">🍄 1 art</option>
+                <option value="packs">📦 1–3 pack</option>
+                <option value="all">🌍 Alla arter (all)</option>
+              </select>
+              <input id="adminUses" type="number" min="0" value="1" title="max antal enheter (0 = obegränsat)" style="width:90px" />
+              <input id="adminExpires" type="text" placeholder="YYYY-MM-DD (valfritt)" style="width:160px" />
+              <input id="adminNote" type="text" placeholder="anteckning (t.ex. ärende #123)" style="flex:1;min-width:140px" />
+            </div>
+            <select id="adminSpecies" hidden style="max-width:340px;margin:0.3rem 0"></select>
+            <div id="adminPacks" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin:0.3rem 0"></div>
+            <div class="redeem-row">
+              <button id="adminCreateBtn" type="button" class="shop-buy-btn">Skapa kod</button>
+              <span id="adminNewCode" class="shop-sub"></span>
+            </div>
+            <h4>Existerande koder</h4>
+            <div id="adminCodeList" class="shop-sub"></div>
+            <h4>Referrals &amp; inlösen-logg</h4>
+            <div id="adminOverview" class="shop-sub" style="white-space:pre-wrap;max-height:260px;overflow:auto"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="pane-shop" hidden>
+        <h2>🛍️ Affär</h2>
+        <p class="shop-sub">Gratisversionen innehåller 5 arter. Köp svamppack för fler — säkerhetsinfo är alltid gratis.</p>
+        <button id="openRewardBtn" type="button" class="shop-buy-btn" style="margin-bottom:0.8rem">⭐ Lås upp 1 svamp mot betyg/kommentar</button>
+        <div class="shop-card redeem-card">
+          <h3>🎁 Har du en inlösenkod?</h3>
+          <div class="redeem-row">
+            <input id="redeemInput" type="text" autocomplete="off" spellcheck="false" placeholder="SVAMP-XXXX-XXXX-XXXX" />
+            <button id="redeemBtn" type="button" class="shop-buy-btn">Lös in</button>
+          </div>
+          <span id="redeemStatus" class="shop-sub"></span>
+        </div>
+        <div id="shopGrid" class="shop-grid"></div>
+      </section>
+    </main>
+
+    <div id="reviewRewardModal" class="shop-modal" hidden role="dialog" aria-modal="true" aria-labelledby="rewardTitle">
+      <div class="shop-dialog">
+        <div class="shop-header">
+          <div>
+            <h2 id="rewardTitle">⭐ Lås upp 1 svamp mot betyg eller kommentar</h2>
+            <p class="shop-sub">Välj 1 av 12 låsta arter när du lämnat betyg (1–5) eller en kort kommentar.</p>
+          </div>
+          <button id="closeRewardBtn" type="button" class="shop-close" aria-label="Stäng belöningsfönster">✕</button>
+        </div>
+        <div id="shopNotice" class="shop-notice"></div>
+        <div class="settings-card" style="margin-bottom:0.85rem;">
+          <label class="settings-row">
+            <span><strong>Typ av belöning</strong></span>
+            <select id="rewardType">
+              <option value="review">⭐ App-recension (max 1)</option>
+              <option value="referral">🔗 Referral-kod (max 2)</option>
+            </select>
+          </label>
+          <label class="settings-row" style="margin-top:0.6rem;">
+            <span><strong>Ditt betyg (1–5)</strong></span>
+            <select id="rewardRating">
+              <option value="5">★★★★★ (5)</option>
+              <option value="4">★★★★☆ (4)</option>
+              <option value="3">★★★☆☆ (3)</option>
+              <option value="2">★★☆☆☆ (2)</option>
+              <option value="1">★☆☆☆☆ (1)</option>
+            </select>
+          </label>
+          <label class="settings-row" style="margin-top:0.6rem;">
+            <span><strong>Kommentar (valfri om betyg satts)</strong></span>
+            <input id="rewardComment" type="text" placeholder="T.ex. Bra karta i skogen..." style="flex:1;max-width:340px;" />
+          </label>
+          <label class="settings-row" style="margin-top:0.6rem;" id="referralRow" hidden>
+            <span><strong>Referral-kod du löst in</strong></span>
+            <input id="referralCode" type="text" placeholder="T.ex. ABC123" style="flex:1;max-width:200px;text-transform:uppercase;" />
+            <button id="createReferralBtn" type="button" class="shop-buy-btn">Skapa min kod att dela</button>
+          </label>
+          <label class="settings-row" style="margin-top:0.6rem;">
+            <span><strong>Välj 1 låst belöningsart</strong></span>
+            <select id="rewardSpeciesSelect"></select>
+          </label>
+        </div>
+        <div class="shop-footer" style="border-top:none;padding-top:0;margin-top:0;">
+          <span id="rewardStatus" class="shop-sub"></span>
+          <button id="claimRewardBtn" type="button" class="shop-buy-btn">Lås upp vald art</button>
+        </div>
+      </div>
+    </div>
+    <script src="/app.js"></script>
+    <script type="module" src="/map.js"></script>
+  </body>
+</html>

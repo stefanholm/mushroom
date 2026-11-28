@@ -1,0 +1,48 @@
+{
+  "name": "mushroom",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal chat web app backed by the Mistral API via the official TypeScript SDK",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "demo-data": "node scripts/make-demo-layers.mjs",
+    "osm-cache": "node scripts/fetch-osm-cache.mjs",
+    "osm-bake": "node scripts/bake-osm-from-geojson.mjs",
+    "bake-tiles": "node scripts/bake-tiles.mjs",
+    "test-patches": "node scripts/make-test-patches.mjs",
+    "bake-overview": "tsx scripts/bake-overview.mjs",
+    "artfakta": "node scripts/fetch-artdatabanken.mjs",
+    "validate": "node scripts/validate-auc.mjs",
+    "twi": "node scripts/compute-twi.mjs",
+    "microclimate": "node scripts/make-microclimate-structure-layers.mjs",
+    "water-dist": "node scripts/compute-water-dist.mjs",
+    "redeem": "tsx scripts/redeem.mjs",
+    "icons": "tsx scripts/make-icons.mjs",
+    "bake-blocks": "tsx scripts/bake-hotspot-blocks.mts",
+    "bake-zones": "tsx scripts/bake-zones.mts",
+    "sync-r2": "node scripts/sync-r2.mjs",
+    "bake-root": "tsx scripts/bake-root-files.mts"
+  },
+  "dependencies": {
+    "@mistralai/mistralai": "^3.5.0",
+    "compression": "^1.8.2",
+    "dotenv": "^18.0.0",
+    "express": "^5.3.0",
+    "geotiff": "^3.0.5",
+    "maplibre-gl": "^6.19.0",
+    "pngjs": "^7.0.0",
+    "proj4": "^2.23.0"
+  },
+  "devDependencies": {
+    "@types/compression": "^1.8.1",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.20.5",
+    "@types/pngjs": "^6.0.5",
+    "@types/proj4": "^2.5.6",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}

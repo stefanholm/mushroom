@@ -1,0 +1,346 @@
+# Mushroom Chat
+
+Minimal web app that chats with the [Mistral API](https://docs.mistral.ai) using the official
+[`@mistralai/mistralai`](https://www.npmjs.com/package/@mistralai/mistralai) TypeScript SDK.
+The model is `mistral-small-latest`. The API key stays on the server (`MISTRAL_API_KEY` in
+`.env`, never sent to the browser); the frontend only talks to the local `/api/chat` endpoint.
+
+## Run locally
+
+Requires Node.js 20+.
+
+```bash
+npm install
+cp .env.example .env   # then edit .env and set your MISTRAL_API_KEY (from https://console.mistral.ai)
+npm run dev            # starts on http://localhost:3000 (auto-reloads on changes)
+```
+
+Open http://localhost:3000 and start chatting.
+
+Other commands:
+
+```bash
+npm start        # run without auto-reload
+npm run typecheck
+```
+
+## Features
+
+- **Chatt** — talks to `mistral-small-latest` via the official SDK; the server prepends a
+  Swedish system prompt so answers come back in Swedish. The API key never leaves the server.
+- **Karta** — a MapLibre map of Sweden (basemap switch Terräng/OSM/Satellit) with a species
+  selector — **61 matsvampar** med ätvärde ★ och säsong i listan (kantarell, karljohan,
+  jättemusseron som är fridlyst och varningsmarkeras, …) — plus a "Spara PNG"-knapp som
+  exporterar kartvyn som PNG, and a heatmap overlay from
+  `GET /api/tiles/habitat/{species}/{z}/{x}/{y}.png` (also `GET /api/hotspots?...` GeoJSON).
+
+## Karta-funktioner
+
+- Artval: **flera samtidigt** via pill-knappar (max 4) — varje art får eget värmelager.
+- **Expertläge**: arter med dödligt giftiga förväxlingsarter (murklor, champinjoner,
+  vårmusseron/vårskivling, kremlor, spindelskivlingar m.fl.) visas bara när Expertläge är
+  påslaget, alltid med ⚠-markering och sin varningstext (`expertMode` i `/api/meta`).
+- **Betalning/entitlements (dev-läge)**: `/api/meta` returnerar `packs` + `speciesList[].locked`;
+  tile/hotspot/debug-endpoints svarar 403 för låsta arter. Klient skickar `?entitlements=pro,expert`;
+  i produktion valideras App Store-kvittot server-side (se `docs/PACKS-MONETIZATION.md`).
+- **🚗 Hitta bilen**: sparar bilens position (GPS eller kartens mitt) i localStorage och visar
+  avstånd + riktning dit — andra trycket på knappen rensar.
+- **Tryck på kartan** öppnar ett inspektionskort med score-faktorer från `/api/debug/cell`
+  plus artens säkerhetskontroll (`note`) och förväxlingsvarning (`lookalikes`) — kartan
+  släcker aldrig score för förväxlingsarter, utan visar varningen i stället.
+- **Spara PNG** exporterar kartvyn som bild.
+- `GET /api/peaks?species=...&minLon=...&minScore=50` — GeoJSON med lokala score-toppar (default minScore=50; med `static=1` är score habitat×100 så använd då högre tröskel, t.ex. 80)
+  (för PNG-ikoner/symbol-lager i t.ex. Xcode-appen).
+- **Inlösenkoder (redeem codes)**: admin i appen (Inställningar → 🛠 Admin, PIN = `ADMIN_PIN` i `.env`:
+  välj 1 art / 1–3 pack / alla, uses, expires) eller CLI `npm run redeem -- create --grant blandad-korg-1 --uses 5 --note "…"`;
+  användare löser in i Affären (webb) eller iOS-shop via `POST /api/redeem {code, device}` → entitlement direkt.
+  `GET /api/redeem?device=x` listar enhetens inlösta koder. Koder/logg i `data/redeem-codes.json` +
+  `data/redeem-log.json` (git-ignored). Plan: `docs/REDEEM-CODES.md`.
+- Väder: regn 14 d + min-temp 48 h (frostspärr) + **kalla nätter 7 d (flush, upp till ×1.25)**.
+
+### Skala till hela Sverige
+
+1. Kör `npm run bake-tiles -- --all-species --bbox <län> --zmin 5 --zmax 12` offline —
+   serverns disk-cache `data/tile-cache/r15/` fylls med **statiska** habitat-tiles (vädret hålls live).
+2. Servera `data/tile-cache/` som statiska PNG från CDN (t.ex. Cloudflare R2, noll egress) —
+   aldrig rendera GIS per användare live.
+3. SMHI väder som ett litet nationellt JSON (5×5 km multiplikatorer) i stället för per-punkt.
+4. App Store: backend över HTTPS, PMTiles per län för offline, attributionssida för
+   CC0/CC-BY-källorna (NV NMD, SGU, SLU, Skogsstyrelsen, SMHI, Lantmäteriet/OSM).
+
+## Validering mot riktiga fynd (Artportalen/Artfakta)
+
+`npm run artfakta -- --bbox 17.7,59.1,18.5,59.7 --limit 1000` hämtar:
+- artdata per art (namn, rödlistestatus, biotoper) till `data/species/artfakta.json`, och
+- verkliga Artportalen-fynd (via GBIF:s spegel av Artportalen, eller Artdatabankens eget
+  API om du sätter `ARTDATABANKEN_API_KEY` från [api-portal.artdatabanken.se](https://api-portal.artdatabanken.se/))
+  till `data/validation/observations.geojson`.
+
+Båda mapparna är git-ignorerade. Skyddsklassade arter (t.ex. jättemusseron) är koordinat-diffade
+i öppna data. Kör sedan `npm run validate` — den scorar alla fynd plus slumpade
+bakgrundspunkter *innanför skogsmasken* via `/api/debug/cell?static=1` och räknar ut AUC
+per art och GDD-band (rapport i `data/validation/auc-report.json`; AUC < 0,7 flaggas
+KALIBRERA, skyddsklassade arter med brusade koordinater markeras separat).
+Artfakta-API:t kräver prenumerationsnyckel; `speciesdata/assessments` och
+`natureconservation` tas ur bruk jan 2027 (använd Taxon List Service API v2 för listor).
+
+## TWI + lutning från höjdmodellen
+
+`npm run demo-data` genererar även `twi_10m.tif` och `slope_10m.tif` (D8-ackumulering +
+Horn-lutning på demo-DEM:en). För riktiga 2 m-DEM på din Mac:
+
+```
+npm run twi
+```
+
+(eller utan extra skript: `gdaldem slope -compute_edges -of GTiff data/layers/hojdmodell_2m.tif data/layers/slope_2m.tif` + `gdalwarp -overwrite -tr 10 10 ...`, och TWI via SAGA `saga_cmd ta_hydrology "Topographic Wetness Index (TWI)" ...` eller QGIS Processing — `npm run twi` gör samma sak i ren Node och skriver aldrig över befintliga filer utan `--force`.)
+
+Båda lagren är valfria — saknas de i `manifest.json`/`data/layers` hoppas faktorn över
+(default 1). Per art sätts `twiIdeal`/`slopeIdeal` i `src/habitat.ts`.
+
+Därefter mikroklimat/struktur (också valfria, neutral faktor 1.0 om de saknas):
+
+```
+npm run microclimate
+```
+
+skriver `water_rel_10m.tif` (vatten-/svacknärhet 0..1 från TWI+lutning) och
+`stand_struct_10m.tif` (skogsstruktur/kantzon 0..1 från trädhöjd+lutning+TWI).
+Per art sätts `waterIdeal`/`structIdeal` i `src/habitat.ts` (`SPECIES_MICROCLIMATE`).
+
+```
+npm run water-dist
+```
+
+skriver `water_dist_10m.tif` (avstånd i meter till närmaste vatten; NMD klass 61/62,
+fallback: höjdmodellens nodata). `npm run demo-data` skriver även `dodved_10m.tif`
+(död ved, m³/ha — riktig källa: Skogsstyrelsen/SLU död-ved-inventering, samma filnamn).
+Båda är valfria lager med `waterDistIdeal` per art; vedarter använder `dodved` via `fDeadwood`.
+Väder: `rain14` viktas ihop med `rain90` (långsiktig markfukt, SMHI samma cache); `rain30`/`rain90`
+visas i `/api/debug/cell`.
+
+## Data layers (folder structure)
+
+Raster/vector layers live in `data/layers/` (GeoTIFF/GeoJSON files themselves are
+git-ignored; only `manifest.json` is tracked). Expected files, all in **EPSG:3006
+(SWEREF 99 TM)** unless noted:
+
+```
+data/
+└── layers/
+    ├── manifest.json                     # layer registry (tracked)
+    ├── skog_tradhojd_10m.tif             # SLU Skogskarta / Skogliga grunddata – trädhöjd (m), GeoTIFF
+    ├── skog_volym_10m.tif                # SLU Skogskarta / Skogliga grunddata – total volym (m³/sk/ha), GeoTIFF
+    ├── grundyta_10m.tif                  # Skogliga grunddata – grundyta (m²/ha, täthet/ljus), GeoTIFF
+    ├── skog_gran_10m.tif                 # SLU Skogskarta – volym gran (m³/sk/ha), GeoTIFF
+    ├── skog_tall_10m.tif                 # SLU Skogskarta – volym tall, GeoTIFF
+    ├── skog_bjork_10m.tif                # SLU Skogskarta – volym björk, GeoTIFF
+    ├── skog_ek_10m.tif                   # SLU Skogskarta – volym ek, GeoTIFF
+    ├── skog_bok_10m.tif                  # SLU Skogskarta – volym bok, GeoTIFF
+    ├── skog_hassel_10m.tif               # SLU Skogskarta – volym hassel, GeoTIFF (valfri, svart trumpetsvamp)
+    ├── skog_asp_10m.tif                  # SLU Skogskarta – volym asp, GeoTIFF (valfri, aspsopp)
+    ├── skog_alder_10m.tif                # SLU Skogskarta – beståndsmedelålder (år), GeoTIFF — fAge i S_env
+    ├── skog_sis_10m.tif                  # Skogliga grunddata – ståndortsindex SIS (H100, m), GeoTIFF — fSIS i S_env
+    ├── smhi_gdd5.tif                     # SMHI PTHBV 1991–2020 – GDD>5°C (°C·d), GeoTIFF — fClimate (bioclimatisk zon; −0,9 GDD/100 m höjd via DEM)
+    ├── sgu_soil_depth_10m.tif            # SGU Jorddjupsmodell 10 m – jorddjup till berg (m), GeoTIFF — fDepth
+    ├── markfuktighet_10m.tif             # SLU Markfuktighetskarta – klass 1..5 (1=torr … 5=blöt), GeoTIFF
+    ├── jordart_10m.tif                   # SGU jordarter – klasskod, GeoTIFF (recode i manifest: 1=acidic, 2=calcareous)
+    ├── hojdmodell_2m.tif                 # Lantmäteriet nationell höjdmodell – höjd (m), GeoTIFF (lutning/aspekt beräknas i kod)
+    ├── avverkningar_senaste_5ar.geojson  # Skogsstyrelsen "Utförda avverkningar" – polygoner (hårdspärr), GeoJSON
+    ├── nyckelbiotoper.geojson            # Skogsstyrelsen nyckelbiotoper – polygoner (bonus ×1.3), GeoJSON
+    └── sumpskogar.geojson                # Skogsstyrelsen sumpskogar – polygoner (bonus ×1.15), GeoJSON
+```
+
+## Tile endpoints (cached XYZ rasters)
+
+- `GET /api/tiles/habitat/{species}/{z}/{x}/{y}.png?static=1&date=YYYY-MM-DD&sens=-10..10` —
+  256×256 PNG heatmap tile (alpha by heat, 9-stop ramp). Disk-cached under `data/tile-cache/`
+  (git-ignored); `Cache-Control: max-age=21600` for live, `86400` for dated/static tiles.
+- `GET /api/tiles/hillshade/{z}/{x}/{y}.png` — kontrastförstärkt hillshade från `hojdmodell_2m.tif` (Terrängskugga),
+  `Cache-Control: immutable`.
+- `GET /api/meta?species=&date=` — lightweight status (rain factor, season, loaded layers).
+- `GET /api/hotspots?...` — GeoJSON point grid (kept for API clients/tests).
+
+The web UI (`public/map.js`) uses the raster tiles, so panning/zooming never recomputes —
+MapLibre fetches tiles and they're cached on disk and in the browser.
+
+**Native app (Xcode):** use the habitat **PNG tiles** as a MapLibre raster source, not the
+GeoJSON points — the tiles are pre-rendered smooth circle-blobs, while a client-side
+heatmap layer over `/api/hotspots` points looks blocky. Always append the current renderer
+version as a query param so the app cache busts when the renderer changes:
+`GET /api/meta` returns `tileVersion` (e.g. `r10`), then request
+`/api/tiles/habitat/{species}/{z}/{x}/{y}.png?static=1&date=YYYY-MM-DD&sens=0&v=r10`.
+```
+
+
+`manifest.json` maps each file to a layer id (`tradhojd`, `volym`, `markfuktighet`,
+`jordart`, `hojd`, `avverkningar`) with `nodata`, `band` and optional `recode`. Missing
+files are skipped with a log line, so the app works with any subset of layers.
+
+Sources (verify current URLs before downloading — they change):
+
+- SLU Skogskarta / Skogliga grunddata (trädhöjd, volym): Skogsstyrelsen/SLU öppna geodata,
+  https://www.skogsstyrelsen.se and https://www.slu.se/skogskarta
+- SLU Markfuktighetskarta: https://www.slu.se (SLU, markfuktighetskartan)
+- SGU jordarter & berggrund: https://www.sgu.se (öppna data, WFS/GeoTIFF)
+- Lantmäteriet nationell höjdmodell (2 m): https://www.lantmateriet.se öppna data (gratis konto)
+- Skogsstyrelsen Utförda avverkningar & nyckelbiotoper: https://kartor.skogsstyrelsen.se (WFS → GeoJSON)
+- Validering: Artportalen (SLU Artdatabanken), https://artportalen.se
+
+To try the pipeline without downloading anything, run `npm run demo-data` (skips files that already exist — use `npm run demo-data -- --force` to regenerate; it never clobbers real downloaded data) — it generates
+synthetic layers for a test area around Stockholm (17.7–18.5°E, 59.1–59.7°N) into
+`data/layers/`, including two clear-cut polygons. Replace the files with real downloads
+for the same area; restart the server to reload layers.
+
+## Layers used to pinpoint hotspots
+
+Static (where mycelium *can* live), sampled per map cell:
+
+1. **OSM forest mask** — Overpass (ways **and multipolygon relations**: `landuse=forest`/`natural=wood`/`natural=scrub`), cached 24 h, 5 fallback hosts. Hard filter: non-forest ≈ 0.
+   1b. **Forest-edge bonus** — cells within ~100 m of the forest boundary get a species-weighted bonus (kantarell loves edges/paths).
+2. **Negative OSM layers** — Overpass (ways + relations, cached 24 h, fallback hosts). Hard zero inside `natural=water`, `waterway`, `building=*`, `landuse=industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green`, `leisure=pitch|golf_course|recreation_ground`, `amenity=parking`, `natural=grass`, `shop=*`, `man_made=wastewater_plant|storage_tank`. **All water (lakes/sea/streams) is hard-zero within 50 m**; other exclusion polygons within 30 m; paved roads/rail/aeroway hard-zero within **50 m** (pollution), ×0.5 up to 80 m; forest paths stay open. (Safety: military/landfill/pollution excluded.)
+3. **DEM water cutoff** — with the höjdmodell loaded, in-coverage cells with nodata or elevation < 0.5 m are sea/water → hard zero (works even if Overpass is unreachable).
+2. **Trädhöjd** (`tradhojd`, SLU Skogskarta/Skogliga grunddata) — stand maturity threshold per species.
+3. **Volym** (`volym`, SLU) — same, volume-based.
+4. **Markfuktighet** (`markfuktighet`, SLU Markfuktighetskarta, class 1–5) — per-species moisture preference.
+5. **Jordart** (`jordart`, SGU) — acidic vs calcareous soil per species.
+6. **Höjdmodell** (`hojd`, Lantmäteriet NH) — derived in code: **aspect → sun exposure** (south-facing = sunny/warm) and **depression depth** (crevasses/svackor: lower than the surrounding 250 m ring).
+7. **Avverkningar** (`avverkningar`, Skogsstyrelsen, vector) — hard zero inside recent clear-cuts.
+
+Out-of-the-box ideas for later: Artportalen observations as a validation/training layer,
+Sentinel-2 NDVI greenness, SMHI radar (PMP) for spatial rain variation instead of one
+station, `highway=path`/`footway` proximity as a positive layer (kantarell along trails),
+and soil pH from SGU berggrund in addition to jordart.
+
+Dynamic (when it *fruits*), from SMHI metobs (`latest-months`):
+
+8. **Rain, last 14 days** at the nearest active station, ending at the selected date (date slider).
+9. **Seasonal window** per species, shifted by latitude.
+
+Karta-tab extras: a **basemap switcher** (Terräng/OSM/Satellit) with an optional
+**Stigar** (hiking trails) overlay, a **sensitivitet slider**
+(shifts the hotspot threshold ±10 around score 70), and a safety disclaimer
+(Giftinformationscentralen / lookalikes).
+
+Cells are scored on a **globally snapped ladder grid**: cell size is 0.0001° (~6 m)
+doubled per zoom level until the tile fits (~110×110 cells), with origins snapped to
+multiples of the cell size — coarser cells are exact unions of finer ones, so the same
+hotspot stays hot at every zoom (only blur changes), down to ~6 m at street level where
+the 2 m höjdmodell drives the detail. The overlay is a **blurred MapLibre heatmap layer** with a smooth 9-stop
+gradient and a zoom-adaptive radius.
+
+OSM masks (forest + exclusions) are read **disk-first** from `data/osm/{forest,exclusion}_<tile>.json`
+(git-ignored) — pre-bake them once per area with `npm run osm-cache -- <minLon> <minLat> <maxLon> <maxLat>`
+(e.g. `npm run osm-cache -- 17.7 59.1 18.5 59.7` for the demo/Botkyrka area). The server merges all
+0.4° tile files covering the query bbox (keys are `toFixed(6)`-formatted — always re-bake with
+`rm -rf data/osm` after pulling, old float-artifact keys won't match). Masking is **fail-closed**:
+if no mask is available for an area, nothing renders there (`forestKnown` in `/api/meta`).
+If no disk cache exists, the server falls back to Overpass (8 hosts, GET) then the main OSM API,
+cached 24 h per tile.
+
+**Offline fallback (if Overpass/OSM-API are blocked or rate-limited from your network)** — bake
+from a local OSM extract instead of the network:
+
+```
+brew install osmium-tool
+curl -L -o /tmp/sweden.osm.pbf https://download.geofabrik.de/europe/sweden-latest.osm.pbf
+osmium extract -b 17.6 59.0 18.6 59.8 /tmp/sweden.osm.pbf -o /tmp/area.osm.pbf --overwrite   # klipp ut området först
+osmium tags-filter /tmp/area.osm.pbf w/landuse=forest w/natural=wood w/natural=scrub r/landuse=forest r/natural=wood -o /tmp/forest.osm.pbf --overwrite
+osmium export /tmp/forest.osm.pbf -f geojsonseq -o /tmp/forest.geojsonl --overwrite
+osmium tags-filter /tmp/area.osm.pbf w/natural=water w/waterway~".*" w/building~".*" w/landuse~"^(industrial|commercial|residential|urban|cemetery|allotments|quarry|landfill|military|retail|grass|meadow|village_green)$" w/leisure~"^(pitch|golf_course|recreation_ground|park|garden|playground|dog_park)$" w/amenity=parking w/natural=grass w/shop~".*" w/man_made~"^(wastewater_plant|storage_tank)$" w/highway~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|service|living_street|bus_guideway|raceway|road)$" w/railway~".*" w/aeroway~".*" r/natural=water r/building r/landuse~"^(industrial|commercial|residential|urban|landfill|military|retail)$" -o /tmp/excl.osm.pbf --overwrite
+osmium export /tmp/excl.osm.pbf -f geojsonseq -o /tmp/excl.geojsonl --overwrite
+npm run osm-bake -- /tmp/forest.geojsonl /tmp/excl.geojsonl 17.7 59.1 18.5 59.7
+```
+
+Use `-f geojsonseq` (one feature per line) — the bake script streams it line by line and
+pre-filters by bbox, so even a multi-GB export stays fast and low-memory. (Plain `.geojson`
+still works if under ~200 MB.)
+
+(`osmium export` writes GeoJSON in EPSG:4326 with OSM tags in `properties`; the bake script clips
+them into per-tile cache files — the server probes tile sizes 0.4°/0.2°/0.1° on disk, so pass the
+same size as the 5th arg if you bake smaller tiles. Bake a bbox slightly larger than your area of
+interest — masking is fail-closed, so anything outside the baked tiles scores 0.)
+Exclusion polygons get a 30 m buffer; **water polygons a 50 m buffer**; paved roads hard-zero within 50 m (×0.5 to 80 m); forest paths stay open.
+
+**NMD 10 m mask (recommended, replaces OSM entirely):** direct download from Naturvårdsverket's
+file server — use the **v2.x** basskikt (the v0.x series has different class codes and will NOT
+match `manifest.json`). The national zip is ~2.5 GB and contains one national uint16 GeoTIFF
+(10 m, SWEREF99 TM / EPSG:3006), e.g. `NMD2023bas_v2_1.tif`:
+
+```
+brew install gdal
+curl -L -o /tmp/NMD2023_v2_1.zip "https://geodata.naturvardsverket.se/nedladdning/marktacke/NMD2023/Basskikt_v2_x/NMD2023_basskikt_v2_1.zip"
+unzip -o /tmp/NMD2023_v2_1.zip -d /tmp/nmd && ls /tmp/nmd/*/*.tif
+gdalwarp -te 644000 6537000 707000 6640000 -tr 10 10 -co COMPRESS=DEFLATE -co TILED=YES /tmp/nmd/NMD2023_basskikt_v2_1/NMD2023bas_v2_1.tif data/layers/nmd_10m.tif
+```
+
+(`-te` is SWEREF99 TM meters: this clip covers ca 17.6–18.6°E, 59.0–59.8°N with margin. Keep the
+clip under ~12 800 km² at 10 m — bigger rasters exceed the 128 M-sample build limit and the mask
+turns fail-closed with a startup VARNING. Adjust the `-te` numbers to your own area of interest.)
+Verify: startup prints `NMD-mask hittad` and `curl -s "http://localhost:3000/api/meta"` shows
+`"maskUsed": true, "forestKnown": true`.
+
+`manifest.json` wires it as the hard gate, with NMD2023 v2.x class codes (verified against the
+product's QGIS style `NMD2023bas_v2_1.qml`): `forestClasses` = 111–117 + 121–127 (tall/low forest
+on firm ground and on wetland; **118/128 are "temporärt ej skog" = clear-cuts — excluded**),
+`dilateClasses` = [51, 52, 53, 54] (51 building, 52 other exploited, 53 road/rail, 54 peat
+cutting) dilated 3 px ≈ 30 m; water (61/62) is hard 0 **plus a 50 m buffer** (`waterClasses` +
+`waterBufferM` in `manifest.json`), 0 (outside NMD coverage) and all other non-forest
+classes are hard 0 without eroding forest edges. When the mask is present, OSM masks are skipped
+entirely (`maskUsed: true` in `/api/meta`).
+
+Habitat tiles are a continuous blurred scalar field (150 m gutter, premultiplied separable blur)
+with a sharp post-blur `G_hard` clip and a teal→emerald→amber→orange→crimson ramp.
+Each cell gets a `heat` value: 0 below score 70, ramping to 1 at score 100 with a steep
+alpha curve (`heat^2`), so only real hotspots glow — red starts around heat 0.88.
+**Cluster boost:** at street-level zooms, each cell also counts hot neighbours within
+~50 m; 1 hot neighbour adds +0.06 heat, 2 add +0.12, 3+ add +0.2,
+so connected hotspots climb toward red. `static=1` shows layers 1–7 only. Rendered PNGs are
+disk-cached under `data/tile-cache/<tileVersion>/` and served from disk on repeat views.
+
+## How the hotspot score works
+
+Full equations, species rule matrix, heat/cluster rendering and data lineage:
+[**docs/SCORING.md**](docs/SCORING.md).
+
+Gated biological equation per cell:
+`score = G_hard × G_host × S_env × M_bonus × D_weather` (0–100):
+
+- **G_hard** (0/1): zero if outside the OSM forest mask, inside an OSM exclusion
+  (water/buildings/roads/urban/military/landfill…), inside a clear-cut, or DEM
+  elevation < 0.5 m (sea).
+- **G_host** (0–1): obligate mycorrhizal gate from the per-species volume rasters
+  (gran/tall/björk/ek/bok) — below the species' minimum host volume the cell is 0;
+  above it, ramps 0.2→1.0. Falls back to total `volym` (flagged via `hostFallback`
+  in `/api/meta`) when species rasters are missing.
+- **S_env** = 100 × (0.35·moisture + 0.25·maturity + 0.20·canopy + 0.10·soil + 0.10·terrain),
+  with hard env vetoes per species (e.g. trädhöjd < min, markfuktighet class veto).
+- **M_bonus**: ×1.3 inside nyckelbiotoper, up to ×1.15 at forest edges (species-weighted).
+- **D_weather** = SMHI 14-day rain factor × latitude-shifted season × frost cutoff
+  (0 for frost-sensitive species if min temp last 48 h ≤ −3 °C; SMHI metobs param 1).
+
+Weather (rain + min temp) is cached 6 h per location and pre-warmed every 6 h for a
+~30-point grid over Sweden, so requests never hit SMHI live after startup.
+
+Each map cell gets `score` as above (0–100):
+
+- **Dynamic multiplier** — computed per request from SMHI Open Data (metobs API,
+  parameter 5 = daily precipitation, `latest-months` period): the summed rain over the
+  14 days ending at the requested date at the nearest active station, scaled
+  (`rain/60`, capped at 1), times a seasonal window per species shifted by latitude.
+  Pass `date=YYYY-MM-DD` to `/api/hotspots` to time-travel (the Karta tab has a date
+  slider, max ~110 days back — that's what SMHI `latest-months` covers). Results are
+  cached server-side for 6 h. `static=1` skips weather/season and shows habitat only.
+- **Static habitat score** — per-species base × an OSM forest mask (Overpass API:
+  `landuse=forest` / `natural=wood` polygons, cached 24 h per 0.5° grid cell; cells
+  outside forest are hard-filtered) × the raster layers from `data/layers/` when present:
+  trädhöjd/volym thresholds, markfuktighetsklass, jordart (sur/kalkrik), lutning/aspekt
+  från höjdmodellen, and a hard zero inside recent clear-cuts (avverkningar). The basemap
+  can later switch to Lantmäteriet's topographic WMTS (needs a free API key).
+
+## How it works
+
+- `src/server.ts` — Express server. Serves the static UI and MapLibre from `public/` and
+  `node_modules/`, exposes `POST /api/chat` (Mistral chat, Swedish system prompt) and
+  `GET /api/hotspots` (GeoJSON heatmap grid).
+- `public/index.html` + `app.js` + `map.js` — tabbed UI: chat and map.

@@ -1,0 +1,31 @@
+# Cloudflare Worker framför Svampradar — origin-fri (R2 + D1 + SMHI-cron).
+# Deploy: se worker/README.md  (live just nu: https://svampradar.natureradar-se.workers.dev)
+name = "svampradar"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+# R2-bucket (rclone-remote "r2" pekar på denna): natureradar-data
+[[r2_buckets]]
+binding = "TILES"
+bucket_name = "natureradar-data"
+
+# D1: svampradar-db (init: wrangler d1 execute svampradar-db --file=schema.sql)
+# database_id från 2026-11-27 (Cloudflare-dash; deploy failar med [code: 10021] om denna saknas)
+[[d1_databases]]
+binding = "DB"
+database_name = "svampradar-db"
+database_id = "d588ad45-81e5-4d59-8d77-4914142ca7e1"
+
+# SMHI-cron: baka moln/regn-frames till R2 (kan behöva Workers Paid om >10 ms CPU)
+[triggers]
+crons = ["0 */6 * * *"]
+
+[vars]
+# AKTIV revision — byt till "r16" osv FÖRST när hela revisionen är synkad till R2
+# (immutable deploy: baka ny mapp, testa, byt sist DEFAULT_TILE_REV, wrangler deploy)
+DEFAULT_TILE_REV = "r15"
+# App-id i D1-tabellerna (Bärradar/Blomradar/Pollenradar delar DB utan kollisioner)
+APP_ID = "svampradar"
+FREE_HIDE_FRACTION = "0.3"
+# Dev-fallback: om satt proxas okända routes hit (Node på Macen). TOM i prod (origin privat).
+ORIGIN_URL = ""

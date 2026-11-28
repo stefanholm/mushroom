@@ -1,0 +1,257 @@
+// test-local.mts — kör Workerns fetch-handler lokalt med mockad R2 (katalog på disk)
+// och mockad D1 (node:sqlite). Ingen Cloudflare-inloggning behövs.
+// Kör:  npx tsx worker/test-local.mts [seedDir]   (default /tmp/r2seed)
+import fs from "node:fs";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import worker from "./src/index.js";
+import type { Env } from "./src/cf-types.js";
+
+const SEED = process.argv[2] ?? "/tmp/r2seed";
+
+// --- mock R2 över katalog ---
+const objects = new Map<string, { data: Buffer; contentType: string; cacheControl: string }>();
+function walk(dir: string, prefix: string) {
+  for (const f of fs.readdirSync(dir)) {
+    const p = path.join(dir, f);
+    const key = prefix + f;
+    if (fs.statSync(p).isDirectory()) walk(p, key + "/");
+    else {
+      const ext = f.endsWith(".png") ? "image/png" : "application/json; charset=utf-8";
+      objects.set(key, { data: fs.readFileSync(p), contentType: ext, cacheControl: ext.includes("png") ? "public, max-age=31536000, immutable" : "public, max-age=300" });
+    }
+  }
+}
+walk(SEED, "");
+console.log(`mock R2: ${objects.size} objekt från ${SEED}`);
+
+let r2GetCount = 0;
+const TILES = {
+  async get(key: string) {
+    r2GetCount++;
+    const o = objects.get(key);
+    if (!o) return null;
+    return {
+      body: new ReadableStream({ start(c) { c.enqueue(new Uint8Array(o.data)); c.close(); } }),
+      size: o.data.length,
+      httpMetadata: { contentType: o.contentType, cacheControl: o.cacheControl },
+    };
+  },
+  async put(key: string, value: ArrayBuffer) {
+    objects.set(key, { data: Buffer.from(value), contentType: key.endsWith(".png") ? "image/png" : "application/json", cacheControl: "mock" });
+  },
+  async list(options?: { prefix?: string; limit?: number }) {
+    const prefix = options?.prefix ?? "";
+    const keys = [...objects.keys()].filter((k) => k.startsWith(prefix)).slice(0, options?.limit ?? 1000);
+    return { objects: keys.map((key) => ({ key })) };
+  },
+};
+
+// --- mock D1 över node:sqlite ---
+const db = new DatabaseSync(":memory:");
+const DB = {
+  // OBS: medvetet ingen exec() här — riktiga D1 vägrar flerradig SQL via exec()
+  // ("incomplete input"), så workern får bara använda prepare().run() per sats.
+  prepare(sql: string) {
+    const stmt = db.prepare(sql);
+    let vals: unknown[] = [];
+    return {
+      bind(...v: unknown[]) { vals = v; return this; },
+      async first(col?: string) {
+        const row = stmt.get(...(vals as never[])) as Record<string, unknown> | null;
+        if (!row) return null;
+        return (col ? row[col] : row) as never;
+      },
+      async all() { return { results: stmt.all(...(vals as never[])) as never[] }; },
+      async run() { stmt.run(...(vals as never[])); return {}; },
+    };
+  },
+};
+
+const env: Env = { TILES: TILES as never, DB: DB as never, DEFAULT_TILE_REV: "r15", APP_ID: "svampradar", FREE_HIDE_FRACTION: "0.3", ORIGIN_URL: "http://127.0.0.1:3100" };
+
+let pass = 0, fail = 0;
+const ck = (n: string, c: boolean, x = "") => { if (c) { pass++; console.log("OK  ", n, x); } else { fail++; console.log("FAIL", n, x); } };
+async function call(path: string, init?: RequestInit, envOverride?: Env) {
+  const res = await worker.fetch(new Request("https://api.svampradar.se" + path, init), envOverride ?? env, { waitUntil() {} } as never);
+  let body: unknown = null;
+  const text = await res.text();
+  try { body = JSON.parse(text); } catch { body = text.slice(0, 40); }
+  return { status: res.status, body, headers: res.headers };
+}
+
+// manifest + catalog från R2
+let r = await call("/manifest.json");
+ck("manifest.json från R2", r.status === 200 && (r.body as { tileRev?: string })?.tileRev === "r15", `tileRev=${(r.body as { tileRev?: string })?.tileRev}`);
+ck("manifest immutable? (json -> max-age=300)", r.headers.get("cache-control")?.includes("max-age=300") === true);
+r = await call("/api/v1/catalog");
+ck("GET /api/v1/catalog från R2", r.status === 200 && (r.body as { species?: unknown[] })?.species?.length === 61, `arter=${(r.body as { species?: unknown[] })?.species?.length}`);
+
+// hotspots från R2-block (kantarell, ents=all)
+r = await call("/api/hotspots?bbox=17.3,58.9,18.5,59.7&static=1&species=kantarell&ents=all&maxP=50&minScore=55");
+const pins = (r.body as { hotspots?: unknown[] })?.hotspots ?? [];
+ck("hotspots från R2-block 200", r.status === 200 && pins.length > 0, `pins=${pins.length} source=${(r.body as { meta?: { source?: string } })?.meta?.source}`);
+ck("alla pins inom bbox och >= minScore", pins.every((p) => (p as { lon: number; lat: number; score: number }).lon >= 17.3 && (p as { lon: number }).lon <= 18.5 && (p as { score: number }).score >= 55));
+{
+  const p0 = pins[0] as Record<string, unknown> | undefined;
+  ck("pin har label/eatScore (HotspotItem) + meta.count", !!p0 && typeof p0.label === "string" && "eatScore" in p0 && typeof (r.body as { meta?: { count?: number } })?.meta?.count === "number",
+    `pin0=${JSON.stringify(p0)} count=${(r.body as { meta?: { count?: number } })?.meta?.count}`);
+}
+
+// hotspots låst utan ents (kantarell ej free)
+r = await call("/api/hotspots?bbox=17.3,58.9,18.5,59.7&static=1&species=kantarell");
+ck("hotspots 403 utan ents (kantarell låst)", r.status === 403 && Array.isArray((r.body as { locked?: string[] })?.locked), `status=${r.status}`);
+// men årskort (klassiker) låser upp kantarell
+r = await call("/api/hotspots?bbox=17.3,58.9,18.5,59.7&static=1&species=kantarell&ents=topspots.2026");
+ck("hotspots 200 med årskort (klassiker)", r.status === 200 && ((r.body as { hotspots?: unknown[] })?.hotspots?.length ?? 0) > 0, `pins=${(r.body as { hotspots?: unknown[] })?.hotspots?.length}`);
+
+// overview från R2
+r = await call("/api/v1/fungi/overview?species=kantarell&static=1&ents=all&minScore=55");
+const tiers = (r.body as { tiers?: Record<string, unknown[]> })?.tiers ?? {};
+ck("overview från R2: tiers 55/18/6km", r.status === 200 && tiers["55km"]?.length > 0 && tiers["6km"]?.length > 0,
+  `55km=${tiers["55km"]?.length} 18km=${tiers["18km"]?.length} 6km=${tiers["6km"]?.length}`);
+ck("overview: tier-nycklar exakt 55km/18km/6km + goldPeaks + mode", JSON.stringify(Object.keys(tiers).sort()) === '["18km","55km","6km"]' && typeof (r.body as { goldPeaks?: number })?.goldPeaks === "number" && (r.body as { mode?: string })?.mode === "habitat",
+  `keys=${Object.keys(tiers)} gold=${(r.body as { goldPeaks?: number })?.goldPeaks} mode=${(r.body as { mode?: string })?.mode}`);
+ck("overview: asOf + minScore finns (Node skickar dem; AppModels kan kräva dem)", typeof (r.body as { asOf?: string })?.asOf === "string" && typeof (r.body as { minScore?: number })?.minScore === "number", `asOf=${(r.body as { asOf?: string })?.asOf} minScore=${(r.body as { minScore?: number })?.minScore}`);
+{
+  const c0 = (tiers["6km"] ?? [])[0] as Record<string, unknown> | undefined;
+  ck("overview tier-cell har northing/easting/count (OverviewTierSpot)", !!c0 && typeof c0.northing === "number" && typeof c0.easting === "number" && typeof c0.count === "number",
+    `ex=${JSON.stringify(c0)}`);
+}
+{
+  const pr = (r.body as { profiles?: Record<string, Record<string, unknown> | null> })?.profiles?.kantarell;
+  ck("overview profile: aldrig null (defaultProfile-fallback), har nationalCells+topScore",
+    !!pr && typeof pr === "object" && !!pr.nationalCells && typeof pr.topScore === "number",
+    `profile=${pr ? JSON.stringify(pr).slice(0, 80) : "null"}`);
+}
+// repro av live-buggen: overview-fil finns men species-pyramid-profile.json saknas i R2 -> defaultProfile, ej null
+{
+  const cat = objects.get("domains/fungi/r15/catalog.json");
+  const ov = objects.get("domains/fungi/r15/overview/kantarell.json");
+  if (cat && ov) {
+    objects.set("domains/fungi/r16/catalog.json", cat);
+    objects.set("domains/fungi/r16/overview/kantarell.json", ov);
+    const envR16: Env = { ...env, DEFAULT_TILE_REV: "r16" };
+    r = await call("/api/v1/fungi/overview?species=kantarell&static=1&ents=all", undefined, envR16);
+    const pr = (r.body as { profiles?: Record<string, Record<string, unknown> | null> })?.profiles?.kantarell;
+    ck("overview utan pyramid-fil i R2 (r16): profil = defaultProfile-objekt, ej null", r.status === 200 && !!pr && typeof pr === "object" && !!pr.nationalCells, `status=${r.status} profile=${pr ? "objekt" : String(pr)}`);
+  }
+}
+
+// bootstrap i worker
+r = await call("/api/v1/bootstrap?species=kantarell&ents=all");
+const f = (r.body as { fungi?: Record<string, { overviewCells?: unknown[]; zonePending?: boolean; rainWindowDays?: number }> })?.fungi?.kantarell;
+ck("bootstrap: tileRev + fungi bundle", r.status === 200 && (r.body as { tileRev?: string })?.tileRev === "r15" && !!f && f.overviewCells!.length > 0,
+  `cells=${f?.overviewCells?.length} win=${f?.rainWindowDays} zonePending=${f?.zonePending}`);
+ck("bootstrap: shop + unlocked + leaderboard", !!(r.body as { shop?: unknown; unlocked?: { unlocked?: string[] } })?.shop && (r.body as { unlocked?: { unlocked?: string[] } })?.unlocked?.unlocked?.includes("kantarell"));
+ck("bootstrap: rainSpans [14,21,28,42] (AppModels)", JSON.stringify((r.body as { rainSpans?: number[] })?.rainSpans) === "[14,21,28,42]");
+{
+  const bMeta = (r.body as { meta?: { speciesList?: unknown[]; tileRev?: string; topSpots?: unknown } })?.meta;
+  ck("bootstrap: meta finns (BootstrapResponse.meta icke-optional) med speciesList+tileRev", !!bMeta && Array.isArray(bMeta.speciesList) && bMeta.speciesList.length === 61 && typeof bMeta.tileRev === "string" && !!bMeta.topSpots);
+  const lb = (r.body as { leaderboard?: { days?: number; leaderboard?: unknown } })?.leaderboard;
+  ck("bootstrap: leaderboard har {days, leaderboard:[]} (ej serialiserat Response)", !!lb && typeof lb.days === "number" && Array.isArray(lb.leaderboard));
+}
+
+// edge /api/meta från catalog.json (AppModels.swift-kontrakt)
+r = await call("/api/meta?species=kantarell&ents=all");
+ck("edge /api/meta: speciesList 61 + tileRev + topSpots", r.status === 200 && (r.body as { speciesList?: unknown[] })?.speciesList?.length === 61 && (r.body as { tileRev?: string })?.tileRev === "r15" && !!(r.body as { topSpots?: unknown })?.topSpots,
+  `species=${(r.body as { species?: string })?.species} tileRev=${(r.body as { tileRev?: string })?.tileRev}`);
+r = await call("/api/meta?species=kantarell");
+ck("edge /api/meta utan ents: kantarell locked i speciesList", (r.body as { speciesList?: { id: string; locked: boolean }[] })?.speciesList?.find((s) => s.id === "kantarell")?.locked === true);
+
+// unlocked via ents
+r = await call("/api/unlocked?device=dev1&ents=topspots.2026");
+ck("unlocked: kantarell via årskort-klassiker", r.status === 200 && (r.body as { unlocked?: string[] })?.unlocked?.includes("kantarell"));
+r = await call("/api/unlocked?device=dev1");
+ck("unlocked utan ents: bara free 5", r.status === 200 && (r.body as { unlocked?: string[] })?.unlocked?.length === 5);
+
+// D1: report-signal + leaderboard + privacy delete
+r = await call("/api/report-signal", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ device: "dev1", species: "kantarell", lat: 59.3, lon: 18.1, score: 80 }) });
+ck("report-signal 200 (D1)", r.status === 200 && (r.body as { ok?: boolean })?.ok === true);
+r = await call("/api/leaderboard?device=dev1");
+ck("leaderboard 200 med rad", r.status === 200 && ((r.body as { leaderboard?: unknown[] })?.leaderboard?.length ?? 0) === 1);
+r = await call("/api/privacy/delete?device=dev1", { method: "DELETE" });
+ck("privacy/delete 200 idempotent", r.status === 200 && (r.body as { ok?: boolean })?.ok === true);
+r = await call("/api/leaderboard?device=dev1");
+ck("leaderboard tom efter delete", ((r.body as { leaderboard?: unknown[] })?.leaderboard?.length ?? 0) === 0);
+
+// okänd route proxas till origin när ORIGIN_URL är satt (dev), annars 404 från Workern
+r = await call("/api/chat", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+ck("okänd route proxas till origin (ej worker-404)", r.status !== 404, `status=${r.status}`);
+{
+  const envNoOrigin: Env = { ...env, ORIGIN_URL: "" };
+  const res2 = await worker.fetch(new Request("https://api.svampradar.se/api/chat", { method: "POST", body: "{}" }), envNoOrigin, { waitUntil() {} } as never);
+  ck("utan ORIGIN_URL: 404 från Workern", res2.status === 404, `status=${res2.status}`);
+}
+
+// Legacy-D1 själv-heal: tabeller med GAMMAL kolumnuppsättning (t.ex. profiles(app_id, device_uuid, ...))
+// ska migreras i workern (per-sats prepare/run + ALTER ADD COLUMN) — aldrig 502 "incomplete input".
+{
+  const legacyDb = new DatabaseSync(":memory:");
+  legacyDb.exec("CREATE TABLE signals (id INTEGER PRIMARY KEY AUTOINCREMENT, device TEXT NOT NULL, species TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL, score REAL NOT NULL, at INTEGER NOT NULL)");
+  legacyDb.exec("CREATE TABLE profiles (app_id TEXT NOT NULL, device_uuid TEXT NOT NULL, username TEXT, points INTEGER DEFAULT 0, updated_at INTEGER NOT NULL)");
+  legacyDb.exec("CREATE TABLE reward_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, app_id TEXT NOT NULL, kind TEXT NOT NULL, species TEXT, at INTEGER NOT NULL)");
+  legacyDb.exec("INSERT INTO signals(device, species, lat, lon, score, at) VALUES('legacy-dev','kantarell',59.3,18.1,50," + (Date.now() - 3600000) + ")");
+  const legacyDB = {
+    prepare(sql: string) {
+      const stmt = legacyDb.prepare(sql);
+      let vals: unknown[] = [];
+      return {
+        bind(...v: unknown[]) { vals = v; return this; },
+        async first(col?: string) { const row = stmt.get(...(vals as never[])) as Record<string, unknown> | null; return row ? ((col ? row[col] : row) as never) : null; },
+        async all() { return { results: stmt.all(...(vals as never[])) as never[] }; },
+        async run() { stmt.run(...(vals as never[])); return {}; },
+      };
+    },
+  };
+  const envLegacy: Env = { ...env, DB: legacyDB as never };
+  r = await call("/api/report-signal", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ device: "dev2", species: "blek-taggsvamp", lat: 59.4, lon: 18.2, score: 90 }) }, envLegacy);
+  ck("legacy-D1: report-signal själv-healar (ej 502 incomplete input)", r.status === 200 && (r.body as { ok?: boolean })?.ok === true, `status=${r.status} body=${JSON.stringify(r.body).slice(0, 90)}`);
+  r = await call("/api/leaderboard?device=dev2", undefined, envLegacy);
+  ck("legacy-D1: leaderboard 200 ser legacy-raden via app_id", r.status === 200 && ((r.body as { leaderboard?: unknown[] })?.leaderboard?.length ?? 0) >= 1, `status=${r.status}`);
+  const cols = legacyDb.prepare("PRAGMA table_info(signals)").all() as { name: string }[];
+  ck("legacy-D1: signals fick app_id/alias via ALTER", cols.some((c) => c.name === "app_id") && cols.some((c) => c.name === "alias"));
+  const profCols = legacyDb.prepare("PRAGMA table_info(profiles)").all() as { name: string }[];
+  ck("legacy-D1: profiles fick device/data via ALTER", profCols.some((c) => c.name === "device") && profCols.some((c) => c.name === "data"));
+}
+
+// tiles från R2 med Node-cache-struktur (variant-segment static/now/<sens>)
+{
+  const { encodePng } = await import("./src/png.js");
+  const pngBuf = Buffer.from(await encodePng(2, 2, new Uint8Array(2 * 2 * 4).fill(200)));
+  objects.set("domains/fungi/r15/tiles/habitat/kantarell/static/now/0/8/140_75.png", { data: pngBuf, contentType: "image/png", cacheControl: "public, max-age=86400" });
+  objects.set("domains/fungi/r15/tiles/hillshade/8/140_75.png", { data: pngBuf, contentType: "image/png", cacheControl: "public, max-age=31536000, immutable" });
+  r = await call("/api/tiles/habitat/kantarell/8/140/75.png?static=1");
+  ck("tile habitat via variant-nyckel (static/now/0)", r.status === 200 && (r.headers.get("content-type") ?? "").includes("png"), `status=${r.status}`);
+  r = await call("/api/tiles/hillshade/8/140/75.png");
+  ck("tile hillshade (ingen variant)", r.status === 200 && (r.headers.get("content-type") ?? "").includes("png"), `status=${r.status}`);
+  r = await call("/api/tiles/habitat/kantarell/8/140/75.png");
+  ck("tile habitat live utan bakad variant -> ej 200 png från R2 (proxas vidare)", !(r.status === 200 && (r.headers.get("content-type") ?? "").includes("png")), `status=${r.status}`);
+}
+
+// edge-cache (caches.default): andra GET för samma URL ska inte gå till R2
+{
+  const { encodePng } = await import("./src/png.js");
+  let puts = 0;
+  const store = new Map<string, Response>();
+  (globalThis as Record<string, unknown>).caches = {
+    default: {
+      async match(k: Request) { return store.get(k.url); },
+      async put(k: Request, r: Response) { puts++; store.set(k.url, r.clone()); },
+    },
+  };
+  objects.set("domains/fungi/r15/tiles/hillshade/8/141_76.png", { data: Buffer.from(await encodePng(2, 2, new Uint8Array(16).fill(90))), contentType: "image/png", cacheControl: "public, max-age=31536000, immutable" });
+  const before = r2GetCount;
+  const r1 = await call("/api/tiles/hillshade/8/141/76.png");
+  const r2 = await call("/api/tiles/hillshade/8/141/76.png");
+  ck("edge-cache: 2:a GET samma URL från caches.default (1 R2-get, båda 200)", r1.status === 200 && r2.status === 200 && r2GetCount - before === 1 && puts === 1, `gets=${r2GetCount - before} puts=${puts} s1=${r1.status} s2=${r2.status}`);
+  delete (globalThis as Record<string, unknown>).caches;
+}
+
+// PNG-enkodern (smoke)
+const { encodePng } = await import("./src/png.js");
+const png = await encodePng(4, 4, new Uint8Array(4 * 4 * 4).fill(128));
+ck("png encoder: signatur OK", png[0] === 137 && png[1] === 80 && png[2] === 78 && png[3] === 71, `bytes=${png.length}`);
+
+console.log(`\n${pass} OK, ${fail} FAIL`);
+process.exit(fail ? 1 : 0);
