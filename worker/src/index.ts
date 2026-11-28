@@ -302,8 +302,29 @@ async function proxyOrigin(req: Request, env: Env): Promise<Response> {
 }
 
 // ---------- router ----------
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+// Edge-cache (caches.default) för GET-svar med Cache-Control max-age>0: sparar R2-läsningar
+// och gör upprepade anrop (samma URL inkl. query, t.ex. ?ents=/device=) nästan gratis på edge.
+// POST/DELETE och svar utan max-age passerar rakt igenom. Saknas caches (lokala testet) -> no-op.
+async function withEdgeCache(request: Request, next: () => Promise<Response>): Promise<Response> {
+  const cache = (globalThis as unknown as { caches?: { default?: import("./cf-types.js").CacheLike } }).caches?.default;
+  if (!cache || (request.method !== "GET" && request.method !== "HEAD")) return next();
+  const key = new Request(request.url, { method: "GET" });
+  try {
+    const hit = await cache.match(key);
+    if (hit) return hit;
+    const res = await next();
+    const cc = res.headers.get("cache-control") ?? "";
+    const maxAge = Number(/max-age=(\d+)/.exec(cc)?.[1] ?? 0);
+    if (res.status === 200 && maxAge > 0 && !cc.includes("no-store") && !cc.includes("private")) {
+      await cache.put(key, res.clone());
+    }
+    return res;
+  } catch {
+    return next();
+  }
+}
+
+async function handle(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const p = url.pathname;
     try {
@@ -462,8 +483,12 @@ export default {
     } catch (e) {
       return Response.json({ error: "edge error", detail: (e as Error).message }, { status: 502 });
     }
-  },
+}
 
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    return withEdgeCache(request, () => handle(request, env));
+  },
   async scheduled(_event: unknown, env: Env, ctx: ExecutionContextLike): Promise<void> {
     // SMHI-cron: baka moln/regn-frames + live.json till R2 (kan behöva Workers Paid >10 ms CPU)
     ctx.waitUntil(

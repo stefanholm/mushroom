@@ -25,8 +25,10 @@ function walk(dir: string, prefix: string) {
 walk(SEED, "");
 console.log(`mock R2: ${objects.size} objekt från ${SEED}`);
 
+let r2GetCount = 0;
 const TILES = {
   async get(key: string) {
+    r2GetCount++;
     const o = objects.get(key);
     if (!o) return null;
     return {
@@ -225,6 +227,25 @@ ck("okänd route proxas till origin (ej worker-404)", r.status !== 404, `status=
   ck("tile hillshade (ingen variant)", r.status === 200 && (r.headers.get("content-type") ?? "").includes("png"), `status=${r.status}`);
   r = await call("/api/tiles/habitat/kantarell/8/140/75.png");
   ck("tile habitat live utan bakad variant -> ej 200 png från R2 (proxas vidare)", !(r.status === 200 && (r.headers.get("content-type") ?? "").includes("png")), `status=${r.status}`);
+}
+
+// edge-cache (caches.default): andra GET för samma URL ska inte gå till R2
+{
+  const { encodePng } = await import("./src/png.js");
+  let puts = 0;
+  const store = new Map<string, Response>();
+  (globalThis as Record<string, unknown>).caches = {
+    default: {
+      async match(k: Request) { return store.get(k.url); },
+      async put(k: Request, r: Response) { puts++; store.set(k.url, r.clone()); },
+    },
+  };
+  objects.set("domains/fungi/r15/tiles/hillshade/8/141_76.png", { data: Buffer.from(await encodePng(2, 2, new Uint8Array(16).fill(90))), contentType: "image/png", cacheControl: "public, max-age=31536000, immutable" });
+  const before = r2GetCount;
+  const r1 = await call("/api/tiles/hillshade/8/141/76.png");
+  const r2 = await call("/api/tiles/hillshade/8/141/76.png");
+  ck("edge-cache: 2:a GET samma URL från caches.default (1 R2-get, båda 200)", r1.status === 200 && r2.status === 200 && r2GetCount - before === 1 && puts === 1, `gets=${r2GetCount - before} puts=${puts} s1=${r1.status} s2=${r2.status}`);
+  delete (globalThis as Record<string, unknown>).caches;
 }
 
 // PNG-enkodern (smoke)

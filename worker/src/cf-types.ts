@@ -34,3 +34,7 @@ export interface Env {
 export interface ExecutionContextLike {
   waitUntil(p: Promise<unknown>): void;
 }
+export interface CacheLike {
+  match(key: Request): Promise<Response | undefined>;
+  put(key: Request, res: Response): Promise<void>;
+}

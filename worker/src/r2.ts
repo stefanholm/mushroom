@@ -68,8 +68,15 @@ export async function putR2Json(env: Env, key: string, value: unknown, cacheCont
 export async function putR2Png(env: Env, key: string, png: Uint8Array): Promise<void> {
   await env.TILES.put(key, png.buffer as ArrayBuffer, { httpMetadata: { contentType: "image/png", cacheControl: IMMUTABLE } });
 }
+const listCache = new Map<string, { at: number; keys: string[] }>();
+const LIST_TTL_MS = 60_000; // hotspots listar upp till 20k block-nycklar per anrop — cacha listan kort
 export async function listR2(env: Env, prefix: string, limit = 1000): Promise<string[]> {
+  const ck = `${prefix}|${limit}`;
+  const c = listCache.get(ck);
+  if (c && Date.now() - c.at < LIST_TTL_MS) return c.keys;
   const res = await env.TILES.list({ prefix, limit });
-  return res.objects.map((o) => o.key);
+  const keys = res.objects.map((o) => o.key);
+  listCache.set(ck, { at: Date.now(), keys });
+  return keys;
 }
 export type { R2BucketLike };
