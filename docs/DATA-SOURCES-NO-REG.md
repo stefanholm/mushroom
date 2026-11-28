@@ -28,3 +28,40 @@ Lantmäteriets konto/STAC ger 401/403 utan registrering — här är källor som
 4. **iOS prod-kritiskt**: server-side kvittovalidering (App Store Server API) ersätter dev-`ents=`-trust; HTTPS-only ( bort `NSAllowsArbitraryLoads`); `DEBUG_API` av i prod; restore purchases; ta bort review-reward; privacy-delete finns. Gold pins + capped-banner + `rainWindowDays` per art + `/api/v1/fungi/overview` + rain-history/clouds-lager enligt docs/CLOUDS.md.
 5. **PR #1**: merge-beslut när iOS är synkat (draft idag).
 6. Senare/ej kritiskt: dodved-lagret, ortofoto/satellitlager, hillshade z11+, D1/Worker-ombyggnad av signals.
+
+## Snabbstart nedladdning 2026-11-28 (ingen registrering, kör från Mac mot SSD:n)
+
+Saknas för r16 hel-Sverige: DEM (ersätt NH), SLU grunddata + DTW, hel-Sverige avverkningar,
+skyddade områden, kustmask. Lägg råfiler i `canonical_gis/00-sources/` + rad i `_manifest.json` (url, datum, licens, sha256).
+
+DEM GLO-30 (30 m, ~225 tiles för Sverige, några GB) från AWS Open Data — detta block har inga kommentarer:
+
+```bash
+mkdir -p /Volumes/HD2021/SvampradarData/canonical_gis/06_dem_glo30 && cd /Volumes/HD2021/SvampradarData/canonical_gis/06_dem_glo30
+for lat in $(seq 55 69); do for lon in $(seq 10 24); do printf "N%02d_00_E%03d_00\n" $lat $lon; done; done > tiles.txt
+cat tiles.txt | xargs -P 8 -I{} sh -c 'n="{}"; curl -sf -o "Copernicus_DSM_COG_10_${n}_DEM.tif" "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_${n}_DEM/Copernicus_DSM_COG_10_${n}_DEM.tif"'
+ls *.tif | wc -l
+```
+
+Sedan mosaik + reprojicering (gdal finns på Macen? annars `brew install gdal`):
+
+```bash
+gdalwarp /Volumes/HD2021/SvampradarData/canonical_gis/06_dem_glo30/*.tif /Volumes/HD2021/SvampradarData/canonical_gis/06_dem_glo30/dem_sweden_3006_50m.tif -t_srs EPSG:3006 -tr 50 50 -co TILED=YES -co BLOCKXSIZE=256 -co BLOCKYSIZE=256 -co COMPRESS=DEFLATE
+gdaldem slope dem_sweden_3006_50m.tif slope_50m.tif -of COG -co COMPRESS=DEFLATE
+gdaldem aspect dem_sweden_3006_50m.tif aspect_50m.tif -of COG -co COMPRESS=DEFLATE
+```
+
+(TWI: enkel python/gdal-script över slope+uppsamlingsarea, eller SAGA om installerat.)
+
+Övriga nedladdningar (från Mac, ingen registrering):
+- SLU Skogliga grunddata (trädslag gran/tall/löv, trädhöjd, ålder, volym, grundyta, SIS): https://skogsdataportalen.slu.se/ (nedladdningssidan) eller WCS från https://kartor.slu.se/ — GeoTIFF per lager, hela Sverige.
+- SLU Markfuktighetskarta (DTW): samma portal, raster ~50 m hel-Sverige.
+- Skogsstyrelsen hel-Sverige (avverkningar senaste 5 åren, nyckelbiotoper, sumpskogar): WFS/GeoJSON från https://kartor.skogsstyrelsen.se/
+- Naturvårdsverket skyddade områden (naturreservat, nationalparker, Natura 2000): öppna data-zip/gpkg från naturvardsverket.se (sök "Naturvårdsverket skyddade områden nedladdning").
+- Kustmask: Natural Earth 10 m `ne_10m_coastline.zip` från https://www.naturalearthdata.com/downloads/10m-cultural-vectors/
+- (valfritt) SGU berggrund/kalkindex: sgu.se geodata-nedladdning. (valfritt) färsk OSM PBF: https://download.geofabrik.de/europe/sweden-latest.osm.pbf
+- (valfritt, enkel mail-registrering) EU-DEM v1.1 25 m: https://dataspace.copernicus.eu
+
+Behövs INTE laddas ner (finns redan på SSD:n): NMD 10 m, SGU jorddjup, SGU jordart raw gpkg (rasteriseras lokalt), SMHI GDD5, OSM vatten-masker (04_vatten_osm), Mälardalen-paketet.
+
+Efter nedladdning: `gdalwarp -tr 50 50 -t_srs EPSG:3006` på alla scoring-rasters (NMD-masken körs i 10 m), tiled 256, och rad i `canonical_gis/_manifest.json`.
